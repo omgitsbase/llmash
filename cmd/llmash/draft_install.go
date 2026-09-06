@@ -52,6 +52,15 @@ func hasOwnDrafter(m *Model) string {
 	return ""
 }
 
+// A model's own head wins by default, so asking for a downloaded one instead
+// has to be recorded. The marker sits beside the model and deleting it undoes
+// the choice.
+func preferMarker(gguf string) string {
+	return shardSuffix.ReplaceAllString(stemOf(gguf), "") + ".prefer-draft"
+}
+
+func preferDraft(gguf string) bool { return fileExists(preferMarker(gguf)) }
+
 // verifyDraft checks a downloaded file against the model it will draft for.
 // A truncated download, an HTML error page saved under a .gguf name and a
 // drafter built for different weights are all caught here, from the header.
