@@ -1,0 +1,19 @@
+{
+  "routes": [
+    {
+      "match": "qwen3.6-35b",
+      "url": "http://127.0.0.1:8300/v1",
+      "model": "qwen3.6-35b",
+      "exe": "C:/engines/fast-server.exe",
+      "args": ["C:/models/qwen3_6_35b_a3b", "--host", "127.0.0.1", "--port", "8300"],
+      "max_context": 131072,
+      "drop_params": ["repeat_penalty", "repeat_last_n", "mirostat"]
+    },
+    {
+      "match": "some-model",
+      "url": "http://127.0.0.1:8000/v1",
+      "model": "some-model",
+      "container": "vllm-server"
+    }
+  ]
+}
