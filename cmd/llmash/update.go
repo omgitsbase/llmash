@@ -33,7 +33,14 @@ type release struct {
 	} `json:"assets"`
 }
 
-func (r release) version() string { return strings.TrimPrefix(r.Tag, "v") }
+// Tags read v.<main>.<feature>.<patch>-alpha; VERSION holds the number alone.
+func (r release) version() string {
+	v := strings.TrimPrefix(strings.TrimPrefix(r.Tag, "v"), ".")
+	if i := strings.IndexByte(v, '-'); i > 0 {
+		v = v[:i]
+	}
+	return v
+}
 
 func latestRelease() (release, error) {
 	var rel release
