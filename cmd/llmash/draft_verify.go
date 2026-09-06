@@ -11,11 +11,9 @@ import (
 	"time"
 )
 
-// Deciding whether a draft model fits a target, by arithmetic rather than by
-// loading it. llama.cpp accepts a drafter only if the vocabularies match and
-// the drafter's encoder is shaped for the target's hidden size; both are
-// written in the GGUF header, so the same answer is available for the price of
-// a few kilobytes and without touching the card.
+// llama.cpp accepts a drafter only if the vocabularies match and its encoder is
+// shaped for the target's hidden size. Both are in the GGUF header, so the
+// answer costs a few kilobytes instead of a load.
 
 type ggufSpec struct {
 	Arch    string
@@ -28,15 +26,11 @@ type ggufSpec struct {
 	partial bool // the read ended early, so a zero field means "not reached"
 }
 
-// hidden reports whether this is a drafter that reads the target's hidden
-// states, which is what makes the encoder width a hard constraint.
 func (s ggufSpec) hidden() bool {
 	return s.Arch == "eagle3" || s.Arch == "dflash" || s.Arch == "dspark"
 }
 
-// scanGGUF walks the header. Tensor shapes come after every key-value, and the
-// vocabulary sits between them, so reading that far costs a few megabytes; the
-// caller decides whether it is worth it.
+// Tensor shapes sit after the vocabulary, so wantTensors costs a few megabytes.
 func scanGGUF(r io.Reader, wantTensors bool) (ggufSpec, error) {
 	var s ggufSpec
 	g := &ggufReader{r: bufio.NewReaderSize(r, 1<<20)}
@@ -74,7 +68,7 @@ func scanGGUF(r io.Reader, wantTensors bool) (ggufSpec, error) {
 		if err != nil {
 			return s, nil
 		}
-		if t != 9 { // a scalar
+		if t != 9 {
 			v, err := g.value(t)
 			if err != nil {
 				return s, nil
@@ -93,8 +87,8 @@ func scanGGUF(r io.Reader, wantTensors bool) (ggufSpec, error) {
 			}
 			continue
 		}
-		// an array: its length is known before its contents, which is all the
-		// vocabulary count is, and the layer list is short enough to keep.
+		// An array's length comes before its contents, which is all the
+		// vocabulary count is.
 		et, err := g.u32()
 		if err != nil {
 			return s, nil
@@ -149,8 +143,6 @@ func scanGGUF(r io.Reader, wantTensors bool) (ggufSpec, error) {
 		if _, err := g.u64(); err != nil { // offset
 			return s, nil
 		}
-		// fc.weight is the encoder that eats the target's stacked hidden
-		// states; its first dimension is the whole compatibility question.
 		if (name == "fc.weight" || strings.HasSuffix(name, ".fc.weight")) && len(dims) > 0 {
 			s.Enc = dims[0]
 		}
@@ -168,17 +160,13 @@ func specOfFile(path string) (ggufSpec, error) {
 	return scanGGUF(f, true)
 }
 
-// errUnreadable marks a problem reaching the hub rather than a verdict on the
-// file. A candidate is only rejected on what its header actually says.
+// A problem reaching the hub, as opposed to a verdict on the file.
 var errUnreadable = errors.New("could not read the header")
 
 func unreadable(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", errUnreadable, fmt.Sprintf(format, a...))
 }
 
-// specOfURL reads the head of a remote GGUF. The window grows because the
-// vocabulary sits between the key-values and the tensor shapes, and how big it
-// is depends on the model.
 func specOfURL(url string) (ggufSpec, error) {
 	var last error
 	for _, window := range []int64{1 << 20, 24 << 20} {
@@ -216,10 +204,7 @@ func specOfURL(url string) (ggufSpec, error) {
 	return ggufSpec{partial: true}, last
 }
 
-// pairs reports why a drafter cannot serve a target, or nil if it can. The
-// rules are llama.cpp's own: the vocabularies have to agree, a hidden-state
-// drafter's encoder has to be shaped for this target's hidden size, and the
-// layers it reads have to exist.
+// Why a drafter cannot serve a target, or nil if it can.
 func pairs(target, draft ggufSpec) error {
 	if draft.Arch == "" {
 		return fmt.Errorf("no architecture in its header")
@@ -256,19 +241,17 @@ func pairs(target, draft ggufSpec) error {
 	return nil
 }
 
-// fitsTarget checks a candidate against the model it would draft for, reading
-// only the head of the remote file.
 func fitsTarget(m *Model, c draftCand) error {
 	target, err := specOfFile(m.GGUF)
 	if err != nil {
-		return nil // unreadable target: no grounds to reject the drafter
+		return nil
 	}
 	draft, err := specOfURL(hubDownloadURL(c.Repo, c.File))
 	if errors.Is(err, errUnreadable) {
-		return nil // the hub was unhelpful; the check after the download still runs
+		return nil
 	}
 	if err != nil {
-		return err // the file itself is wrong, whatever its name says
+		return err
 	}
 	return pairs(target, draft)
 }

@@ -272,6 +272,10 @@ func (in *Instance) args() []string {
 	// on Qwen3.6-35B-A3B the built-in head ran 308 tok/s against a downloaded
 	// DSpark head's 265, on 60% acceptance against 33%. So the model's own head
 	// wins, unless `pulldraft --force` left a .prefer-draft marker beside it.
+	//
+	// Where a model has no head of its own the downloaded one is worth a great
+	// deal: gemma-4 26B-A4B ran 342 tok/s on a fetched EAGLE-3 head against 244
+	// on ngram self-speculation and 218 on none.
 	ownHead := hasMTP(m.GGUF) && !preferDraft(m.GGUF)
 	switch {
 	case ownHead:

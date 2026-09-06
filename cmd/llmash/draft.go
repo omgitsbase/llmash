@@ -11,13 +11,9 @@ import (
 	"time"
 )
 
-// Finding a draft model for a model you already have.
-//
-// A drafter guesses the next few tokens so the real model can check several at
-// once. The good ones are trained against one specific target, so picking the
-// wrong one is worse than picking none: it will load, draft badly, and cost
-// speed. Everything here is therefore built to reject rather than to guess.
-// The Hugging Face API used below needs no account and no token.
+// A drafter is trained against one specific target, and the wrong one is worse
+// than none: it loads, drafts badly, and costs speed. So this rejects rather
+// than guesses. The Hugging Face API used here needs no account and no token.
 
 type draftKind struct {
 	name    string // what llmash calls it, and the file suffix it is saved under
@@ -54,8 +50,6 @@ type draftCand struct {
 	Score int
 	Note  string
 }
-
-// ------------------------------------------------------------ the hub
 
 const hubAPI = "https://huggingface.co/api"
 
@@ -137,10 +131,6 @@ func hubDownloadURL(repo, file string) string {
 	return "https://huggingface.co/" + repo + "/resolve/main/" + file
 }
 
-// ------------------------------------------------------- identifying a target
-
-// A model's name reduced to the part worth searching for: no organisation, no
-// quantisation, no packaging suffix.
 func modelStem(m *Model) string {
 	name := m.Name
 	if repo := hfRepoOf(readGGUFMeta(m.GGUF)); repo != "" {
@@ -158,7 +148,6 @@ func modelStem(m *Model) string {
 	return strings.Trim(name, "-_. ")
 }
 
-// normalise flattens a name so "Qwen3.6-35B-A3B" and "qwen3_6_35b_a3b" compare equal.
 func normalise(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(s) {
@@ -169,9 +158,6 @@ func normalise(s string) string {
 	return b.String()
 }
 
-// ------------------------------------------------------------- searching
-
-// findDrafters returns the candidates that survive verification, best first.
 func findDrafters(m *Model, verbose bool) []draftCand {
 	stem := modelStem(m)
 	if stem == "" {
@@ -205,8 +191,7 @@ func findDrafters(m *Model, verbose bool) []draftCand {
 	return cands
 }
 
-// considerRepo decides whether one repository holds a drafter for this target.
-// Every rejection is reported, because a silent one looks like "none exists".
+// Every rejection is reported: a silent one looks like "none exists".
 func considerRepo(hit hubModel, want, stem string, say func(string, ...any)) (draftCand, bool) {
 	var c draftCand
 	kind := kindOf(hit.ID)
@@ -228,9 +213,6 @@ func considerRepo(hit hubModel, want, stem string, say func(string, ...any)) (dr
 	}
 	bases := info.bases()
 
-	// The repository must say it was built for this target. A drafter for a
-	// fine-tune names that fine-tune first, and drafting for the wrong weights
-	// is what produces a slower model rather than a faster one.
 	matched := false
 	for _, b := range bases {
 		if strings.Contains(normalise(b), want) {
@@ -250,7 +232,6 @@ func considerRepo(hit hubModel, want, stem string, say func(string, ...any)) (dr
 		return c, false
 	}
 	if len(bases) == 0 {
-		// Nothing declared, so the name is the only evidence there is.
 		if derived := foreignBase([]string{hit.ID}, want); derived != "" {
 			say("    %s: the name says it is a project of its own, not a drafter for %s",
 				hit.ID, stem)
@@ -290,8 +271,7 @@ func considerRepo(hit hubModel, want, stem string, say func(string, ...any)) (dr
 	return c, true
 }
 
-// foreignBase reports a base model that is a derivative of the target rather
-// than the target itself, e.g. an abliterated or captioning fine-tune.
+// A base that is a derivative of the target, e.g. an abliterated fine-tune.
 func foreignBase(bases []string, want string) string {
 	markers := []string{"abliterat", "uncensored", "caption", "distill", "merge",
 		"roleplay", "magic", "agentic", "heretic", "aggressive"}
@@ -326,8 +306,7 @@ func foreignBase(bases []string, want string) string {
 	return ""
 }
 
-// Repacks for other runtimes match on name but will never load here. This is
-// about the file format, not about which model it drafts for.
+// Repacks for other runtimes match on name but will never load here.
 func otherRuntime(repo string) string {
 	for _, r := range []string{"mlx", "exl3", "exl2", "bpw", "ov-int", "openvino",
 		"awq", "gptq", "-int4", "-int8", "rocm", "trt", "tensorrt"} {
@@ -338,8 +317,7 @@ func otherRuntime(repo string) string {
 	return ""
 }
 
-// A draft model is a fraction of its target. Anything larger is a repack of
-// the model itself that happens to mention a drafter.
+// Anything larger is a whole model that happens to mention a drafter.
 const draftSizeCeiling = 6 << 30
 
 var quantOrder = []string{"q4_k_m", "q4_k", "iq4_xs", "q5_k_m", "q8_0", "f16", "bf16"}
