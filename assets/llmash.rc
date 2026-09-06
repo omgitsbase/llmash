@@ -1,0 +1,26 @@
+1 ICON "icon.ico"
+
+1 VERSIONINFO
+FILEVERSION     0,32,5,0
+PRODUCTVERSION  0,32,5,0
+FILEOS          0x40004
+FILETYPE        0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName",      "llmash"
+      VALUE "FileDescription",  "llmash"
+      VALUE "FileVersion",      "0.32.5"
+      VALUE "InternalName",     "llmash"
+      VALUE "OriginalFilename", "llmash.exe"
+      VALUE "ProductName",      "llmash"
+      VALUE "ProductVersion",   "0.32.5"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

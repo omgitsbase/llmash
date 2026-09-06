@@ -1,0 +1,15 @@
+# build output
+/dist/
+cmd/llmash/rsrc.syso
+*.exe
+
+# a running install writes these next to the program
+/logs/
+/cache/
+install.json
+local.json
+link.json
+routes.json
+remote_load.json
+tray.json
+llmash.log
