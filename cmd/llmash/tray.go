@@ -242,12 +242,30 @@ func startServerProcess() bool {
 	return false
 }
 
-func stopServerProcess() {
+func stopScript(root string) string {
 	r := psQuote(root)
-	script := "Get-CimInstance Win32_Process -Filter \"Name='llmashw.exe' OR Name='llmash.exe'\" " +
-		"| Where-Object { ($_.CommandLine -like '*" + r + "\\llmashw.exe*' -or $_.CommandLine -like '*" + r + "\\llmash.exe*') " +
-		"-and $_.CommandLine -like '* serve*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-	hiddenPowerShell(script, true)
+	mine := "($_.CommandLine -like '*" + r + "\\llmashw.exe*' -or $_.CommandLine -like '*" + r +
+		"\\llmash.exe*') -and $_.CommandLine -like '* serve*'"
+	return "$s = @(Get-CimInstance Win32_Process -Filter \"Name='llmashw.exe' OR Name='llmash.exe'\" " +
+		"| Where-Object { " + mine + " }); " +
+		"$ids = @($s | ForEach-Object { $_.ProcessId }); " +
+		"if ($ids.Count) { Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" " +
+		"| Where-Object { $ids -contains $_.ParentProcessId } " +
+		"| ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }; " +
+		"$s | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+}
+
+// Killing the server on its own leaves whatever llama-server processes it
+// started holding their VRAM, and returning before it is really gone lets the
+// next start race it. So the engines go first, and this waits for the port.
+func stopServerProcess() {
+	hiddenPowerShell(stopScript(root), true)
+	for t0 := time.Now(); time.Since(t0) < 15*time.Second; {
+		if !trayServerUp() && !serverProcessExists() {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func loadedModels() []map[string]any {
@@ -350,7 +368,6 @@ func (t *trayApp) restart() {
 		t.lock.Lock()
 		defer t.lock.Unlock()
 		stopServerProcess()
-		time.Sleep(time.Second)
 		startServerProcess()
 	}()
 }
