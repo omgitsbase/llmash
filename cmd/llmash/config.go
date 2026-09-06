@@ -19,7 +19,7 @@ import (
 // install has an empty LOCAL and behaves like plain Ollama on llama.cpp.
 
 const (
-	serverVersion = "0.32.5"
+	serverVersion = "0.0.1"
 	serverBuild   = "llmash"
 )
 
