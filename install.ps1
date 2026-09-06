@@ -393,28 +393,39 @@ if (-not $NoStartup) {
     $s.Save()
     Good 'enabled, silent, with the tray icon'
 
-    $ollamaLnk = Join-Path $Startup 'Ollama.lnk'
-    if (-not $NoOllama -and (Test-Path $ollamaLnk)) {
-        Move-Item $ollamaLnk "$ollamaLnk.disabled" -Force
-        Warn "disabled Ollama's startup entry (both want 11434; restored on uninstall)"
-    }
 } else {
     Set-Content (Join-Path $Root 'tray.json') '{"startup": false}' -Encoding ASCII
+}
+
+# ---------------------------------------------------------------------- ollama
+# Both want port 11434, so only one of them can be the server.
+$ollamaLnk = Join-Path $Startup 'Ollama.lnk'
+$ollamaProcs = @(Get-Process -Name 'ollama', 'ollama app', 'ollama_llama_server' -ErrorAction SilentlyContinue)
+$ollamaAtLogin = Test-Path $ollamaLnk
+if (-not $NoOllama -and ($ollamaProcs.Count -or $ollamaAtLogin)) {
+    Step 'Ollama'
+    if ($ollamaProcs.Count) { Say 'Ollama is running' }
+    if ($ollamaAtLogin)     { Say 'Ollama starts at login' }
+    Say 'llmash serves the same API on the same port, so they cannot both run.'
+    if (Ask 'Close Ollama and take it off startup?') {
+        if ($ollamaProcs.Count) {
+            $ollamaProcs | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Good 'closed Ollama'
+        }
+        if ($ollamaAtLogin) {
+            Move-Item $ollamaLnk "$ollamaLnk.disabled" -Force
+            Good 'took Ollama off startup (put back by llmash uninstall)'
+        }
+    } else {
+        Warn 'left Ollama alone; whichever starts first will hold port 11434'
+    }
 }
 
 # --------------------------------------------------------------------- start
 Step 'Starting llmash'
 function PortBusy { try { $null = Invoke-WebRequest 'http://127.0.0.1:11434/' -UseBasicParsing -TimeoutSec 2; return $true } catch { return $false } }
 $busy = PortBusy
-if ($busy -and -not $NoOllama) {
-    $ol = Get-Process -Name 'ollama', 'ollama app', 'ollama_llama_server' -ErrorAction SilentlyContinue
-    if ($ol) {
-        Say 'stopping Ollama so llmash can take port 11434'
-        $ol | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-        $busy = PortBusy
-    }
-}
 if ($busy) {
     if ($upgrade) {
         Warn 'something else is already on 11434 (an older llmash?); restart it with:  llmash tray'
