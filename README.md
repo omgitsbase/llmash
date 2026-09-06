@@ -1,17 +1,18 @@
 # llmash
 
-An Ollama-compatible server and command line for Windows, on llama.cpp.
+An Ollama-compatible server and command line for Windows, built on llama.cpp.
 
-Same commands, same API, same model store. It serves your GGUF files through
-`llama-server`, and turns on the llama.cpp options that are off by default.
+It serves your GGUF files through `llama-server` and keeps Ollama's commands,
+API and model store, so anything already pointed at Ollama keeps working. What
+it changes is the llama.cpp settings, which it picks per model at launch.
 
 ```powershell
-irm https://raw.githubusercontent.com/itsTurdle/llmash/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 | iex
 ```
 
 Nothing needs to be installed first. The download is two executables and an
-icon. The installer fetches the llama.cpp build that matches your GPU, puts
-`llmash` on your PATH, and starts the server.
+icon; the installer fetches the llama.cpp build for your GPU, puts `llmash` on
+your PATH, and starts the server.
 
 ## Speed
 
@@ -42,33 +43,49 @@ Tokens per second, same GPU, same prompts, same quantisation.
 
 Tokens per second while generating, median of three runs, excluding model load and prompt processing.
 
-## What it does differently
+<!-- /BENCHMARK -->
 
-**Speculative decoding for every model.** Models with a draft head (MTP,
-DSpark, EAGLE-3) use it. The rest get `ngram-mod`, which drafts from the text
-already in the context and needs no second model and no extra VRAM.
+## How it fits together
 
-**Draft models found for you.** A pull offers to fetch the matching draft head
-if one exists, and `pulldraft` does it on demand. Candidates are read from
-Hugging Face without an account or a token, and each one is checked against the
-model it would serve before anything is downloaded: same vocabulary, an encoder
-shaped for this model's hidden size, and layers this model actually has. A model
-with an MTP head of its own is left alone, because that head is trained with the
-weights and measured faster than any downloaded one.
+- **`llmash.exe`** is the command line and the server. `llmashw.exe` is the same
+  program with no console, for the tray.
+- **The server** owns the model store, starts and stops `llama-server`
+  processes, and decides how long each one stays resident.
+- **The tray** unloads a model, sets the keep-alive, restarts the server, and
+  starts it at login.
+- **Routes** send a named model to another OpenAI-compatible server, and fall
+  back to llama.cpp when that server is not running.
 
-**Settings chosen at launch.** Prompt-prefix reuse, a host-RAM prompt cache
-sized from what is free, a prompt batch wide enough to keep a large card busy,
-and a priority bump. Each is overridable and each decision is logged.
+## What it turns on
 
-**DirectIO loading.** llama.cpp memory-maps weights by default. `--load-mode
-dio` reads them straight to the card instead, which loads faster and keeps the
-working set off the page cache.
+These are llama.cpp options that are off by default. llmash sets each one per
+model at launch, logs the decision, and lets you override it.
 
-**A tray icon.** Unload a model, set how long it stays loaded, restart the
-server, start at login.
+| | |
+|---|---|
+| Speculative decoding | A model with an MTP head uses it. Otherwise a draft model beside it, or `ngram-mod`, which drafts from the context and costs no VRAM. |
+| Prompt-prefix reuse | `--cache-reuse`, so a repeated prefix is not processed twice. |
+| Host-RAM prompt cache | Sized from free RAM, between 8 and 32 GiB. |
+| Batch size | A wider prompt batch when the card has the VRAM for it. |
+| Process priority | Raised, so background work does not stall generation. |
+| DirectIO loading | `--load-mode dio` reads weights straight to the card instead of memory-mapping them. |
 
-**One binary.** `llmash.exe` is the command line and the server. `llmashw.exe`
-is the same program without a console, for the tray.
+## Draft models
+
+A draft model guesses the next few tokens so the real model can check several at
+once. `pulldraft` finds one for a model you have, and a pull offers the same
+thing when it finishes.
+
+Candidates come from Hugging Face, which needs no account and no token.
+Repositories built for a fine-tune of the model, or packaged for another
+runtime, are refused. What is left is checked against the weights it would serve
+before anything is downloaded: the vocabularies have to match, the encoder has
+to be shaped for this model's hidden size, and the layers it reads have to
+exist. A model with an MTP head of its own is left alone.
+
+Measured on this machine: gemma-4 26B-A4B went from 244 to 342 tok/s on a
+fetched EAGLE-3 head. Qwen3.6 35B-A3B ran 308 tok/s on its own MTP head against
+265 on a downloaded one, which is why the built-in head wins.
 
 ## Commands
 
@@ -83,8 +100,7 @@ is the same program without a console, for the tray.
 | `link` | expose the API over a Tailscale funnel, with a key |
 | `uninstall` | remove everything the installer created |
 
-`ollama` is installed as an alias, so anything already pointed at Ollama keeps
-working.
+`ollama` is installed as an alias.
 
 ## Configuration
 
@@ -100,14 +116,8 @@ Optional. `local.json` next to the program, or environment variables.
 | `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`) |
 | `LLMASH_TUNE_OFF` | disable individual tuning: `cache-reuse,cache-ram,batch,prio` |
 
-`llmash serve --help` lists the rest.
-
-### Fast routes
-
-A `routes.json` beside the program sends a model to another OpenAI-compatible
-server when one is faster for it, and back to llama.cpp when that server is
-not up. A route names either an executable to start on demand or a Docker
-container. See `routes.example.json`.
+`llmash serve --help` lists the rest. A `routes.json` beside the program
+configures fast routes; see `routes.example.json`.
 
 ## Building
 

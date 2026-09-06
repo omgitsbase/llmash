@@ -302,7 +302,7 @@ func explainLoadFailure(raw string) string {
 	case strings.Contains(low, "wrong number of tensors") || strings.Contains(low, "dimension_sections") ||
 		strings.Contains(low, "unknown model architecture"):
 		return "This model was converted by Ollama in a format llama.cpp can't read. It needs replacing with the " +
-			"HuggingFace build — run `python migrate.py --only <model>` in the llmash folder. Until then, pick a different model."
+			"HuggingFace build. Run `python migrate.py --only <model>` in the llmash folder. Until then, pick a different model."
 	case strings.Contains(low, "unable to allocate") || strings.Contains(low, "out of memory") || strings.Contains(low, "cudamalloc"):
 		return "Not enough VRAM to load this model at the requested context size. Lower the context window, or unload whatever else is resident."
 	case strings.Contains(low, "failed to fit") || strings.Contains(low, "common_fit_params"):
@@ -465,7 +465,7 @@ func (mg *Manager) evictFor(needGB float64, keep string) {
 		return
 	}
 	if tight {
-		logf("system RAM down to %.1f GB — evicting to make room", freeRAMGB())
+		logf("system RAM down to %.1f GB, evicting to make room", freeRAMGB())
 	}
 	sort.Slice(loaded, func(i, j int) bool {
 		a, _, _, _ := loaded[i].Snapshot()
@@ -498,7 +498,7 @@ func (mg *Manager) dropDead() {
 	defer mg.mu.Unlock()
 	for name, in := range mg.live {
 		if in.cmd != nil && !in.alive() {
-			logf("%s died underneath us — dropping it", name)
+			logf("%s died underneath us, dropping it", name)
 			in.stop()
 			delete(mg.live, name)
 		}

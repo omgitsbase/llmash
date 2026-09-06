@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	repoOwner = "itsTurdle"
+	repoOwner = "omgitsbase"
 	repoName  = "llmash"
 )
 
