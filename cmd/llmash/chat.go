@@ -1148,12 +1148,32 @@ func v1Proxy(path string, w http.ResponseWriter, r *http.Request) {
 	if _, ok := body["chat_template_kwargs"]; !ok && thinkOff(name) {
 		body["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
 	}
-	inst, err := mgr.Get(name, v1Ctx, body["keep_alive"], turnHasMedia(body))
-	if err != nil {
-		loadError(w, name, err, true)
-		return
+
+	// A model with a fast route is served by it here too, not only on
+	// /api/chat: everything `llmash launch` configures speaks this endpoint.
+	upstream, sent := "", name
+	native, _ := body["native"].(bool)
+	if route := fastRoute(name); route != nil && !native && ensureRemoteUp(route) {
+		upstream = routeURL(route) + strings.TrimPrefix(path, "/v1")
+		sent = first(str(route, "model"), name)
+		body = routeBody(body, route, sent)
+		defer touchRoute(route)
 	}
-	realB, _ := json.Marshal(inst.Model.GGUF)
+
+	var inst *Instance
+	if upstream == "" {
+		var err error
+		inst, err = mgr.Get(name, v1Ctx, body["keep_alive"], turnHasMedia(body))
+		if err != nil {
+			loadError(w, name, err, true)
+			return
+		}
+		upstream = inst.URL() + path
+	}
+	realB, _ := json.Marshal(sent)
+	if inst != nil {
+		realB, _ = json.Marshal(inst.Model.GGUF)
+	}
 	wantB, _ := json.Marshal(name)
 	if s, _ := body["stream"].(bool); s {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -1166,7 +1186,7 @@ func v1Proxy(path string, w http.ResponseWriter, r *http.Request) {
 				f.Flush()
 			}
 		}
-		resp, err := postJSONStream(r.Context(), inst.URL()+path, body)
+		resp, err := postJSONStream(r.Context(), upstream, body)
 		if err != nil {
 			fail(fmt.Sprintf("%T: %v", err, err))
 			return
@@ -1181,7 +1201,9 @@ func v1Proxy(path string, w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
-				inst.Touch()
+				if inst != nil {
+					inst.Touch()
+				}
 				chunk := buf[:n]
 				if bytes.Contains(chunk, realB) {
 					chunk = bytes.ReplaceAll(chunk, realB, wantB)
@@ -1197,7 +1219,7 @@ func v1Proxy(path string, w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	resp, err := postJSONStream(r.Context(), inst.URL()+path, body)
+	resp, err := postJSONStream(r.Context(), upstream, body)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": map[string]any{"message": err.Error(), "type": "server_error"}})
 		return
@@ -1213,4 +1235,42 @@ func v1Proxy(path string, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(raw)
+}
+
+// routeBody adapts an OpenAI request for a fast backend: its own model id, the
+// parameters it rejects removed, and the defaults the route sets.
+func routeBody(body map[string]any, route map[string]any, model string) map[string]any {
+	out := map[string]any{}
+	for k, v := range body {
+		out[k] = v
+	}
+	out["model"] = model
+	delete(out, "native")
+	if ctk, ok := route["chat_template_kwargs"].(bool); ok && !ctk {
+		delete(out, "chat_template_kwargs")
+	}
+	for _, k := range list(route, "drop_params") {
+		delete(out, fmt.Sprint(k))
+	}
+	for k, v := range sub(route, "default_params") {
+		if _, set := out[k]; !set {
+			out[k] = v
+		}
+	}
+	if maxCtx := int(num(route, "max_context")); maxCtx > 0 {
+		if n := int(num(out, "max_tokens")); n > maxCtx {
+			out["max_tokens"] = maxCtx
+		}
+	}
+	return out
+}
+
+func touchRoute(route map[string]any) {
+	key := routeKey(route)
+	if key == "" {
+		return
+	}
+	remoteMu.Lock()
+	remoteLastUsed[key] = nowF()
+	remoteMu.Unlock()
 }

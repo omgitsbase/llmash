@@ -19,11 +19,41 @@ Tokens per second, same GPU, same prompts, same quantisation.
 
 <!-- BENCHMARK -->
 
+**gemma-4 26B-A4B (Q4_K_M)**
+
+| backend | conversation | coding | thinking |
+|---|--:|--:|--:|
+| Ollama | 173.0 | 189.5 | 118.5 |
+| **llmash** | **177.6** | **179.1** | **179.8** |
+
+**Qwen3.6 35B-A3B (IQ4_XS)**
+
+| backend | conversation | coding | thinking |
+|---|--:|--:|--:|
+| Ollama | 129.8 | 120.3 | 226.8 |
+| **llmash** | **513.2** | **599.6** | **596.7** |
+
+**Qwen3.8 27B (Q4_K_XL)**
+
+| backend | conversation | coding | thinking |
+|---|--:|--:|--:|
+| Ollama | 63.1 | 62.3 | 63.4 |
+| **llmash** | **136.5** | **135.5** | **147.0** |
+
+Tokens per second while generating, median of three runs, excluding model load and prompt processing.
+
 ## What it does differently
 
 **Speculative decoding for every model.** Models with a draft head (MTP,
 DSpark, EAGLE-3) use it. The rest get `ngram-mod`, which drafts from the text
 already in the context and needs no second model and no extra VRAM.
+
+**Draft models found for you.** A pull offers to fetch the matching draft head
+if one exists, and `pulldraft` does it on demand. Candidates are read from
+Hugging Face without an account or a token, and each one is checked against the
+model it would serve before anything is downloaded: same vocabulary, an encoder
+shaped for this model's hidden size, and layers this model actually has. A
+model that ships its own head keeps it.
 
 **Settings chosen at launch.** Prompt-prefix reuse, a host-RAM prompt cache
 sized from what is free, a prompt batch wide enough to keep a large card busy,
@@ -45,6 +75,7 @@ is the same program without a console, for the tray.
 |---|---|
 | `list` `ps` `show` `run` `pull` `rm` `cp` `stop` | as in Ollama |
 | `serve` | start the server; the tray does this for you |
+| `pulldraft` | find and install a draft model for a model you have |
 | `doctor` | check the install, runtime, GPU, models and routes |
 | `update` | install the latest release |
 | `launch` | point Claude Code, Codex, Droid and others at this server |

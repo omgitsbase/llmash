@@ -169,11 +169,14 @@ func main() {
 	case "show":
 		cmdShow(parseShow(rest))
 	case "pull", "install":
-		o := parseSimple(rest, map[string]bool{"--insecure": true}, nil)
+		o := parseSimple(rest, map[string]bool{"--insecure": true, "--draft": true, "--no-draft": true}, nil)
 		if len(o.pos) < 1 {
 			die("Error: requires at least 1 arg(s), only received 0")
 		}
 		cmdPull(o.pos[0])
+		if !o.flags["--no-draft"] {
+			offerDraft(o.pos[0])
+		}
 	case "rm":
 		o := parseSimple(rest, nil, nil)
 		if len(o.pos) < 1 {
@@ -190,6 +193,12 @@ func main() {
 		cmdServe()
 	case "tray":
 		cmdTray()
+	case "pulldraft":
+		o := parseSimple(rest, map[string]bool{"--yes": true, "-y": true, "--force": true}, nil)
+		if len(o.pos) < 1 {
+			die("Error: requires at least 1 arg(s), only received 0")
+		}
+		cmdPullDraft(o.pos[0], o.flags["--yes"] || o.flags["-y"], o.flags["--force"])
 	case "doctor":
 		cmdDoctor()
 	case "update":
