@@ -336,7 +336,7 @@ func apiDelete(w http.ResponseWriter, r *http.Request) {
 	reg.Invalidate()
 	cliInvalidate()
 	if len(removed) == 0 {
-		writeJSON(w, 409, errorObj(fmt.Sprintf("found %s but nothing to delete — its file is at %s, outside the model directory", m.Name, m.GGUF)))
+		writeJSON(w, 409, errorObj(fmt.Sprintf("found %s but nothing to delete. Its file is at %s, outside the model directory", m.Name, m.GGUF)))
 		return
 	}
 	writeJSON(w, 200, map[string]any{"status": "success", "removed": removed})
@@ -479,7 +479,7 @@ func apiCreate(w http.ResponseWriter, r *http.Request) {
 	safe := safeModelName(name)
 	dest := filepath.Join(destDir, safe+".gguf")
 	if fileExists(dest) {
-		n.send(errorObj(fmt.Sprintf("'%s' already exists in %s — remove it first (rm) or pick another name.", filepath.Base(dest), destDir)))
+		n.send(errorObj(fmt.Sprintf("'%s' already exists in %s. Remove it first (rm) or pick another name.", filepath.Base(dest), destDir)))
 		return
 	}
 	st, _ := os.Stat(src)
@@ -532,7 +532,7 @@ func apiCopy(w http.ResponseWriter, r *http.Request) {
 	os.MkdirAll(destDir, 0o755)
 	dest := filepath.Join(destDir, safeModelName(destination)+".gguf")
 	if fileExists(dest) {
-		n.send(errorObj(fmt.Sprintf("'%s' already exists in %s — remove it first (rm) or pick another name.", filepath.Base(dest), destDir)))
+		n.send(errorObj(fmt.Sprintf("'%s' already exists in %s. Remove it first (rm) or pick another name.", filepath.Base(dest), destDir)))
 		return
 	}
 	st, _ := os.Stat(m.GGUF)

@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// `run`: ollama's session, command for command — one-shot generate, the
+// `run`: ollama's session, command for command, one-shot generate, the
 // interactive prompt with its slash commands, word wrap, thinking output and
 // timings.
 
@@ -223,6 +223,7 @@ func showOrPull(name string) map[string]any {
 		die("Error: %s", first(str(d, "error"), "could not read that model"))
 	}
 	cmdPull(name)
+	offerDraft(name)
 	d, code = showModel(name)
 	if code != 200 {
 		die("Error: %s", first(str(d, "error"), "model not found"))

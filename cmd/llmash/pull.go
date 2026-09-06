@@ -299,7 +299,7 @@ func fetchBlocks(ctx context.Context, url, tmp string, total int64, progress fun
 func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) {
 	destDir := reg.LooseDir()
 	os.MkdirAll(destDir, 0o755)
-	emit(map[string]any{"status": fmt.Sprintf("resolving %s (%s)", repo, quant)})
+	emit(map[string]any{"status": fmt.Sprintf("looking up %s on Hugging Face", repo)})
 	files, err := hfFiles(ctx, repo)
 	if err != nil {
 		emit(errorObj(err.Error()))
@@ -319,19 +319,27 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 		saveAs string
 	}
 	var jobs []job
+	var wantBytes int64
 	for _, f := range want {
 		jobs = append(jobs, job{f, filepath.Base(f.Name)})
+		wantBytes += f.Size
+	}
+	if len(want) > 1 {
+		emit(map[string]any{"status": fmt.Sprintf("taking the %s build, %s split over %d files",
+			quant, humanBytes(wantBytes), len(want))})
+	} else {
+		emit(map[string]any{"status": fmt.Sprintf("taking the %s build, %s", quant, humanBytes(wantBytes))})
 	}
 	if proj := pickMmproj(files); proj != nil {
 		stem := shardSuffix.ReplaceAllString(stemOf(want[0].Name), "")
 		jobs = append(jobs, job{*proj, stem + ".mmproj.gguf"})
-		emit(map[string]any{"status": fmt.Sprintf("this model is multimodal — also fetching %s", filepath.Base(proj.Name))})
+		emit(map[string]any{"status": "this model can read images, so its vision projector comes too"})
 	}
 	for _, j := range jobs {
 		total := j.f.Size
 		dest := filepath.Join(destDir, j.saveAs)
 		if st, err := os.Stat(dest); err == nil && (total == 0 || st.Size() == total) {
-			emit(map[string]any{"status": "have " + j.saveAs, "total": total, "completed": total})
+			emit(map[string]any{"status": "already have " + j.saveAs, "total": total, "completed": total})
 			continue
 		}
 		tmp := dest + ".part"
@@ -396,19 +404,26 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 	reg.Invalidate()
 	cliInvalidate()
 	first := filepath.Join(destDir, filepath.Base(want[0].Name))
-	emit(map[string]any{"status": "verifying"})
+	emit(map[string]any{"status": "checking the download reads as a model"})
 	meta := readGGUFMeta(first)
 	arch := metaStr(meta, "general.architecture")
 	if arch == "" {
 		arch = "?"
 	}
-	emit(map[string]any{"status": fmt.Sprintf("success — %s (arch %s)", reg.looseName(first), arch)})
+	pulled := int64(0)
+	for _, j := range jobs {
+		if st, err := os.Stat(filepath.Join(destDir, j.saveAs)); err == nil {
+			pulled += st.Size()
+		}
+	}
+	emit(map[string]any{"status": fmt.Sprintf("%s is ready: %s of %s weights in %s",
+		reg.looseName(first), humanBytes(pulled), arch, destDir)})
 }
 
 func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 	host, repo, tag := splitRef(ref)
 	base := "https://" + host + "/v2/" + repo
-	emit(map[string]any{"status": "pulling manifest"})
+	emit(map[string]any{"status": fmt.Sprintf("looking up %s on %s", repo, host)})
 	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/manifests/"+tag, nil)
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 	resp, err := pullClient.Do(req)
@@ -494,7 +509,11 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 	os.WriteFile(mfPath, raw, 0o644)
 	reg.Invalidate()
 	cliInvalidate()
-	emit(map[string]any{"status": "success"})
+	var pulled int64
+	for _, l := range manifest.Layers {
+		pulled += l.Size
+	}
+	emit(map[string]any{"status": fmt.Sprintf("%s is ready, %s in %s", ref, humanBytes(pulled), reg.Blobs)})
 }
 
 var hfPrefixes = []string{"hf:", "hf.co/", "huggingface.co/"}

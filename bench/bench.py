@@ -197,7 +197,7 @@ def table():
 def write_readme():
     readme = HERE.parent / "README.md"
     s = readme.read_text("utf-8")
-    start, end = "<!-- BENCHMARK -->", "## What it does differently"
+    start, end = "<!-- BENCHMARK -->", "<!-- /BENCHMARK -->"
     i, j = s.index(start), s.index(end)
     readme.write_text(s[:i] + start + "\n\n" + table() + "\n\n" + s[j:], encoding="utf-8")
     print(f"wrote the table into {readme}")

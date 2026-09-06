@@ -207,7 +207,7 @@ func menu() {
 		}
 		if len(installed) == 0 {
 			draw([]string{fmt.Sprintf("%smodel for %s%s", bold, integrations[k].title, reset), "",
-				fmt.Sprintf("  couldn't reach llmash at %s — start it, then press → again", host), "",
+				fmt.Sprintf("  couldn't reach llmash at %s. Start it, then press → again", host), "",
 				dim + "press any key to go back" + reset})
 			getch()
 			return

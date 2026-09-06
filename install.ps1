@@ -1,6 +1,6 @@
 # llmash installer
 #
-#   irm https://raw.githubusercontent.com/itsTurdle/llmash/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 | iex
 #
 #   -Uninstall        remove everything the installer created (models are kept)
 #   -NoOllama         do not shadow the `ollama` command, do not stop Ollama
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-$Repo = if ($env:LLMASH_REPO) { $env:LLMASH_REPO } else { 'itsTurdle/llmash' }
+$Repo = if ($env:LLMASH_REPO) { $env:LLMASH_REPO } else { 'omgitsbase/llmash' }
 $Asset = 'llmash-win-x64.zip'
 
 $Startup   = [Environment]::GetFolderPath('Startup')

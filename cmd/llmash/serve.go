@@ -85,7 +85,7 @@ func serveMain(args []string) {
 	logf("llama-server %s", llamaBin)
 	logf("kv cache %s, vram budget %.0f GB", kvType, vramBudgetGB)
 	if publicPort != 0 {
-		logf("public API on :%d (key required) — expose with `llmash link`", publicPort)
+		logf("public API on :%d (key required), expose with `llmash link`", publicPort)
 	}
 
 	mux := buildMux()

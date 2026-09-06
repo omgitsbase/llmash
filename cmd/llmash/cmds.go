@@ -441,7 +441,7 @@ func cmdCreate(name, file, quantize, draftQuantize string) {
 		}
 	}
 	if from == "" {
-		die("%s has no FROM line — nothing to import.", file)
+		die("%s has no FROM line, so there is nothing to import.", file)
 	}
 	needServer()
 	if !strings.EqualFold(filepath.Ext(from), ".gguf") || !fileExists(from) {
@@ -467,7 +467,7 @@ func cmdCp(source, destination string) {
 }
 
 func cmdPush() {
-	fmt.Fprintf(os.Stderr, "llmash has no model registry to push to — it serves local GGUFs only, so "+
+	fmt.Fprintf(os.Stderr, "llmash has no model registry to push to. It serves local GGUFs only, so "+
 		"there's nothing to upload.\nTo share this llmash instead, expose it over Tailscale with `%s link`.\n", prog)
 	exit(1)
 }
@@ -705,12 +705,12 @@ func cmdLink(off bool) {
 		die("Tailscale isn't installed (or not on PATH).")
 	}
 	if !portOpen(publicPort) {
-		die("llmash's public port %d isn't up — the tunnel would point at nothing.\n"+
+		die("llmash's public port %d isn't up, so the tunnel would point at nothing.\n"+
 			"Restart llmash (it opens that port on boot), then run `%s link` again.", publicPort, prog)
 	}
 	dns := tailnetName(ts)
 	if dns == "" {
-		die("Couldn't read your Tailscale name — is `tailscale` logged in and up?")
+		die("Couldn't read your Tailscale name. Is `tailscale` logged in and up?")
 	}
 	key := linkKey()
 	if !off {
