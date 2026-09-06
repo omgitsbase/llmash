@@ -142,7 +142,11 @@ if ($Uninstall) {
         $f = Join-Path $BinDir "$n.cmd"
         if (Test-Path $f) { Remove-Item $f -Force; Say "removed $n" }
     }
-    if (Test-Path $Lnk) { Remove-Item $Lnk -Force; Say 'removed the startup entry' }
+    if (Test-Path $Lnk) {
+        $target = (New-Object -ComObject WScript.Shell).CreateShortcut($Lnk).TargetPath
+        if ($target -like "$Root*") { Remove-Item $Lnk -Force; Say 'removed the startup entry' }
+        else { Say "left the startup entry alone (it starts $target)" }
+    }
     $disabled = Join-Path $Startup 'Ollama.lnk.disabled'
     if (Test-Path $disabled) { Move-Item $disabled (Join-Path $Startup 'Ollama.lnk') -Force; Say "restored Ollama's startup entry" }
     if (Test-Path $RegKey) { Remove-Item $RegKey -Recurse -Force; Say 'removed from Settings > Apps' }

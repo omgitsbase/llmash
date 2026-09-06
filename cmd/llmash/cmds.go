@@ -551,17 +551,25 @@ func cmdUninstall(keep bool) {
 
 	var shims []string
 	for _, name := range shimNames {
+		found := false
 		for _, ext := range []string{".exe", ".cmd"} {
-			p := filepath.Join(binDir, name+ext)
-			if fileExists(p) {
+			if p := filepath.Join(binDir, name+ext); fileExists(p) {
 				shims = append(shims, p)
-				fmt.Printf("  removing command: %s\n", name)
+				found = true
 			}
 		}
+		if found {
+			fmt.Printf("  removing command: %s\n", name)
+		}
 	}
-	if fileExists(startupLnk) {
-		os.Remove(startupLnk)
-		fmt.Println("  removed the startup entry")
+	// Another install may own the startup entry; leave that one alone.
+	if target := shortcutTarget(startupLnk); target != "" {
+		if under(target, root) {
+			os.Remove(startupLnk)
+			fmt.Println("  removed the startup entry")
+		} else {
+			fmt.Printf("  left the startup entry alone (it starts %s)\n", target)
+		}
 	}
 	if disabled := filepath.Join(startupDir, "Ollama.lnk.disabled"); fileExists(disabled) {
 		os.Rename(disabled, filepath.Join(startupDir, "Ollama.lnk"))
@@ -767,4 +775,19 @@ func cmdUnlink() {
 		die("%s", strings.TrimSpace(string(out)))
 	}
 	fmt.Printf("public API on :%d is off\n", funnelPort)
+}
+
+// shortcutTarget reads what a .lnk points at, or "" when there is no shortcut.
+func shortcutTarget(lnk string) string {
+	if !fileExists(lnk) {
+		return ""
+	}
+	out, _ := hiddenPowerShell("(New-Object -ComObject WScript.Shell).CreateShortcut('"+
+		psQuote(lnk)+"').TargetPath", true)
+	return strings.TrimSpace(out)
+}
+
+func under(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && !strings.HasPrefix(rel, "..")
 }
