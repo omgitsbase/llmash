@@ -32,7 +32,7 @@ $Asset = 'llmash-win-x64.zip'
 $Startup   = [Environment]::GetFolderPath('Startup')
 $Lnk       = Join-Path $Startup 'llmash.lnk'
 $RegKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\llmash'
-$Shims     = @('llmash', 'llamash')
+$Shims     = @('llmash')
 $Releases  = 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10'
 
 function Say  ($m) { Write-Host "  $m" }
@@ -138,7 +138,7 @@ if ($Uninstall) {
         $r = Native $exe @('uninstall'); $r.all | ForEach-Object { Write-Host $_ }; return
     }
     Step 'Removing'
-    foreach ($n in $Shims + @('ollama')) {
+    foreach ($n in $Shims + @('ollama', 'llamash')) {
         $f = Join-Path $BinDir "$n.cmd"
         if (Test-Path $f) { Remove-Item $f -Force; Say "removed $n" }
     }

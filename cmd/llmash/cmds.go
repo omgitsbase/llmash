@@ -500,7 +500,9 @@ func cmdTray() {
 
 // ------------------------------------------------------------- uninstall
 
-var shimNames = []string{"llmash", "llmash", "ollama"}
+// Commands the installer puts on PATH. `llamash` was this project's old
+// name and is only here so an uninstall clears it.
+var shimNames = []string{"llmash", "ollama", "llamash"}
 
 func stopServer() int {
 	r := psQuote(root)
