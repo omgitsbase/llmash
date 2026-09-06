@@ -266,19 +266,13 @@ func (in *Instance) args() []string {
 	if m.Projector != "" && fileExists(m.Projector) && (in.Vision || !(blocked || mmprojOnDemand)) {
 		a = append(a, "--mmproj", m.Projector)
 	}
-	// A model's own multi-token-prediction head is trained with its weights, so
-	// it always matches them exactly. A downloaded head is trained against some
-	// other build of the same model and accepts far fewer of its own guesses:
-	// on Qwen3.6-35B-A3B the built-in head ran 308 tok/s against a downloaded
-	// DSpark head's 265, on 60% acceptance against 33%. So the model's own head
-	// wins, unless `pulldraft --force` left a .prefer-draft marker beside it.
-	//
-	// Where a model has no head of its own the downloaded one is worth a great
-	// deal: gemma-4 26B-A4B ran 342 tok/s on a fetched EAGLE-3 head against 244
-	// on ngram self-speculation and 218 on none.
-	ownHead := hasMTP(m.GGUF) && !preferDraft(m.GGUF)
+	// A model's own head is trained with its weights and wins: on
+	// Qwen3.6-35B-A3B it ran 308 tok/s at 60% acceptance against a downloaded
+	// DSpark head's 265 at 33%. Where a model has none, a downloaded head is
+	// worth a great deal: gemma-4 26B-A4B ran 342 tok/s on a fetched EAGLE-3
+	// against 244 on ngram self-speculation and 218 on none.
 	switch {
-	case ownHead:
+	case hasMTP(m.GGUF):
 		a = append(a, "--spec-type", "draft-mtp", "--spec-draft-n-max", strconv.Itoa(mtpDraft))
 	case m.Eagle3 != "" && fileExists(m.Eagle3):
 		a = append(a, "--spec-type", "draft-eagle3", "--model-draft", m.Eagle3, "-ngld", "999",
@@ -290,9 +284,6 @@ func (in *Instance) args() []string {
 	case m.Draft != "" && fileExists(m.Draft):
 		a = append(a, "--spec-type", "draft-simple", "--model-draft", m.Draft, "-ngld", "999",
 			"--spec-draft-n-max", strconv.Itoa(mtpDraft))
-	case hasMTP(m.GGUF):
-		// Marked to prefer a drafter, but none is installed any more.
-		a = append(a, "--spec-type", "draft-mtp", "--spec-draft-n-max", strconv.Itoa(mtpDraft))
 	case specFallback != "" && specFallback != "none":
 		// No drafter of its own: llama.cpp can still speculate from the
 		// text itself, which costs no model and no VRAM.

@@ -52,8 +52,9 @@ already in the context and needs no second model and no extra VRAM.
 if one exists, and `pulldraft` does it on demand. Candidates are read from
 Hugging Face without an account or a token, and each one is checked against the
 model it would serve before anything is downloaded: same vocabulary, an encoder
-shaped for this model's hidden size, and layers this model actually has. A
-model that ships its own head keeps it.
+shaped for this model's hidden size, and layers this model actually has. A model
+with an MTP head of its own is left alone, because that head is trained with the
+weights and measured faster than any downloaded one.
 
 **Settings chosen at launch.** Prompt-prefix reuse, a host-RAM prompt cache
 sized from what is free, a prompt batch wide enough to keep a large card busy,

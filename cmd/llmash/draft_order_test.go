@@ -4,17 +4,10 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// Which drafter a model launches with. The measured order is what this pins:
-// a model's own head beats a downloaded one, because the built-in head is
-// trained on the same weights and accepts roughly twice as many of its own
-// guesses.
-
-// writeStubGGUF makes the smallest file hasMTP and the launcher will read: a
-// header and one tensor name. mtp says whether that name marks an MTP head.
+// The smallest file hasMTP will read: a header and one tensor name.
 func writeStubGGUF(t *testing.T, path string, mtp bool) {
 	t.Helper()
 	name := "blk.0.ffn_down.weight"
@@ -49,6 +42,8 @@ func specTypeIn(args []string) string {
 	return ""
 }
 
+// A model's own head beats a downloaded one: it is trained on the same weights
+// and accepts roughly twice as many of its own guesses.
 func TestDrafterPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("LLMASH_TUNE_OFF", "1")
@@ -83,41 +78,5 @@ func TestDrafterPrecedence(t *testing.T) {
 	}
 	if got := spec(noMTP, ""); got != "ngram-mod" {
 		t.Errorf("a model with no drafter at all should fall back, got %q", got)
-	}
-
-	// asked for, in writing, by pulldraft --force
-	marker := preferMarker(withMTP)
-	if err := os.WriteFile(marker, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := spec(withMTP, eagle); got != "draft-eagle3" {
-		t.Errorf("a marked model should use the drafter that was forced on it, got %q", got)
-	}
-	// the marker outliving the drafter must not cost the model its own head
-	if got := spec(withMTP, ""); got != "draft-mtp" {
-		t.Errorf("a marker with no drafter installed should fall back to the head, got %q", got)
-	}
-	os.Remove(marker)
-	if got := spec(withMTP, eagle); got != "draft-mtp" {
-		t.Errorf("deleting the marker should undo the choice, got %q", got)
-	}
-}
-
-// The marker belongs to one model, not to every model in the folder.
-func TestPreferMarkerIsPerModel(t *testing.T) {
-	dir := t.TempDir()
-	a := filepath.Join(dir, "one.gguf")
-	b := filepath.Join(dir, "two.gguf")
-	if err := os.WriteFile(preferMarker(a), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !preferDraft(a) {
-		t.Error("the model it was written for should read it")
-	}
-	if preferDraft(b) {
-		t.Error("another model in the same folder must not")
-	}
-	if !strings.HasSuffix(preferMarker(a), ".prefer-draft") {
-		t.Errorf("the marker should say what it is, got %s", preferMarker(a))
 	}
 }

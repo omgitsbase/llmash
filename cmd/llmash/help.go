@@ -60,12 +60,12 @@ Usage:
 
 Flags:
   -y, --yes     do not ask before downloading
-      --force   install one even if the model already has a draft head
+      --force   fetch it again when one is already installed
 
 A draft model guesses the next few tokens so the real model can check several
 at once. Hugging Face is searched for one trained against this exact model;
 candidates built for a fine-tune, or packaged for another runtime, are refused.
-A model that already carries its own head keeps it. No account is needed.
+A model with an MTP head of its own is left alone. No account is needed.
 `,
 	"doctor": `Check this machine over and report what is wrong
 

@@ -52,13 +52,6 @@ func installedDrafter(m *Model) string {
 	return ""
 }
 
-// Written by `pulldraft --force`; delete it to undo the choice.
-func preferMarker(gguf string) string {
-	return shardSuffix.ReplaceAllString(stemOf(gguf), "") + ".prefer-draft"
-}
-
-func preferDraft(gguf string) bool { return fileExists(preferMarker(gguf)) }
-
 func verifyDraft(m *Model, path string) error {
 	draft, err := specOfFile(path)
 	if err != nil {
@@ -122,25 +115,15 @@ func cmdPullDraft(name string, yes, force bool) {
 	if m == nil {
 		die("Error: %s is not a local GGUF, so there is nothing to pair a drafter with", name)
 	}
-	installed, builtIn := installedDrafter(m), hasMTP(m.GGUF)
-	if !force {
-		switch {
-		case installed != "":
-			fmt.Printf("%s already has %s installed.\n", name, installed)
-			if builtIn && !preferDraft(m.GGUF) {
-				fmt.Println("Its own MTP head is faster, so that is what it loads with,")
-				fmt.Printf("and the installed one is idle. `%s pulldraft %s --force` switches to it.\n",
-					prog, name)
-				return
-			}
-			fmt.Printf("`%s pulldraft %s --force` fetches it again.\n", prog, name)
-			return
-		case builtIn:
-			fmt.Printf("%s has an MTP head of its own, trained with these exact weights.\n", name)
-			fmt.Println("That measured faster than a downloaded head, so there is nothing to add.")
-			fmt.Printf("`%s pulldraft %s --force` uses a downloaded one anyway.\n", prog, name)
-			return
-		}
+	if hasMTP(m.GGUF) {
+		fmt.Printf("%s has an MTP head of its own, trained with these exact weights.\n", name)
+		fmt.Println("There is nothing to look for.")
+		return
+	}
+	if installed := installedDrafter(m); installed != "" && !force {
+		fmt.Printf("%s already has %s installed.\n", name, installed)
+		fmt.Printf("`%s pulldraft %s --force` fetches it again.\n", prog, name)
+		return
 	}
 
 	fmt.Printf("looking for a draft model for %s\n", name)
@@ -175,14 +158,6 @@ func cmdPullDraft(name string, yes, force bool) {
 		die("could not install it: %v", err)
 	}
 	fmt.Printf("\ninstalled as %s\n", filepath.Base(path))
-	if builtIn {
-		if err := os.WriteFile(preferMarker(m.GGUF), nil, 0o644); err != nil {
-			die("installed, but could not record the choice: %v", err)
-		}
-		fmt.Printf("%s will now use it instead of its own MTP head.\nDelete %s to go back.\n",
-			name, filepath.Base(preferMarker(m.GGUF)))
-		return
-	}
 	fmt.Printf("%s now loads with --spec-type %s.\n", name, best.Kind.specArg)
 }
 
