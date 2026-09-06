@@ -24,32 +24,74 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 RESULTS = HERE / "results.json"
 
+# Three prompts per workload, one per repeat. Repeating a single prompt at
+# temperature 0 lets a self-speculating drafter replay its own previous output,
+# which measured seven times faster here and says nothing about real use.
 WORKLOADS = {
-    "conversation": (
+    "conversation": [
         "Explain to a friend why the sky is blue but sunsets are red. "
-        "Write two or three paragraphs of prose, no lists."
-    ),
-    "coding": (
+        "Two or three paragraphs of prose, no lists.",
+        "Describe how a vinyl record stores and reproduces sound, for someone who has "
+        "never seen one. Two or three paragraphs of prose, no lists.",
+        "Explain why bread rises, and what changes when you use a sourdough starter "
+        "instead of dried yeast. Two or three paragraphs of prose, no lists.",
+    ],
+    "coding": [
         "Write a Python class LRUCache with get and put in O(1), using a dict and a "
         "doubly linked list. Include the node class, a docstring on every method, and "
-        "a short example of use at the end."
-    ),
-    "thinking": (
+        "a short example of use.",
+        "Write a Go function that walks a directory tree concurrently with a worker pool "
+        "and returns the ten largest files. Handle errors, bound the goroutines, and "
+        "include the struct definitions.",
+        "Write a SQL schema for a library lending system: books, copies, members, loans "
+        "and reservations. Add the indexes you would want, and one query that finds "
+        "overdue loans with the member's name.",
+    ],
+    "thinking": [
         "A train leaves A at 9:00 travelling 60 km/h. Another leaves B at 9:40 travelling "
-        "90 km/h toward A. A and B are 300 km apart. At what time do they meet, and how far "
-        "from A? Work through it step by step, then state the answer."
-    ),
+        "90 km/h toward A. A and B are 300 km apart. When do they meet, and how far from A? "
+        "Work through it step by step, then state the answer.",
+        "Three switches downstairs control three bulbs upstairs. You may flip switches as "
+        "much as you like, but you may go upstairs only once. How do you tell which switch "
+        "controls which bulb? Reason it out, then give the procedure.",
+        "You have a 12-litre jug, an 8-litre jug and a 5-litre jug. The 12 is full, the "
+        "others empty, and there are no markings. Split the water into two equal parts. "
+        "Work through the pourings, then list them.",
+    ],
 }
 
 
-def stream(url, body, timeout=900):
-    """One streamed completion: (tokens, seconds spent generating, characters)."""
-    body = dict(body, stream=True, stream_options={"include_usage": True})
+def post(url, body, timeout=900):
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(), method="POST",
         headers={"Content-Type": "application/json"})
-    chars, chunks, first, last, reported = 0, 0, None, None, None
     with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+def via_ollama(base, model, prompt, max_tokens, temperature):
+    """Ollama's own API, which both Ollama and llmash speak. eval_count and
+    eval_duration are the server's own decode figures, so thinking tokens count
+    and neither the load nor the prompt does."""
+    body = {"model": model, "stream": False,
+            "options": {"num_predict": max_tokens, "temperature": temperature},
+            "messages": [{"role": "user", "content": prompt}]}
+    d = post(base.rstrip("/") + "/api/chat", body)
+    tokens = d.get("eval_count") or 0
+    secs = (d.get("eval_duration") or 0) / 1e9
+    return tokens, secs
+
+
+def via_openai(base, model, prompt, max_tokens, temperature):
+    """Streamed OpenAI completion, timed between the first and last token."""
+    body = {"model": model, "max_tokens": max_tokens, "temperature": temperature,
+            "stream": True, "stream_options": {"include_usage": True},
+            "messages": [{"role": "user", "content": prompt}]}
+    req = urllib.request.Request(
+        base.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+        method="POST", headers={"Content-Type": "application/json"})
+    chunks, first, last, reported = 0, None, None, None
+    with urllib.request.urlopen(req, timeout=900) as r:
         for raw in r:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -65,44 +107,41 @@ def stream(url, body, timeout=900):
                 reported = ev["usage"].get("completion_tokens") or reported
             for choice in ev.get("choices") or []:
                 delta = choice.get("delta") or {}
-                piece = (delta.get("content") or "") + (delta.get("reasoning_content") or "")
+                piece = "".join(str(delta.get(k) or "") for k in
+                                ("content", "reasoning_content", "reasoning", "thinking"))
                 if not piece:
                     continue
                 now = time.perf_counter()
-                if first is None:
-                    first = now
+                first = first if first is not None else now
                 last = now
                 chunks += 1
-                chars += len(piece)
     if first is None or last is None or last <= first:
-        return 0, 0.0, chars
-    # Prefer the server's count; fall back to chunks, which is one token per
-    # chunk on every backend measured here.
-    return (reported or chunks), last - first, chars
+        return 0, 0.0
+    return (reported or chunks), last - first
 
 
-def run_one(url, model, prompt, max_tokens, temperature):
-    body = {"model": model, "max_tokens": max_tokens, "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}]}
-    return stream(url.rstrip("/") + "/chat/completions", body)
+def run_one(base, api, model, prompt, max_tokens, temperature):
+    fn = via_ollama if api == "ollama" else via_openai
+    return fn(base, model, prompt, max_tokens, temperature)
 
 
-def warm(url, model):
+def warm(base, api, model):
     """One short request, so weights, graphs and caches are hot before timing."""
     try:
-        run_one(url, model, "Say ok.", 16, 0.0)
+        run_one(base, api, model, "Say ok.", 16, 0.0)
     except (urllib.error.URLError, OSError) as e:
         print(f"  warm-up failed: {e}")
 
 
 def measure(args):
     rows = []
-    warm(args.url, args.model)
-    for name, prompt in WORKLOADS.items():
+    warm(args.url, args.api, args.model)
+    for name, prompts in WORKLOADS.items():
         rates, notes = [], []
-        for _ in range(args.repeat):
-            tokens, secs, chars = run_one(args.url, args.model, prompt,
-                                          args.max_tokens, args.temperature)
+        for i in range(args.repeat):
+            prompt = prompts[i % len(prompts)]
+            tokens, secs = run_one(args.url, args.api, args.model, prompt,
+                                   args.max_tokens, args.temperature)
             if tokens < args.min_tokens or secs <= 0:
                 notes.append(f"{tokens}t discarded")
                 continue
@@ -168,7 +207,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--backend", choices=["ollama", "vllm", "llmash"])
-    p.add_argument("--url", default="http://127.0.0.1:11434/v1")
+    p.add_argument("--url", default="http://127.0.0.1:11434",
+                   help="server root, without /v1")
+    p.add_argument("--api", choices=["ollama", "openai"], default="ollama",
+                   help="ollama: /api/chat with the server's own decode timing. "
+                        "openai: /v1 streamed, timed between first and last token.")
     p.add_argument("--model")
     p.add_argument("--label", help="how the model is named in the table")
     p.add_argument("--max-tokens", type=int, default=600)

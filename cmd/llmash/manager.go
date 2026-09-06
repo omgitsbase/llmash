@@ -266,7 +266,16 @@ func (in *Instance) args() []string {
 	if m.Projector != "" && fileExists(m.Projector) && (in.Vision || !(blocked || mmprojOnDemand)) {
 		a = append(a, "--mmproj", m.Projector)
 	}
+	// A model's own multi-token-prediction head is trained with its weights and
+	// costs no extra file, so `pulldraft` refuses to install over one. A drafter
+	// file sitting beside a model is therefore always a deliberate act, either
+	// because the model has no head of its own or because --force was used, and
+	// it takes precedence here.
 	switch {
+	case m.Eagle3 != "" && fileExists(m.Eagle3):
+		a = append(a, "--spec-type", "draft-eagle3", "--model-draft", m.Eagle3, "-ngld", "999",
+			"--spec-draft-n-max", strconv.Itoa(mtpDraft))
+		in.specNote = "eagle3"
 	case m.Dspark != "" && fileExists(m.Dspark):
 		a = append(a, "--spec-type", "draft-dspark", "--model-draft", m.Dspark, "-ngld", "999",
 			"--spec-draft-n-max", strconv.Itoa(dsparkDraft), "--spec-draft-n-min", strconv.Itoa(dsparkDraftMin))

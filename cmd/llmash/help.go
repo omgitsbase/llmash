@@ -27,6 +27,7 @@ Available Commands:
   link         Expose the server publicly over Tailscale Funnel
   unlink       Take the public API back down
   tray         Show the notification-area icon
+  pulldraft    Find and install a draft model to make a model faster
   doctor       Check this machine over and report what is wrong
   update       Update llmash from the host it was installed from
   uninstall    Remove llmash from this machine
@@ -51,6 +52,20 @@ var commandHelp = map[string]string{
 
 Usage:
   llmash install MODEL [flags]
+`,
+	"pulldraft": `Find and install a draft model to make a model faster
+
+Usage:
+  llmash pulldraft MODEL [flags]
+
+Flags:
+  -y, --yes     do not ask before downloading
+      --force   install one even if the model already has a draft head
+
+A draft model guesses the next few tokens so the real model can check several
+at once. Hugging Face is searched for one trained against this exact model;
+candidates built for a fine-tune, or packaged for another runtime, are refused.
+A model that already carries its own head keeps it. No account is needed.
 `,
 	"doctor": `Check this machine over and report what is wrong
 
@@ -178,6 +193,7 @@ Usage:
 Flags:
   -h, --help       help for pull
       --insecure   Use an insecure registry
+      --no-draft   do not offer to fetch a draft model afterwards
 ` + hostEnv,
 	"push": `Push a model to a registry
 

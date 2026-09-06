@@ -123,6 +123,14 @@ func findDspark(gguf string) string {
 	return ""
 }
 
+func findEagle3(gguf string) string {
+	stem := shardSuffix.ReplaceAllString(stemOf(gguf), "")
+	if c := filepath.Join(filepath.Dir(gguf), stem+".eagle3.gguf"); fileExists(c) {
+		return c
+	}
+	return ""
+}
+
 func findDraft(gguf string) string {
 	stem := shardSuffix.ReplaceAllString(stemOf(gguf), "")
 	c := filepath.Join(filepath.Dir(gguf), stem+".draft.gguf")
@@ -377,6 +385,7 @@ type Model struct {
 	Digest      string
 	Projector   string
 	Draft       string
+	Eagle3      string
 	Dspark      string
 	Template    string
 	System      string
@@ -614,6 +623,7 @@ func (r *Registry) loadLoose(p string, deep bool) *Model {
 	m.Template = metaStr(meta, "tokenizer.chat_template")
 	m.Projector = findProjector(p, meta)
 	m.Draft = findDraft(p)
+	m.Eagle3 = findEagle3(p)
 	m.Dspark = findDspark(p)
 	pub := hfCaps(hfRepoOf(meta), filepath.Dir(p))
 	m.Caps = capsFor(m.Projector, m.Template, arch, pub, isEmbedding(meta, arch))
@@ -668,6 +678,7 @@ func (r *Registry) loadManifest(mf, name string, deep bool) *Model {
 		m.Modified = float64(st.ModTime().UnixNano()) / 1e9
 	}
 	m.Draft = findDraft(m.GGUF)
+	m.Eagle3 = findEagle3(m.GGUF)
 	m.Dspark = findDspark(m.GGUF)
 	if data.Config.Digest != "" {
 		if t, err := os.ReadFile(r.blob(data.Config.Digest)); err == nil {

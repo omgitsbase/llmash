@@ -1,0 +1,64 @@
+{
+  "models": {
+    "gemma-4 26B-A4B (Q4_K_M)": {
+      "llmash": {
+        "measured": "2026-09-06",
+        "model_id": "gemma4:26b",
+        "workloads": {
+          "conversation": 177.6,
+          "coding": 179.1,
+          "thinking": 179.8
+        }
+      },
+      "ollama": {
+        "measured": "2026-09-06",
+        "model_id": "bench-gemma4:26b",
+        "workloads": {
+          "conversation": 173.0,
+          "coding": 189.5,
+          "thinking": 118.5
+        }
+      }
+    },
+    "Qwen3.6 35B-A3B (IQ4_XS)": {
+      "llmash": {
+        "measured": "2026-09-06",
+        "model_id": "nail-qwen3.6-35b-a3b-mtp-ud:gguf",
+        "workloads": {
+          "conversation": 513.2,
+          "coding": 599.6,
+          "thinking": 596.7
+        }
+      },
+      "ollama": {
+        "measured": "2026-09-06",
+        "model_id": "bench-qwen36:a3b",
+        "workloads": {
+          "conversation": 129.8,
+          "coding": 120.3,
+          "thinking": 226.8
+        }
+      }
+    },
+    "Qwen3.8 27B (Q4_K_XL)": {
+      "llmash": {
+        "measured": "2026-09-06",
+        "model_id": "dirk:gguf",
+        "workloads": {
+          "conversation": 136.5,
+          "coding": 135.5,
+          "thinking": 147.0
+        }
+      },
+      "ollama": {
+        "measured": "2026-09-06",
+        "model_id": "bench-qwen38:27b",
+        "workloads": {
+          "conversation": 63.1,
+          "coding": 62.3,
+          "thinking": 63.4
+        }
+      }
+    }
+  }
+}
