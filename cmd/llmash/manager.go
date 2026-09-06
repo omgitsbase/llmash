@@ -266,12 +266,16 @@ func (in *Instance) args() []string {
 	if m.Projector != "" && fileExists(m.Projector) && (in.Vision || !(blocked || mmprojOnDemand)) {
 		a = append(a, "--mmproj", m.Projector)
 	}
-	// A model's own multi-token-prediction head is trained with its weights and
-	// costs no extra file, so `pulldraft` refuses to install over one. A drafter
-	// file sitting beside a model is therefore always a deliberate act, either
-	// because the model has no head of its own or because --force was used, and
-	// it takes precedence here.
+	// A model's own multi-token-prediction head is trained with its weights, so
+	// it always matches them exactly. A downloaded head is trained against some
+	// other build of the same model and accepts far fewer of its own guesses:
+	// on Qwen3.6-35B-A3B the built-in head ran 308 tok/s against a downloaded
+	// DSpark head's 265, on 60% acceptance against 33%. So the model's own head
+	// wins, unless `pulldraft --force` left a .prefer-draft marker beside it.
+	ownHead := hasMTP(m.GGUF) && !preferDraft(m.GGUF)
 	switch {
+	case ownHead:
+		a = append(a, "--spec-type", "draft-mtp", "--spec-draft-n-max", strconv.Itoa(mtpDraft))
 	case m.Eagle3 != "" && fileExists(m.Eagle3):
 		a = append(a, "--spec-type", "draft-eagle3", "--model-draft", m.Eagle3, "-ngld", "999",
 			"--spec-draft-n-max", strconv.Itoa(mtpDraft))
@@ -283,6 +287,7 @@ func (in *Instance) args() []string {
 		a = append(a, "--spec-type", "draft-simple", "--model-draft", m.Draft, "-ngld", "999",
 			"--spec-draft-n-max", strconv.Itoa(mtpDraft))
 	case hasMTP(m.GGUF):
+		// Marked to prefer a drafter, but none is installed any more.
 		a = append(a, "--spec-type", "draft-mtp", "--spec-draft-n-max", strconv.Itoa(mtpDraft))
 	case specFallback != "" && specFallback != "none":
 		// No drafter of its own: llama.cpp can still speculate from the
