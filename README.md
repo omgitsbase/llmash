@@ -119,6 +119,7 @@ Optional. `local.json` next to the program, or environment variables.
 | `LLMASH_PORT` | local API port (default 11434) |
 | `LLMASH_CTX` | default context length (default 8192) |
 | `LLMASH_KV` | K/V cache type, `f16` or `q8_0` |
+| `LLMASH_PARALLEL` | server slots (default 1; raise it to serve several at once) |
 | `LLMASH_VRAM_GB` | budget for resident models |
 | `LLMASH_PIN` | comma-separated models never evicted |
 | `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`) |

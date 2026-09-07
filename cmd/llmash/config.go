@@ -166,7 +166,11 @@ func loadConfig() {
 	ramFloorGB = envFloat("LLMASH_RAM_FLOOR", 12)
 	vramHeadroomGB = envFloat("LLMASH_VRAM_HEADROOM", 6)
 	busyGrace = envFloat("LLMASH_BUSY_GRACE", 120)
-	nParallel = envInt("LLMASH_PARALLEL", 4)
+	// Four slots split the KV cache four ways and cost about 6% of decode
+	// speed even when only one is in use, measured on Qwen3.6-35B-A3B at
+	// 318 tok/s on one slot against 300 on four. One personal server rarely
+	// serves four conversations at once, so one is the default.
+	nParallel = envInt("LLMASH_PARALLEL", 1)
 	mtpDraft = envInt("LLMASH_MTP_DRAFT", 4)
 	dsparkDraft = envInt("LLMASH_DSPARK_DRAFT", 6)
 	dsparkDraftMin = envInt("LLMASH_DSPARK_DRAFT_MIN", 6)
