@@ -143,6 +143,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/show", apiShow)
 	mux.HandleFunc("/api/delete", apiDelete)
 	mux.HandleFunc("/api/pull", apiPull)
+	mux.HandleFunc("/api/quants", apiQuants)
 	mux.HandleFunc("/api/chat", apiChat)
 	mux.HandleFunc("/api/generate", apiGenerate)
 	mux.HandleFunc("/api/embed", apiEmbed)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -350,8 +351,11 @@ func human(n float64) string {
 
 // One bar per layer and a spinner for every other status, the way
 // `ollama pull` draws them.
-func cmdPull(model string) {
+func cmdPull(model string, quant string) {
 	needServer()
+	if quant == "" && isHFRef(model) && !strings.Contains(model, "@") && isConsole(os.Stdin) && isConsole(os.Stdout) {
+		quant = chooseQuant(model)
+	}
 	p := newProgress(os.Stderr)
 	defer p.stop()
 	bars := map[string]*progBar{}
@@ -359,7 +363,11 @@ func cmdPull(model string) {
 	var spin *progSpinner
 	var failed string
 
-	err := stream(context.Background(), "/api/pull", map[string]any{"model": model}, func(ev map[string]any) bool {
+	body := map[string]any{"model": model}
+	if quant != "" {
+		body["quant"] = quant
+	}
+	err := stream(context.Background(), "/api/pull", body, func(ev map[string]any) bool {
 		if e := str(ev, "error"); e != "" {
 			failed = e
 			return false
@@ -792,4 +800,80 @@ func shortcutTarget(lnk string) string {
 func under(path, dir string) bool {
 	rel, err := filepath.Rel(dir, path)
 	return err == nil && !strings.HasPrefix(rel, "..")
+}
+
+func isHFRef(name string) bool {
+	for _, p := range hfPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// chooseQuant lists the builds a repository offers and takes a choice. Enter
+// keeps the default, which is the Q4_K_M build when there is one.
+func chooseQuant(model string) string {
+	d, r, err := callJSON("GET", "/api/quants?repo="+url.QueryEscape(model), nil, 60*time.Second)
+	if err != nil || r.StatusCode != 200 {
+		return ""
+	}
+	quants := list(d, "quants")
+	if len(quants) < 2 {
+		return ""
+	}
+	def := -1
+	for i, q := range quants {
+		if m, _ := q.(map[string]any); strings.EqualFold(str(m, "name"), "Q4_K_M") {
+			def = i
+		}
+	}
+	repo := strings.TrimPrefix(strings.TrimPrefix(model, "hf.co/"), "hf:")
+	fmt.Printf("%s offers %d builds:\n", repo, len(quants))
+	for i, q := range quants {
+		m, _ := q.(map[string]any)
+		mark := "  "
+		if i == def {
+			mark = "* "
+		}
+		files := ""
+		if n := int(num(m, "files")); n > 1 {
+			files = fmt.Sprintf("  (%d files)", n)
+		}
+		fmt.Printf("  %s%2d. %-14s %8s%s\n", mark, i+1, str(m, "name"), humanBytes(int64(num(m, "size"))), files)
+	}
+	if def >= 0 {
+		fmt.Printf("Which one? [%d] ", def+1)
+	} else {
+		fmt.Print("Which one? ")
+	}
+	var buf []byte
+	for {
+		ch := getch()
+		switch {
+		case ch == '\r' || ch == '\n':
+			fmt.Println()
+			n := def
+			if len(buf) > 0 {
+				fmt.Sscanf(string(buf), "%d", &n)
+				n--
+			}
+			if n >= 0 && n < len(quants) {
+				m, _ := quants[n].(map[string]any)
+				return str(m, "name")
+			}
+			return ""
+		case ch == 0x1b || ch == 0x03:
+			fmt.Println()
+			return ""
+		case ch >= '0' && ch <= '9':
+			buf = append(buf, ch)
+			fmt.Print(string(ch))
+		case ch == 8 || ch == 127:
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+				fmt.Print("\b \b")
+			}
+		}
+	}
 }
