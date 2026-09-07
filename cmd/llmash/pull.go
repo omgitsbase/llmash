@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -163,6 +164,60 @@ var (
 
 // fetchBlocks downloads url into tmp with several ranged connections at once,
 // keeping a block map beside it so an interrupted download resumes.
+// fetchBlob pulls a file by ranged blocks over several connections when the
+// server honours ranges, and over one connection when it does not. The
+// registry answers a ranged GET with 206 from its CDN; anything that answers
+// 200 gets the whole file on the stream it opened.
+func fetchBlob(ctx context.Context, url, tmp string, total int64, progress func(int64)) error {
+	if total > 2*dlBlock {
+		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req.Header.Set("Range", "bytes=0-0")
+		resp, err := pullClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 206 {
+				return fetchBlocks(ctx, url, tmp, total, progress)
+			}
+		}
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := pullClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	fh, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	defer fh.Close()
+	var done int64
+	last := time.Time{}
+	buf := make([]byte, 1<<20)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := fh.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			done += int64(n)
+			if time.Since(last) > 200*time.Millisecond {
+				last = time.Now()
+				progress(done)
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
 func fetchBlocks(ctx context.Context, url, tmp string, total int64, progress func(int64)) error {
 	nblocks := (total + dlBlock - 1) / dlBlock
 	if nblocks < 1 {
@@ -465,42 +520,13 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 		}
 		os.MkdirAll(filepath.Dir(dest), 0o755)
 		tmp := dest + ".partial"
-		req, _ := http.NewRequestWithContext(ctx, "GET", base+"/blobs/"+layer.Digest, nil)
-		resp, err := pullClient.Do(req)
-		if err != nil {
-			emit(errorObj(fmt.Sprintf("%T: %v", err, err)))
+		url := base + "/blobs/" + layer.Digest
+		if err := fetchBlob(ctx, url, tmp, total, func(done int64) {
+			emit(map[string]any{"status": "pulling " + short, "digest": layer.Digest, "total": total, "completed": done})
+		}); err != nil {
+			emit(errorObj(fmt.Sprintf("%s: %v", short, err)))
 			return
 		}
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			emit(errorObj(fmt.Sprintf("blob %d for %s", resp.StatusCode, short)))
-			return
-		}
-		fh, err := os.Create(tmp)
-		if err != nil {
-			resp.Body.Close()
-			emit(errorObj(err.Error()))
-			return
-		}
-		var done int64
-		last := time.Time{}
-		buf := make([]byte, 1<<20)
-		for {
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				fh.Write(buf[:n])
-				done += int64(n)
-				if time.Since(last) > 200*time.Millisecond {
-					last = time.Now()
-					emit(map[string]any{"status": "pulling " + short, "digest": layer.Digest, "total": total, "completed": done})
-				}
-			}
-			if err != nil {
-				break
-			}
-		}
-		fh.Close()
-		resp.Body.Close()
 		os.Rename(tmp, dest)
 		emit(map[string]any{"status": "pulling " + short, "digest": layer.Digest, "total": total, "completed": total})
 	}
@@ -523,10 +549,14 @@ func apiPull(w http.ResponseWriter, r *http.Request) {
 	ref := first(str(body, "model"), str(body, "name"))
 	n := newNDJSON(w)
 	emit := func(ev map[string]any) { n.send(ev) }
+	quant := str(body, "quant")
 	for _, p := range hfPrefixes {
 		if strings.HasPrefix(ref, p) {
 			spec := ref[len(p):]
 			repo, q, _ := strings.Cut(spec, "@")
+			if quant != "" {
+				q = quant
+			}
 			if q == "" {
 				q = "Q4_K_M"
 			}
@@ -536,8 +566,72 @@ func apiPull(w http.ResponseWriter, r *http.Request) {
 	}
 	fromOllama, _ := body["from_ollama"].(bool)
 	if rep, ok := hfReplacements[ref]; ok && !fromOllama {
-		hfPull(r.Context(), rep[0], rep[1], emit)
+		hfPull(r.Context(), rep[0], first(quant, rep[1]), emit)
 		return
 	}
 	registryPull(r.Context(), ref, emit)
+}
+
+// apiQuants lists the GGUF builds a Hugging Face repository offers, by
+// quantisation, with the size of each, so a pull can choose one.
+func apiQuants(w http.ResponseWriter, r *http.Request) {
+	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
+	for _, p := range hfPrefixes {
+		repo = strings.TrimPrefix(repo, p)
+	}
+	repo, _, _ = strings.Cut(repo, "@")
+	files, err := hfFiles(r.Context(), repo)
+	if err != nil {
+		writeJSON(w, 502, errorObj(err.Error()))
+		return
+	}
+	writeJSON(w, 200, map[string]any{"repo": repo, "quants": quantsOf(files)})
+}
+
+type quantInfo struct {
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	Files int    `json:"files"`
+}
+
+// quantsOf groups a repository's GGUF files by quantisation. Shards count
+// towards one build; projectors are left out.
+func quantsOf(files []hfFile) []quantInfo {
+	byQuant := map[string]*quantInfo{}
+	var order []string
+	for _, f := range files {
+		low := strings.ToLower(f.Name)
+		if !strings.HasSuffix(low, ".gguf") || strings.Contains(low, "mmproj") {
+			continue
+		}
+		q := quantTag(f.Name)
+		if q == "" {
+			continue
+		}
+		qi, ok := byQuant[q]
+		if !ok {
+			qi = &quantInfo{Name: q}
+			byQuant[q] = qi
+			order = append(order, q)
+		}
+		qi.Size += f.Size
+		qi.Files++
+	}
+	out := make([]quantInfo, 0, len(order))
+	for _, q := range order {
+		out = append(out, *byQuant[q])
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Size < out[j].Size })
+	return out
+}
+
+var quantTagRe = regexp.MustCompile(`(?i)(?:^|[-_.])((?:UD-)?(?:IQ|Q|TQ)[1-8](?:_[0-9A-Z]+)*|BF16|F16|F32|MXFP4(?:_MOE)?|NVFP4)(?:[-_.]|$)`)
+
+// quantTag pulls the quantisation out of a GGUF file name.
+func quantTag(name string) string {
+	m := quantTagRe.FindStringSubmatch(name)
+	if m == nil {
+		return ""
+	}
+	return strings.ToUpper(m[1])
 }

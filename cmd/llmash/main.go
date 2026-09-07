@@ -169,11 +169,11 @@ func main() {
 	case "show":
 		cmdShow(parseShow(rest))
 	case "pull", "install":
-		o := parseSimple(rest, map[string]bool{"--insecure": true, "--draft": true, "--no-draft": true}, nil)
+		o := parseSimple(rest, map[string]bool{"--insecure": true, "--draft": true, "--no-draft": true}, map[string]bool{"--quant": true, "-q": true})
 		if len(o.pos) < 1 {
 			die("Error: requires at least 1 arg(s), only received 0")
 		}
-		cmdPull(o.pos[0])
+		cmdPull(o.pos[0], first(o.vals["--quant"], o.vals["-q"]))
 		if !o.flags["--no-draft"] {
 			offerDraft(o.pos[0])
 		}

@@ -192,8 +192,13 @@ Usage:
 
 Flags:
   -h, --help       help for pull
+  -q, --quant Q    which build of a Hugging Face repository to take (Q4_K_M, IQ4_XS, Q8_0 ...)
       --insecure   Use an insecure registry
       --no-draft   do not offer to fetch a draft model afterwards
+
+A Hugging Face repository is written hf.co/<org>/<repo>. Without --quant, the
+builds it offers are listed and one is chosen; hf.co/<org>/<repo>@<quant> names
+one directly. Files come down over several connections at once.
 ` + hostEnv,
 	"push": `Push a model to a registry
 

@@ -222,7 +222,7 @@ func showOrPull(name string) map[string]any {
 	if code != 404 {
 		die("Error: %s", first(str(d, "error"), "could not read that model"))
 	}
-	cmdPull(name)
+	cmdPull(name, "")
 	offerDraft(name)
 	d, code = showModel(name)
 	if code != 200 {
