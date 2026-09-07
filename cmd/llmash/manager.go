@@ -338,10 +338,11 @@ func explainLoadFailure(raw string) string {
 		return "This llama.cpp build does not know this model's architecture, which usually means the runtime is older " +
 			"than the model. Run `llmash update -Runtime cuda` (or vulkan, or cpu) to replace the runtime in " +
 			runtimeDir() + "."
-	case strings.Contains(low, "wrong number of tensors") || strings.Contains(low, "dimension_sections") ||
+	case strings.Contains(low, "wrong number of tensors") || strings.Contains(low, "check_tensor_dims") ||
 		strings.Contains(low, "unknown model architecture"):
-		return "This is an Ollama-packaged build that bundles its vision or audio encoders into one file, which llama.cpp " +
-			"does not load. Run `llmash pull` for this model again: it now takes the HuggingFace build instead."
+		return "llama.cpp cannot load this Ollama-packaged build: it does not carry the tensors llama.cpp expects for " +
+			"this architecture, which happens when a model is packaged for Ollama's own fork. Run `llmash pull` for " +
+			"this model again to take the Hugging Face build instead."
 	case strings.Contains(low, "unable to allocate") || strings.Contains(low, "out of memory") || strings.Contains(low, "cudamalloc"):
 		return "Not enough VRAM to load this model at the requested context size. Lower the context window, or unload whatever else is resident."
 	case strings.Contains(low, "failed to fit") || strings.Contains(low, "common_fit_params"):
