@@ -23,6 +23,7 @@ type draftKind struct {
 }
 
 var draftKinds = []draftKind{
+	{"mtp", "draft-mtp", 50, nil},
 	{"eagle3", "draft-eagle3", 40, []string{"eagle3", "eagle-3", "eagle_3"}},
 	{"dspark", "draft-dspark", 30, []string{"dspark", "d-spark"}},
 	{"dflash", "draft-dflash", 20, []string{"dflash", "d-flash"}},
@@ -31,6 +32,15 @@ var draftKinds = []draftKind{
 
 func kindOf(text string) *draftKind {
 	low := strings.ToLower(text)
+	base := low
+	if i := strings.LastIndexAny(base, "/\\"); i >= 0 {
+		base = base[i+1:]
+	}
+	// an MTP head is published next to its model as mtp-<model>.gguf; the
+	// word alone also names models that carry a head of their own
+	if strings.HasPrefix(base, "mtp-") || strings.HasPrefix(base, "mtp_") || strings.Contains(base, ".mtp.") {
+		return &draftKinds[0]
+	}
 	for i := range draftKinds {
 		for _, w := range draftKinds[i].words {
 			if strings.Contains(low, w) {

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const fallbackVersion = "0.3.1"
+const fallbackVersion = "0.3.2"
 
 var (
 	prog string // what was typed: llmash, llmash, ollama
@@ -173,10 +173,7 @@ func main() {
 		if len(o.pos) < 1 {
 			die("Error: requires at least 1 arg(s), only received 0")
 		}
-		cmdPull(o.pos[0], first(o.vals["--quant"], o.vals["-q"]))
-		if !o.flags["--no-draft"] {
-			offerDraft(o.pos[0])
-		}
+		cmdPull(o.pos[0], first(o.vals["--quant"], o.vals["-q"]), !o.flags["--no-draft"])
 	case "rm":
 		o := parseSimple(rest, nil, nil)
 		if len(o.pos) < 1 {

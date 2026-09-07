@@ -89,31 +89,36 @@ func hfFiles(ctx context.Context, repo string) ([]hfFile, error) {
 }
 
 func pickGGUF(files []hfFile, quant string) []hfFile {
+	var builds []hfFile
+	for _, f := range files {
+		low := strings.ToLower(f.Name)
+		if strings.HasSuffix(low, ".gguf") && !strings.Contains(low, "mmproj") && kindOf(f.Name) == nil {
+			builds = append(builds, f)
+		}
+	}
 	q := strings.ToLower(quant)
 	var cand []hfFile
-	for _, f := range files {
-		if strings.Contains(strings.ToLower(f.Name), q) {
+	for _, f := range builds {
+		if strings.EqualFold(quantTag(f.Name), quant) || (q != "" && strings.Contains(strings.ToLower(f.Name), q)) {
 			cand = append(cand, f)
 		}
 	}
 	if len(cand) == 0 {
-		for _, f := range files {
-			if strings.Contains(strings.ToLower(f.Name), "q4_k_m") {
-				cand = append(cand, f)
+		// the nearest build to the one asked for; a full-precision file is
+		// the last resort, never the fallback
+		for _, near := range []string{"Q4_K_M", "Q4_K_S", "Q4_0", "IQ4_XS", "Q5_K_M", "Q6_K", "Q8_0", "Q4_1", "Q5_K_S", "Q3_K_M"} {
+			for _, f := range builds {
+				if strings.EqualFold(quantTag(f.Name), near) {
+					cand = append(cand, f)
+				}
+			}
+			if len(cand) > 0 {
+				break
 			}
 		}
-		if len(cand) == 0 {
-			cand = files
-		}
 	}
-	var main []hfFile
-	for _, f := range cand {
-		if !strings.Contains(strings.ToLower(f.Name), "mmproj") {
-			main = append(main, f)
-		}
-	}
-	if len(main) > 0 {
-		cand = main
+	if len(cand) == 0 {
+		cand = builds
 	}
 	var shards []hfFile
 	for _, f := range cand {
@@ -129,7 +134,7 @@ func pickGGUF(files []hfFile, quant string) []hfFile {
 		return nil
 	}
 	sort.Slice(cand, func(i, j int) bool { return cand[i].Size < cand[j].Size })
-	return []hfFile{cand[len(cand)-1]}
+	return []hfFile{cand[0]}
 }
 
 func pickMmproj(files []hfFile) *hfFile {
@@ -442,6 +447,8 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 			select {
 			case err := <-doneCh:
 				if err != nil {
+					os.Remove(tmp)
+					os.Remove(idxPath)
 					emit(errorObj(fmt.Sprintf("%T: %v", err, err)))
 					return "", false
 				}
@@ -453,11 +460,12 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 				if n > total {
 					n = total
 				}
-				emit(map[string]any{"status": "pulling " + j.saveAs, "total": total, "completed": n})
+				emit(map[string]any{"status": "pulling " + j.saveAs, "digest": j.saveAs, "total": total, "completed": n})
 			}
 		}
 		os.Rename(tmp, dest)
-		emit(map[string]any{"status": "pulling " + j.saveAs, "total": total, "completed": total})
+		reg.markComplete(dest)
+		emit(map[string]any{"status": "pulling " + j.saveAs, "digest": j.saveAs, "total": total, "completed": total})
 	}
 	reg.Invalidate()
 	cliInvalidate()
@@ -552,7 +560,7 @@ var familyDigits = regexp.MustCompile(`([a-zA-Z])(\d)`)
 // hfEquivalent finds the Hugging Face GGUF repository that carries the same
 // model as a registry reference: same family, same size, from a quantiser
 // whose files are known to load.
-func hfEquivalent(repo, tag string, meta map[string]any) (string, bool) {
+func hfEquivalent(ctx context.Context, repo, tag string, meta map[string]any, quant string) (string, bool) {
 	family := repo
 	if i := strings.LastIndex(family, "/"); i >= 0 {
 		family = family[i+1:]
@@ -578,7 +586,11 @@ func hfEquivalent(repo, tag string, meta map[string]any) (string, bool) {
 	orgRank := map[string]int{"ggml-org": 5, "unsloth": 4, "bartowski": 3, "lmstudio-community": 2}
 	markers := []string{"abliterat", "uncensored", "heretic", "distill", "merge", "roleplay", "mobile", "caption"}
 	seen := map[string]bool{}
-	best, bestScore := "", -1
+	type scored struct {
+		id    string
+		score int
+	}
+	var cands []scored
 	for _, q := range queries {
 		for _, hit := range hubSearch(q, 40) {
 			if seen[hit.ID] || !strings.Contains(hit.ID, "/") {
@@ -607,81 +619,209 @@ func hfEquivalent(repo, tag string, meta map[string]any) (string, bool) {
 				score -= 20
 			}
 			score += int(math.Log10(float64(hit.Downloads)+1)) * 3
-			if score > bestScore {
-				best, bestScore = hit.ID, score
+			cands = append(cands, scored{hit.ID, score})
+		}
+	}
+	if len(cands) == 0 {
+		return "", false
+	}
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
+	// among the well-ranked, the one that has the build asked for
+	for i, c := range cands {
+		if i == 4 {
+			break
+		}
+		files, err := hfFiles(ctx, c.id)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if strings.EqualFold(quantTag(f.Name), quant) && kindOf(f.Name) == nil && !strings.Contains(strings.ToLower(f.Name), "mmproj") {
+				return c.id, true
 			}
 		}
 	}
-	return best, best != ""
+	return cands[0].id, true
 }
 
-func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
+type registryLayer struct {
+	MediaType string `json:"mediaType"`
+	Digest    string `json:"digest"`
+	Size      int64  `json:"size"`
+}
+
+type registryManifest struct {
+	Layers []registryLayer `json:"layers"`
+	Config *registryLayer  `json:"config"`
+	host   string
+	repo   string
+	tag    string
+	raw    []byte
+}
+
+func (m registryManifest) name() string {
+	n := m.repo + ":" + m.tag
+	if m.host == ollamaRegistry {
+		n = strings.TrimPrefix(n, "library/")
+	}
+	return n
+}
+
+func (m registryManifest) base() string { return "https://" + m.host + "/v2/" + m.repo }
+
+func (m registryManifest) path() string {
+	return filepath.Join(reg.Manifests, m.host, filepath.FromSlash(m.repo), m.tag)
+}
+
+func fetchManifest(ctx context.Context, ref string) (registryManifest, error) {
 	host, repo, tag := splitRef(ref)
-	base := "https://" + host + "/v2/" + repo
-	emit(map[string]any{"status": fmt.Sprintf("looking up %s on %s", repo, host)})
-	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/manifests/"+tag, nil)
+	m := registryManifest{host: host, repo: repo, tag: tag}
+	req, _ := http.NewRequestWithContext(ctx, "GET", m.base()+"/manifests/"+tag, nil)
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 	resp, err := pullClient.Do(req)
 	if err != nil {
-		emit(errorObj(fmt.Sprintf("%T: %v", err, err)))
-		return
+		return m, fmt.Errorf("%T: %v", err, err)
 	}
-	raw, _ := io.ReadAll(resp.Body)
+	m.raw, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		emit(errorObj(fmt.Sprintf("manifest %d for %s", resp.StatusCode, ref)))
-		return
+		return m, fmt.Errorf("manifest %d for %s", resp.StatusCode, ref)
 	}
-	var manifest struct {
-		Layers []struct {
-			MediaType string `json:"mediaType"`
-			Digest    string `json:"digest"`
-			Size      int64  `json:"size"`
-		} `json:"layers"`
-		Config *struct {
-			MediaType string `json:"mediaType"`
-			Digest    string `json:"digest"`
-			Size      int64  `json:"size"`
-		} `json:"config"`
+	if json.Unmarshal(m.raw, &m) != nil {
+		return m, fmt.Errorf("bad manifest for %s", ref)
 	}
-	if json.Unmarshal(raw, &manifest) != nil {
-		emit(errorObj("bad manifest for " + ref))
-		return
-	}
-	name := repo + ":" + tag
-	if host == ollamaRegistry {
-		name = strings.TrimPrefix(name, "library/")
-	}
-	mfPath := filepath.Join(reg.Manifests, host, filepath.FromSlash(repo), tag)
-	for _, layer := range manifest.Layers {
+	return m, nil
+}
+
+// registryBuild looks at a registry model's file header and says whether
+// llama.cpp can load it; when it cannot, the Hugging Face build to take
+// instead, with the quantisation the registry build had.
+type registryBuild struct {
+	unloadable string
+	hfRepo     string
+	quant      string
+}
+
+func inspectRegistryBuild(ctx context.Context, m registryManifest) registryBuild {
+	var b registryBuild
+	for _, layer := range m.Layers {
 		if !strings.HasSuffix(layer.MediaType, ".model") {
 			continue
 		}
-		meta := probeGGUFHeader(ctx, base+"/blobs/"+layer.Digest)
-		why := unloadableBuild(meta)
-		if why == "" {
-			break
+		meta := probeGGUFHeader(ctx, m.base()+"/blobs/"+layer.Digest)
+		b.unloadable = unloadableBuild(meta)
+		if b.unloadable == "" {
+			return b
 		}
-		emit(map[string]any{"status": "the registry build of " + name + " " + why + ", which llama.cpp does not load"})
-		hfRepo, ok := hfEquivalent(repo, tag, meta)
-		if !ok {
-			emit(errorObj("no HuggingFace build of " + name + " was found to take instead; pull one directly with `llmash pull hf:<org>/<repo>`"))
+		b.quant = quantOfFileType(meta)
+		b.hfRepo, _ = hfEquivalent(ctx, m.repo, m.tag, meta, b.quant)
+		return b
+	}
+	return b
+}
+
+// apiResolve tells a client where a pull will come from, so it can offer
+// the builds of a Hugging Face repository before anything downloads.
+func apiResolve(w http.ResponseWriter, r *http.Request) {
+	ref := strings.TrimSpace(r.URL.Query().Get("model"))
+	for _, p := range hfPrefixes {
+		if strings.HasPrefix(ref, p) {
+			repo, _, _ := strings.Cut(ref[len(p):], "@")
+			writeJSON(w, 200, map[string]any{"source": "hf", "repo": repo})
 			return
 		}
-		quant := quantOfFileType(meta)
-		emit(map[string]any{"status": fmt.Sprintf("taking %s from Hugging Face instead, as %s", hfRepo, name)})
-		first, ok := hfPull(ctx, hfRepo, quant, emit)
-		if !ok {
-			return
-		}
-		if err := reg.setAlias(filepath.Base(first), name); err != nil {
+	}
+	m, err := fetchManifest(r.Context(), ref)
+	if err != nil {
+		writeJSON(w, 404, errorObj(err.Error()))
+		return
+	}
+	b := inspectRegistryBuild(r.Context(), m)
+	if b.unloadable == "" {
+		writeJSON(w, 200, map[string]any{"source": "registry"})
+		return
+	}
+	if b.hfRepo == "" {
+		writeJSON(w, 404, errorObj("the registry build of "+m.name()+" "+b.unloadable+", which llama.cpp does not load, and no Hugging Face build was found to take instead"))
+		return
+	}
+	writeJSON(w, 200, map[string]any{"source": "hf", "repo": b.hfRepo, "reason": b.unloadable, "quant": b.quant})
+}
+
+// finishHF records a pulled Hugging Face build under the name it was asked
+// for, and fetches an MTP head from the same repository when one was chosen.
+func finishHF(ctx context.Context, repo, first, as, mtp string, emit func(map[string]any)) bool {
+	if as != "" {
+		if err := reg.setAlias(filepath.Base(first), as); err != nil {
 			emit(errorObj("could not record the name: " + err.Error()))
+			return false
+		}
+	}
+	if mtp != "" {
+		stem := shardSuffix.ReplaceAllString(stemOf(first), "")
+		dest := filepath.Join(filepath.Dir(first), stem+".mtp.gguf")
+		if !fileExists(dest) {
+			url := hfBase + "/" + repo + "/resolve/main/" + mtp
+			req, _ := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+			var total int64
+			if resp, err := pullClient.Do(req); err == nil {
+				resp.Body.Close()
+				total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+			}
+			if total == 0 {
+				emit(errorObj("could not determine the size of " + mtp))
+				return false
+			}
+			tmp := dest + ".part"
+			os.Remove(tmp)
+			os.Remove(tmp + ".idx")
+			err := fetchBlocks(ctx, url, tmp, total, func(n int64) {
+				emit(map[string]any{"status": "pulling " + mtp, "digest": mtp, "total": total, "completed": n})
+			})
+			os.Remove(tmp + ".idx")
+			if err != nil {
+				os.Remove(tmp)
+				emit(errorObj(fmt.Sprintf("%s: %v", mtp, err)))
+				return false
+			}
+			os.Rename(tmp, dest)
+			emit(map[string]any{"status": "pulling " + mtp, "digest": mtp, "total": total, "completed": total})
+		}
+		emit(map[string]any{"status": "the MTP head is installed as " + filepath.Base(dest)})
+	}
+	reg.Invalidate()
+	cliInvalidate()
+	if as != "" {
+		emit(map[string]any{"status": as + " now serves the Hugging Face build"})
+	}
+	return true
+}
+
+func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
+	host, repo, _ := splitRef(ref)
+	emit(map[string]any{"status": fmt.Sprintf("looking up %s on %s", repo, host)})
+	manifest, err := fetchManifest(ctx, ref)
+	if err != nil {
+		emit(errorObj(err.Error()))
+		return
+	}
+	name := manifest.name()
+	base := manifest.base()
+	mfPath := manifest.path()
+	emit(map[string]any{"status": "checking the build reads as a model"})
+	if b := inspectRegistryBuild(ctx, manifest); b.unloadable != "" {
+		emit(map[string]any{"status": "the registry build of " + name + " " + b.unloadable + ", which llama.cpp does not load"})
+		if b.hfRepo == "" {
+			emit(errorObj("no Hugging Face build of " + name + " was found to take instead; pull one directly with `llmash pull hf:<org>/<repo>`"))
 			return
 		}
-		os.Remove(mfPath)
-		reg.Invalidate()
-		cliInvalidate()
-		emit(map[string]any{"status": name + " now serves the HuggingFace build"})
+		emit(map[string]any{"status": fmt.Sprintf("taking %s from Hugging Face instead, as %s", b.hfRepo, name)})
+		first, ok := hfPull(ctx, b.hfRepo, b.quant, emit)
+		if !ok {
+			return
+		}
+		reg.removeManifestModel(mfPath)
+		finishHF(ctx, b.hfRepo, first, name, "", emit)
 		return
 	}
 	layers := manifest.Layers
@@ -702,6 +842,7 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 		if err := fetchBlob(ctx, url, tmp, total, func(done int64) {
 			emit(map[string]any{"status": "pulling " + short, "digest": layer.Digest, "total": total, "completed": done})
 		}); err != nil {
+			os.Remove(tmp)
 			emit(errorObj(fmt.Sprintf("%s: %v", short, err)))
 			return
 		}
@@ -709,7 +850,7 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 		emit(map[string]any{"status": "pulling " + short, "digest": layer.Digest, "total": total, "completed": total})
 	}
 	os.MkdirAll(filepath.Dir(mfPath), 0o755)
-	os.WriteFile(mfPath, raw, 0o644)
+	os.WriteFile(mfPath, manifest.raw, 0o644)
 	reg.Invalidate()
 	cliInvalidate()
 	var pulled int64
@@ -727,6 +868,8 @@ func apiPull(w http.ResponseWriter, r *http.Request) {
 	n := newNDJSON(w)
 	emit := func(ev map[string]any) { n.send(ev) }
 	quant := str(body, "quant")
+	as := str(body, "as")
+	mtp := str(body, "mtp")
 	for _, p := range hfPrefixes {
 		if strings.HasPrefix(ref, p) {
 			spec := ref[len(p):]
@@ -737,13 +880,22 @@ func apiPull(w http.ResponseWriter, r *http.Request) {
 			if q == "" {
 				q = "Q4_K_M"
 			}
-			hfPull(r.Context(), repo, q, emit)
+			if first, ok := hfPull(r.Context(), repo, q, emit); ok {
+				if as != "" {
+					if m, err := fetchManifest(r.Context(), as); err == nil {
+						reg.removeManifestModel(m.path())
+					}
+				}
+				finishHF(r.Context(), repo, first, as, mtp, emit)
+			}
 			return
 		}
 	}
 	fromOllama, _ := body["from_ollama"].(bool)
 	if rep, ok := hfReplacements[ref]; ok && !fromOllama {
-		hfPull(r.Context(), rep[0], first(quant, rep[1]), emit)
+		if first, ok := hfPull(r.Context(), rep[0], first(quant, rep[1]), emit); ok {
+			finishHF(r.Context(), rep[0], first, as, mtp, emit)
+		}
 		return
 	}
 	registryPull(r.Context(), ref, emit)
@@ -762,7 +914,14 @@ func apiQuants(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 502, errorObj(err.Error()))
 		return
 	}
-	writeJSON(w, 200, map[string]any{"repo": repo, "quants": quantsOf(files)})
+	var heads []quantInfo
+	for _, f := range files {
+		if k := kindOf(f.Name); k != nil && k.name == "mtp" && strings.HasSuffix(strings.ToLower(f.Name), ".gguf") {
+			heads = append(heads, quantInfo{Name: f.Name, Size: f.Size, Files: 1})
+		}
+	}
+	sort.SliceStable(heads, func(i, j int) bool { return heads[i].Size < heads[j].Size })
+	writeJSON(w, 200, map[string]any{"repo": repo, "quants": quantsOf(files), "mtp": heads, "vision": pickMmproj(files) != nil})
 }
 
 type quantInfo struct {

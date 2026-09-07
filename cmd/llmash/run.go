@@ -222,8 +222,10 @@ func showOrPull(name string) map[string]any {
 	if code != 404 {
 		die("Error: %s", first(str(d, "error"), "could not read that model"))
 	}
-	cmdPull(name, "")
-	offerDraft(name)
+	if isConsole(os.Stdin) && isConsole(os.Stdout) && !confirm(name+" is not on this machine. Pull it?") {
+		exit(1)
+	}
+	cmdPull(name, "", true)
 	d, code = showModel(name)
 	if code != 200 {
 		die("Error: %s", first(str(d, "error"), "model not found"))

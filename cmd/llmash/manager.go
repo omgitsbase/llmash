@@ -274,6 +274,10 @@ func (in *Instance) args() []string {
 	switch {
 	case hasMTP(m.GGUF):
 		a = append(a, "--spec-type", "draft-mtp", "--spec-draft-n-max", strconv.Itoa(mtpDraft))
+	case m.Mtp != "" && fileExists(m.Mtp):
+		a = append(a, "--spec-type", "draft-mtp", "--model-draft", m.Mtp, "-ngld", "999",
+			"--spec-draft-n-max", strconv.Itoa(mtpDraft))
+		in.specNote = "mtp"
 	case m.Eagle3 != "" && fileExists(m.Eagle3):
 		a = append(a, "--spec-type", "draft-eagle3", "--model-draft", m.Eagle3, "-ngld", "999",
 			"--spec-draft-n-max", strconv.Itoa(mtpDraft))
