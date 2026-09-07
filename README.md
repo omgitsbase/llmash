@@ -35,23 +35,23 @@ comes with no hand tuning. Your numbers will differ; the gaps are the point.
 |---|--:|--:|--:|
 | Ollama | 129.8 | 120.3 | 226.8 |
 | vLLM | 182.6 | 182.0 | 182.1 |
-| **llmash** | **513.2** | **599.6** | **596.7** |
+| **llmash** | **297.9** | **331.7** | **333.0** |
 
 **Qwen3.8 27B (Q4_K_XL)**
 
 | backend | conversation | coding | thinking |
 |---|--:|--:|--:|
 | Ollama | 63.1 | 62.3 | 63.4 |
+| vLLM | 72.9 | 73.7 | 73.7 |
 | **llmash** | **136.5** | **135.5** | **147.0** |
 
 Tokens per second while generating, median of three runs, excluding model load and prompt processing.
 
-vLLM here is the native Windows build on AWQ int4 weights. It has one row rather
-than three because the other two models do not load in that build: the Qwen FP8
-kernels in it are compiled for SM80 rather than Blackwell, and gemma-4 needs a
-vLLM that reads a per-layer head_dim, which this one does not.
-
 <!-- /BENCHMARK -->
+
+vLLM here is the native Windows build on AWQ int4 weights. gemma-4 has no vLLM
+row because that build gives every layer one head_dim, and gemma-4 does not: 25
+of its layers are 256 wide and 5 are 512, so it cannot be loaded there at all.
 
 ## How it fits together
 
