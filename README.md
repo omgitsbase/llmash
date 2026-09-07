@@ -18,7 +18,9 @@ irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 | iex
 ```
 
 Nothing needs to be installed first: the installer fetches the llama.cpp build
-for your GPU, puts `llmash` on your PATH, and starts the server.
+for your GPU, puts `llmash` on your PATH, and starts the server. With no
+NVIDIA card it takes the Vulkan or CPU build instead, and models load into
+system RAM, which works but is slower.
 
 ## Speed
 
