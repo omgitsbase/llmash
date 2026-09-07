@@ -33,7 +33,7 @@ Your numbers will differ.
 | backend | conversation | coding | thinking |
 |---|--:|--:|--:|
 | Ollama | 173.0 | 189.5 | 118.5 |
-| **llmash** | **177.6** | **179.1** | **179.8** |
+| **llmash** | **254.2** | **332.1** | **417.3** |
 
 **Qwen3.6 35B-A3B (IQ4_XS)**
 
@@ -41,7 +41,7 @@ Your numbers will differ.
 |---|--:|--:|--:|
 | Ollama | 129.8 | 120.3 | 226.8 |
 | vLLM | 182.6 | 182.0 | 182.1 |
-| **llmash** | **297.9** | **331.7** | **333.0** |
+| **llmash** | **382.5** | **473.6** | **506.7** |
 
 **Qwen3.8 27B (Q4_K_XL)**
 
@@ -49,7 +49,7 @@ Your numbers will differ.
 |---|--:|--:|--:|
 | Ollama | 63.1 | 62.3 | 63.4 |
 | vLLM | 72.9 | 73.7 | 73.7 |
-| **llmash** | **136.5** | **135.5** | **147.0** |
+| **llmash** | **130.1** | **160.1** | **187.4** |
 
 Tokens per second while generating, median of three runs, excluding model load and prompt processing.
 
