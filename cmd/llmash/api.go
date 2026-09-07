@@ -224,8 +224,13 @@ func ps() map[string]any {
 	seen := map[string]bool{}
 	for _, in := range mgr.Loaded() {
 		e := tagEntry(in.Model)
-		e["size_vram"] = int64(in.VRAMGB() * (1 << 30))
-		e["size"] = e["size_vram"] // everything is offloaded: 100% GPU
+		e["size"] = int64(in.VRAMGB() * (1 << 30))
+		// only what actually went to the card counts as resident there
+		if in.OnGPU() {
+			e["size_vram"] = e["size"]
+		} else {
+			e["size_vram"] = int64(0)
+		}
 		_, exp, _, _ := in.Snapshot()
 		if exp == exp+1 || exp > 1e15 { // +Inf
 			e["expires_at"] = "9999-12-31T23:59:59Z"

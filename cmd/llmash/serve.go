@@ -83,7 +83,11 @@ func serveMain(args []string) {
 	go cliCacheTick(ctx)
 	logf("models from %s", reg.Root)
 	logf("llama-server %s", llamaBin)
-	logf("kv cache %s, vram budget %.0f GB", kvType, vramBudgetGB)
+	if free, gpu := freeVRAM(); gpu {
+		logf("kv cache %s, %.0f GB VRAM free", kvType, free)
+	} else {
+		logf("kv cache %s, no GPU found: models will load into system RAM", kvType)
+	}
 	if publicPort != 0 {
 		logf("public API on :%d (key required), expose with `llmash link`", publicPort)
 	}

@@ -40,34 +40,53 @@ func quiet(cmd *exec.Cmd) *exec.Cmd {
 
 var vramMu sync.Mutex
 var vramAt time.Time
+// how long a load may make no progress at all before it is called stuck
+const loadStallTimeout = 10 * time.Minute
+
 var vramFree float64
+var vramKnown bool // whether vramFree came from a real card
 
 // freeVRAMGB as the driver reports it, cached for two seconds.
-func freeVRAMGB() float64 {
+// Free VRAM, and whether that number means anything. A machine with no
+// NVIDIA card answers nothing, and answering "the budget" there told every
+// caller it had an 80 GB card: the context was never trimmed, the batch was
+// widened for a big card, and the weights went to system RAM anyway. Unknown
+// is its own answer now, and callers treat it as no GPU.
+func freeVRAM() (float64, bool) {
 	vramMu.Lock()
 	defer vramMu.Unlock()
 	if time.Since(vramAt) < 2*time.Second {
-		return vramFree
+		return vramFree, vramKnown
 	}
-	free := vramBudgetGB
-	cmd := quiet(exec.Command("nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"))
-	done := make(chan struct{})
-	var out []byte
-	var err error
-	go func() { out, err = cmd.Output(); close(done) }()
-	select {
-	case <-done:
-		if err == nil {
-			if line := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0]); line != "" {
-				if mb, e := strconv.ParseFloat(line, 64); e == nil {
-					free = mb / 1024
+	free, known := 0.0, false
+	if v := envFloat("LLMASH_VRAM_GB", 0); v > 0 {
+		free, known = v, true // set by hand, believed
+	} else {
+		cmd := quiet(exec.Command("nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"))
+		done := make(chan struct{})
+		var out []byte
+		var err error
+		go func() { out, err = cmd.Output(); close(done) }()
+		select {
+		case <-done:
+			if err == nil {
+				if line := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0]); line != "" {
+					if mb, e := strconv.ParseFloat(line, 64); e == nil {
+						free, known = mb/1024, true
+					}
 				}
 			}
+		case <-time.After(8 * time.Second):
+			cmd.Process.Kill()
 		}
-	case <-time.After(8 * time.Second):
-		cmd.Process.Kill()
 	}
-	vramAt, vramFree = time.Now(), free
+	vramAt, vramFree, vramKnown = time.Now(), free, known
+	return free, known
+}
+
+// what the old callers wanted: a number, with unknown reading as no GPU
+func freeVRAMGB() float64 {
+	free, _ := freeVRAM()
 	return free
 }
 
@@ -108,6 +127,8 @@ type Instance struct {
 	exited    chan struct{}
 	exitCode  int
 	ready     bool
+	onGPU     bool // the weights reached the card, per llama.cpp's own log
+	plainArgs bool // this runtime rejected our optional flags
 	lastUsed  float64
 	expiresAt float64
 	keepAlive float64
@@ -237,10 +258,20 @@ func (in *Instance) Progress() float64 {
 
 func (in *Instance) args() []string {
 	m := in.Model
-	a := []string{llamaBin, "-m", m.GGUF, "--host", "127.0.0.1", "--port", strconv.Itoa(in.Port),
-		"-ngl", "999", "--load-mode", in.loadMode, "-c", strconv.Itoa(in.Ctx * nParallel),
+	a := []string{llamaBin, "-m", m.GGUF, "--host", "127.0.0.1", "--port", strconv.Itoa(in.Port)}
+	if _, gpu := freeVRAM(); gpu {
+		a = append(a, "-ngl", "999")
+	}
+	// llama.cpp adjusts what it was not given (--fit, on by default), so on a
+	// machine with no GPU it places the layers itself rather than being told
+	// to offload 999 of them to nothing
+	a = append(a, []string{"-c", strconv.Itoa(in.Ctx * nParallel),
 		"--jinja", "--no-webui", "-fa", "on", "--cache-type-k", kvType, "--cache-type-v", kvType,
-		"--parallel", strconv.Itoa(nParallel), "-bs"}
+		"--parallel", strconv.Itoa(nParallel)}...)
+	if !in.plainArgs {
+		// only a build of ours is known to take these
+		a = append(a, "--load-mode", in.loadMode, "-bs")
+	}
 	native := m.Ctx
 	if native == 0 {
 		native = defaultCtx
@@ -303,6 +334,10 @@ func (in *Instance) args() []string {
 func explainLoadFailure(raw string) string {
 	low := strings.ToLower(raw)
 	switch {
+	case strings.Contains(low, "unknown model architecture") && !ownRuntime():
+		return "This llama.cpp build does not know this model's architecture, which usually means the runtime is older " +
+			"than the model. Run `llmash update -Runtime cuda` (or vulkan, or cpu) to replace the runtime in " +
+			runtimeDir() + "."
 	case strings.Contains(low, "wrong number of tensors") || strings.Contains(low, "dimension_sections") ||
 		strings.Contains(low, "unknown model architecture"):
 		return "This is an Ollama-packaged build that bundles its vision or audio encoders into one file, which llama.cpp " +
@@ -359,10 +394,26 @@ func (in *Instance) start() error {
 	}()
 	t0 := time.Now()
 	client := &http.Client{Timeout: 2 * time.Second}
-	for time.Since(t0) < 600*time.Second {
+	lastPct, lastMove := -1.0, time.Now()
+	for {
+		if pct := in.Progress(); pct > lastPct+0.001 {
+			lastPct, lastMove = pct, time.Now()
+		}
+		// it has stopped reading and stopped growing: that is stuck, however
+		// long the whole load has taken
+		if time.Since(lastMove) > loadStallTimeout {
+			break
+		}
 		if !in.alive() {
 			out := in.tailLog(24000)
 			low := strings.ToLower(out)
+			if !in.plainArgs && (strings.Contains(low, "unknown argument") || strings.Contains(low, "invalid argument") ||
+				strings.Contains(low, "unrecognized argument")) {
+				logf("%s: this llama.cpp build rejected an argument, retrying without the optional ones", in.Model.Name)
+				in.plainArgs = true
+				fh.Close()
+				return in.start()
+			}
 			if in.loadMode != "mmap" && (strings.Contains(low, "direct") || strings.Contains(low, "dio") || strings.Contains(low, "unsupported")) {
 				logf("%s: DirectIO unavailable here, retrying with mmap", in.Model.Name)
 				in.loadMode = "mmap"
@@ -384,9 +435,19 @@ func (in *Instance) start() error {
 		if resp, err := client.Get(in.URL() + "/health"); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
+				// llama.cpp warns and carries on when it finds no device to
+				// offload to, so a load that succeeded is not a load that
+				// used the GPU. Ask the log, once, rather than assume.
+				low := strings.ToLower(in.tailLog(24000))
+				onGPU := !strings.Contains(low, "no usable gpu") &&
+					!strings.Contains(low, "failed to initialize cuda")
 				in.mu.Lock()
 				in.ready = true
+				in.onGPU = onGPU
 				in.mu.Unlock()
+				if !onGPU {
+					logf("%s: no usable GPU, the weights are in system RAM", in.Model.Name)
+				}
 				logf("ready %s in %.1fs", in.Model.Name, time.Since(t0).Seconds())
 				in.markLoaded()
 				return nil
@@ -781,4 +842,29 @@ func reapOrphans() int {
 		logf("reaped %d orphaned llama-server process(es) from a previous run", killed)
 	}
 	return killed
+}
+
+// Whether this instance's weights actually reached the GPU.
+func (in *Instance) OnGPU() bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.onGPU
+}
+
+// Whether the llama.cpp beside us is the build llmash ships, which is the
+// only one known to carry its flags and to be as new as its models.
+func ownRuntime() bool {
+	if llamaBin == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(filepath.Dir(llamaBin), "RUNTIME.txt"))
+	return err == nil
+}
+
+// Where that runtime lives, for a message that tells the user what to replace.
+func runtimeDir() string {
+	if llamaBin == "" {
+		return "the runtime folder"
+	}
+	return filepath.Dir(llamaBin)
 }
