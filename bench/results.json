@@ -25,9 +25,9 @@
         "measured": "2026-09-06",
         "model_id": "nail-qwen3.6-35b-a3b-mtp-ud:gguf",
         "workloads": {
-          "conversation": 513.2,
-          "coding": 599.6,
-          "thinking": 596.7
+          "conversation": 297.9,
+          "coding": 331.7,
+          "thinking": 333.0
         }
       },
       "ollama": {
@@ -66,6 +66,15 @@
           "conversation": 63.1,
           "coding": 62.3,
           "thinking": 63.4
+        }
+      },
+      "vllm": {
+        "measured": "2026-09-06",
+        "model_id": "qwen38",
+        "workloads": {
+          "conversation": 72.9,
+          "coding": 73.7,
+          "thinking": 73.7
         }
       }
     }
