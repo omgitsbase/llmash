@@ -415,6 +415,7 @@ type Registry struct {
 	Root      string
 	Blobs     string
 	Manifests string
+	Extras    []string // other stores read alongside the root: their manifests, blobs and gguf folders
 
 	mu       sync.Mutex
 	cache    map[string]*Model
@@ -435,8 +436,55 @@ const fpTTL = 2 * time.Second
 
 func newRegistry() *Registry {
 	root := defaultModelsRoot()
-	return &Registry{Root: root, Blobs: filepath.Join(root, "blobs"), Manifests: filepath.Join(root, "manifests"),
+	r := &Registry{Root: root, Blobs: filepath.Join(root, "blobs"), Manifests: filepath.Join(root, "manifests"),
 		cache: map[string]*Model{}}
+	for _, e := range extraRoots() {
+		if filepath.Clean(e) != filepath.Clean(root) && dirExists(e) {
+			r.Extras = append(r.Extras, e)
+		}
+	}
+	return r
+}
+
+// extraRoots lists the other model stores to read: LLMASH_EXTRA_ROOTS, one
+// per ';', which local.json's extra_roots fills in.
+func extraRoots() []string {
+	var out []string
+	for _, e := range strings.Split(env("LLMASH_EXTRA_ROOTS"), ";") {
+		if e = strings.TrimSpace(e); e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// manifestDirs is every manifests folder read, the root's first.
+func (r *Registry) manifestDirs() []string {
+	out := []string{r.Manifests}
+	for _, e := range r.Extras {
+		out = append(out, filepath.Join(e, "manifests"))
+	}
+	return out
+}
+
+// looseDirs is every folder of loose GGUFs read: the configured one, then
+// the gguf folder of the root and of each extra store.
+func (r *Registry) looseDirs() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(d string) {
+		c := filepath.Clean(d)
+		if d != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, d)
+		}
+	}
+	add(r.LooseDir())
+	add(filepath.Join(r.Root, "gguf"))
+	for _, e := range r.Extras {
+		add(filepath.Join(e, "gguf"))
+	}
+	return out
 }
 
 func (r *Registry) Invalidate() {
@@ -448,7 +496,13 @@ func (r *Registry) Invalidate() {
 }
 
 func (r *Registry) nameOf(mf string) string {
-	rel, _ := filepath.Rel(r.Manifests, mf)
+	rel := mf
+	for _, d := range r.manifestDirs() {
+		if x, err := filepath.Rel(d, mf); err == nil && !strings.HasPrefix(x, "..") {
+			rel = x
+			break
+		}
+	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) < 2 {
 		return rel
@@ -473,20 +527,37 @@ func (r *Registry) nameOf(mf string) string {
 }
 
 func (r *Registry) blob(digest string) string {
-	return filepath.Join(r.Blobs, strings.ReplaceAll(digest, ":", "-"))
+	name := strings.ReplaceAll(digest, ":", "-")
+	p := filepath.Join(r.Blobs, name)
+	if fileExists(p) {
+		return p
+	}
+	for _, e := range r.Extras {
+		if q := filepath.Join(e, "blobs", name); fileExists(q) {
+			return q
+		}
+	}
+	return p
 }
 
 func (r *Registry) manifestFiles() []string {
-	if !dirExists(r.Manifests) {
-		return nil
-	}
 	var out []string
-	filepath.Walk(r.Manifests, func(p string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			out = append(out, p)
+	seen := map[string]bool{}
+	for _, d := range r.manifestDirs() {
+		if !dirExists(d) {
+			continue
 		}
-		return nil
-	})
+		filepath.Walk(d, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				// the root's copy of a name wins over an extra store's
+				if n := r.nameOf(p); !seen[n] {
+					seen[n] = true
+					out = append(out, p)
+				}
+			}
+			return nil
+		})
+	}
 	return out
 }
 
@@ -608,12 +679,15 @@ func (r *Registry) looseName(p string) string {
 }
 
 func (r *Registry) looseFiles() []string {
-	d := r.LooseDir()
-	if !dirExists(d) {
-		return nil
+	var files []string
+	for _, d := range r.looseDirs() {
+		if !dirExists(d) {
+			continue
+		}
+		fs, _ := filepath.Glob(filepath.Join(d, "*.gguf"))
+		sort.Strings(fs)
+		files = append(files, fs...)
 	}
-	files, _ := filepath.Glob(filepath.Join(d, "*.gguf"))
-	sort.Strings(files)
 	var out []string
 	now := time.Now()
 	for _, p := range files {
@@ -839,7 +913,10 @@ func (r *Registry) fingerprint() string {
 			fmt.Fprintf(&sb, "%s|%d|%d;", p, st.ModTime().UnixNano(), st.Size())
 		}
 	}
-	if d := r.LooseDir(); dirExists(d) {
+	for _, d := range r.looseDirs() {
+		if !dirExists(d) {
+			continue
+		}
 		mm, _ := filepath.Glob(filepath.Join(d, "*mmproj*.gguf"))
 		sort.Strings(mm)
 		for _, p := range mm {
