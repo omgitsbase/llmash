@@ -228,6 +228,7 @@ try {
 } catch {
     Die "could not read the latest release of $Repo  ($($_.Exception.Message))"
 }
+$release = $rel
 $url = ($rel.assets | Where-Object { $_.name -eq $Asset } | Select-Object -First 1).browser_download_url
 if (-not $url) { Die "release $($rel.tag_name) has no $Asset" }
 Say "release $($rel.tag_name)"
@@ -285,27 +286,38 @@ if ($Runtime -eq 'none') {
     $label = if ($kind -eq 'cuda') { "cuda $cudaMajor (driver $driver)" } else { $kind }
     Say "this machine gets the $label build"
 
-    $rel = $null; $asset = $null; $cudart = $null
-    try {
-        foreach ($cand in (Invoke-RestMethod $Releases -Headers @{ 'User-Agent' = 'llmash-installer' } -TimeoutSec 30)) {
-            $asset = $cand.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
-            if ($asset) { $rel = $cand; break }
+    # llmash's release carries its own llama.cpp build for CUDA 13, with the
+    # changes upstream does not have: chained drafting and one CUDA graph per
+    # graph shape. Every other case takes the matching upstream build.
+    $rel = $null; $asset = $null; $cudart = $null; $own = $null
+    if ($kind -eq 'cuda' -and $cudaMajor -eq '13') {
+        $own = $release.assets | Where-Object { $_.name -eq "llmash-runtime-win-cuda-$cudaMajor-x64.zip" } | Select-Object -First 1
+    }
+    if ($own) {
+        $rel = $release; $asset = $own
+    } else {
+        try {
+            foreach ($cand in (Invoke-RestMethod $Releases -Headers @{ 'User-Agent' = 'llmash-installer' } -TimeoutSec 30)) {
+                $asset = $cand.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+                if ($asset) { $rel = $cand; break }
+            }
+        } catch {
+            Warn "could not read llama.cpp's releases ($($_.Exception.Message))"
         }
-    } catch {
-        Warn "could not read llama.cpp's releases ($($_.Exception.Message))"
     }
     if (-not $asset) {
         Warn 'no matching llama.cpp build found; get one from https://github.com/ggml-org/llama.cpp/releases'
         Say  "and unzip it into  $RtDir"
     } else {
-        if ($kind -eq 'cuda') {
+        if ($kind -eq 'cuda' -and -not $own) {
             $haveCudart = Get-Command "cublas64_$cudaMajor.dll" -ErrorAction SilentlyContinue
             if (-not $haveCudart) {
                 $cudart = $rel.assets | Where-Object { $_.name -match "^cudart-llama-bin-win-cuda-$cudaMajor\.[0-9]+-x64\.zip$" } | Select-Object -First 1
             }
         }
         $total = $asset.size + $(if ($cudart) { $cudart.size } else { 0 })
-        Say "llama.cpp $($rel.tag_name), about $(MB $total) MB"
+        $what = if ($own) { 'llmash runtime' } else { 'llama.cpp' }
+        Say "$what $($rel.tag_name), about $(MB $total) MB"
         if (Test-Path $RtDir) { Remove-Item $RtDir -Recurse -Force }
         New-Item -ItemType Directory -Force $RtDir | Out-Null
         try {
@@ -323,8 +335,8 @@ if ($Runtime -eq 'none') {
                 }
             }
             if (Test-Path $RtExe) {
-                $rtInfo = @{ tag = $rel.tag_name; kind = $kind; asset = $asset.name }
-                Good "llama.cpp $($rel.tag_name) ($kind) in $RtDir"
+                $rtInfo = @{ tag = $rel.tag_name; kind = $kind; asset = $asset.name; own = [bool]$own }
+                Good "$what $($rel.tag_name) ($kind) in $RtDir"
             } else {
                 Warn 'the download did not contain llama-server.exe'
             }
