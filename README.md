@@ -16,8 +16,9 @@ your PATH, and starts the server.
 
 ## Speed
 
-Tokens per second on the same GPU, same prompts, 4-bit weights in each
-engine's own format. Every backend is run as it comes, with no hand tuning.
+Tokens per second on one machine: an RTX PRO 6000 Blackwell, 96 GB. Same GPU,
+same prompts, 4-bit weights in each engine's own format, every backend run as it
+comes with no hand tuning. Your numbers will differ; the gaps are the point.
 
 <!-- BENCHMARK -->
 
@@ -45,10 +46,10 @@ engine's own format. Every backend is run as it comes, with no hand tuning.
 
 Tokens per second while generating, median of three runs, excluding model load and prompt processing.
 
-vLLM here is the native Windows build on the AWQ int4 weights. Its FP8 builds
-of these three models do not load on this card: gemma-4 hits a transformers
-config error, and the Qwen FP8 kernels in that wheel are compiled for SM80,
-not Blackwell. So there is one vLLM row rather than three.
+vLLM here is the native Windows build on AWQ int4 weights. It has one row rather
+than three because the other two models do not load in that build: the Qwen FP8
+kernels in it are compiled for SM80 rather than Blackwell, and gemma-4 needs a
+vLLM that reads a per-layer head_dim, which this one does not.
 
 <!-- /BENCHMARK -->
 
