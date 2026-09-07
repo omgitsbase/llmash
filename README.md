@@ -11,21 +11,20 @@ An Ollama-compatible server and command line for Windows, built on llama.cpp.
 
 It serves your GGUF files through `llama-server` and keeps Ollama's commands,
 API and model store, so anything already pointed at Ollama keeps working. What
-it changes is the llama.cpp settings, which it picks per model at launch.
+it changes is the llama.cpp settings, picked per model at launch.
 
 ```powershell
 irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 | iex
 ```
 
-Nothing needs to be installed first. The download is two executables and an
-icon; the installer fetches the llama.cpp build for your GPU, puts `llmash` on
-your PATH, and starts the server.
+Nothing needs to be installed first: the installer fetches the llama.cpp build
+for your GPU, puts `llmash` on your PATH, and starts the server.
 
 ## Speed
 
-Tokens per second on one machine: an RTX PRO 6000 Blackwell, 96 GB. Same GPU,
-same prompts, 4-bit weights in each engine's own format, every backend run as it
-comes with no hand tuning. Your numbers will differ; the gaps are the point.
+One GPU, an RTX PRO 6000 Blackwell with 96 GB: same prompts, 4-bit weights in
+each engine's own format, every backend run as it comes with no hand tuning.
+Your numbers will differ.
 
 <!-- BENCHMARK -->
 
@@ -58,7 +57,7 @@ Tokens per second while generating, median of three runs, excluding model load a
 
 vLLM here is the native Windows build on AWQ int4 weights. gemma-4 has no vLLM
 row because that build gives every layer one head_dim, and gemma-4 does not: 25
-of its layers are 256 wide and 5 are 512, so it cannot be loaded there at all.
+of its layers are 256 wide and 5 are 512.
 
 ## How it fits together
 
@@ -73,8 +72,8 @@ of its layers are 256 wide and 5 are 512, so it cannot be loaded there at all.
 
 ## What it turns on
 
-These are llama.cpp options that are off by default. llmash sets each one per
-model at launch, logs the decision, and lets you override it.
+llama.cpp options that are off by default. llmash sets each per model at launch,
+logs the decision, and lets you override it.
 
 | | |
 |---|---|
@@ -91,16 +90,16 @@ A draft model guesses the next few tokens so the real model can check several at
 once. `pulldraft` finds one for a model you have, and a pull offers the same
 thing when it finishes.
 
-Candidates come from Hugging Face, which needs no account and no token.
-Repositories built for a fine-tune of the model, or packaged for another
-runtime, are refused. What is left is checked against the weights it would serve
-before anything is downloaded: the vocabularies have to match, the encoder has
-to be shaped for this model's hidden size, and the layers it reads have to
-exist. A model with an MTP head of its own is left alone.
+Candidates come from Hugging Face; no account, no token. Repositories built for
+a fine-tune of the model, or packaged for another runtime, are refused, and the
+rest are checked against the weights they would serve before anything is
+downloaded: matching vocabularies, an encoder shaped for this model's hidden
+size, and the layers it reads present. A model with an MTP head of its own is
+left alone.
 
 Measured on this machine: gemma-4 26B-A4B went from 244 to 342 tok/s on a
 fetched EAGLE-3 head. Qwen3.6 35B-A3B ran 308 tok/s on its own MTP head against
-265 on a downloaded one, which is why the built-in head wins.
+265 on a downloaded one.
 
 ## Commands
 
