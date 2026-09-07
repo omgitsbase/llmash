@@ -7,7 +7,8 @@
 #   -NoStartup        do not start llmash at login
 #   -Runtime <kind>   llama.cpp build to fetch: auto (default), cuda, vulkan, cpu, none
 #   -Dir <path>       install somewhere other than %ProgramData%\llmash
-#   -Mbps <n>         cap the download at n megabits per second (0 for no cap)
+#   -Mbps <n>         cap the download at n megabits per second (default 0, no cap)
+#   -Streams <n>      parallel ranged connections per file (default 8)
 #   -Yes              answer yes to every prompt
 
 [CmdletBinding()]
@@ -18,7 +19,8 @@ param(
     [ValidateSet('auto', 'cuda', 'vulkan', 'cpu', 'none')]
     [string]$Runtime = 'auto',
     [string]$Dir,
-    [double]$Mbps = 20,
+    [double]$Mbps = 0,
+    [int]$Streams = 8,
     [switch]$Yes
 )
 
@@ -70,43 +72,105 @@ function Bar ($label, $done, $total, $rate) {
     $speed = if ($rate -gt 0) { "  $(Size $rate)/s" } else { '' }
     $left = if ($rate -gt 0 -and $known -and $done -lt $total) { "  $([math]::Ceiling(($total - $done) / $rate))s left" } else { '' }
     $line = "  {0,-38} {1} {2}{3}{4}  {5}{6}" -f $label, $pctText, [char]0x2595, $bar, [char]0x258F, $size, ($speed + $left)
-    return $line.PadRight(110)
+    # pad to the window so a shorter redraw covers the previous one, and no
+    # wider so it never wraps and leaves a tail on the next line
+    $cols = 110
+    try { $cols = [Console]::WindowWidth } catch {}
+    if ($cols -lt 40) { $cols = 40 }
+    if ($line.Length -ge $cols) { $line = $line.Substring(0, $cols - 1) }
+    return $line.PadRight($cols - 1)
+}
+
+if (-not (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)) {
+    function Start-ThreadJob { param($ScriptBlock, $ArgumentList) Start-Job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList }
 }
 
 function Download ($url, $dest, $label) {
-    $req = [System.Net.HttpWebRequest]::Create($url)
-    $req.UserAgent = 'llmash-installer'
-    $req.Timeout = 60000
-    $resp = $req.GetResponse()
-    $total = $resp.ContentLength
-    $in = $resp.GetResponseStream()
-    $out = [System.IO.File]::Create($dest)
-    $buf = New-Object byte[] (1MB)
-    $done = 0L; $t0 = Get-Date; $tick = $t0; $tickDone = 0L; $rate = 0.0
+    # One HEAD to learn the size and whether ranges are honoured. A file that
+    # cannot be ranged, or is small, comes down on one stream.
+    $head = [System.Net.HttpWebRequest]::Create($url)
+    $head.UserAgent = 'llmash-installer'; $head.Method = 'HEAD'; $head.Timeout = 60000
+    $total = -1L; $ranged = $false
     try {
-        Write-Host -NoNewline ("`r" + (Bar $label 0 $total 0))
-        while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
-            $out.Write($buf, 0, $n)
-            $done += $n
-            if ($Mbps -gt 0) {
-                $target = $done / ($Mbps * 1000000 / 8)
-                $ahead  = $target - ((Get-Date) - $t0).TotalSeconds
-                if ($ahead -gt 0.01) { Start-Sleep -Milliseconds ([int][math]::Min(500, $ahead * 1000)) }
-            }
-            $now = Get-Date
-            $dt = ($now - $tick).TotalSeconds
-            if ($dt -ge 0.25) {
-                $inst = ($done - $tickDone) / $dt
-                $rate = if ($rate -eq 0) { $inst } else { 0.7 * $rate + 0.3 * $inst }
-                $tick = $now; $tickDone = $done
-                Write-Host -NoNewline ("`r" + (Bar $label $done $total $rate))
-            }
-        }
-    } finally {
-        $out.Close(); $in.Close(); $resp.Close()
+        $hr = $head.GetResponse()
+        $total  = $hr.ContentLength
+        $ranged = ($hr.Headers['Accept-Ranges'] -eq 'bytes')
+        $hr.Close()
+    } catch {}
+    $n = if ($ranged -and $total -gt 8MB -and $Streams -gt 1) { [math]::Min($Streams, [int][math]::Ceiling($total / 4MB)) } else { 1 }
+
+    $out = [System.IO.File]::Create($dest)
+    if ($total -gt 0) { $out.SetLength($total) }
+    $out.Close()
+
+    # each stream is its own process, so progress comes back through a small
+    # file per stream rather than shared memory
+    $progDir = Join-Path $env:TEMP ("llmash-dl-" + [IO.Path]::GetFileNameWithoutExtension($dest))
+    New-Item -ItemType Directory -Force $progDir | Out-Null
+    Get-ChildItem $progDir -File | Remove-Item -Force
+    $jobs = @()
+    $chunk = if ($total -gt 0) { [long][math]::Ceiling($total / $n) } else { 0 }
+    for ($i = 0; $i -lt $n; $i++) {
+        $from = $i * $chunk
+        $to = if ($n -eq 1) { -1L } else { [math]::Min($total - 1, $from + $chunk - 1) }
+        $jobs += Start-ThreadJob -ScriptBlock {
+            param($url, $dest, $from, $to, $progFile)
+            $req = [System.Net.HttpWebRequest]::Create($url)
+            $req.UserAgent = 'llmash-installer'; $req.Timeout = 60000
+            if ($to -ge 0) { $req.AddRange($from, $to) }
+            $resp = $req.GetResponse()
+            $in = $resp.GetResponseStream()
+            $fs = [System.IO.File]::Open($dest, 'Open', 'Write', 'ReadWrite')
+            $fs.Position = $from
+            $buf = New-Object byte[] (1MB)
+            $done = 0L; $last = Get-Date
+            try {
+                while (($k = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+                    $fs.Write($buf, 0, $k)
+                    $done += $k
+                    if (((Get-Date) - $last).TotalMilliseconds -ge 200) { [IO.File]::WriteAllText($progFile, "$done"); $last = Get-Date }
+                }
+            } finally { $fs.Close(); $in.Close(); $resp.Close(); [IO.File]::WriteAllText($progFile, "$done") }
+        } -ArgumentList $url, $dest, $from, $to, (Join-Path $progDir "$i")
     }
+
+    $read = {
+        $d = 0L
+        foreach ($f in Get-ChildItem $progDir -File -EA SilentlyContinue) {
+            try { $d += [long](Get-Content $f.FullName -Raw -EA SilentlyContinue) } catch {}
+        }
+        $d
+    }
+    $t0 = Get-Date; $tick = $t0; $tickDone = 0L; $rate = 0.0
+    Write-Host -NoNewline ("`r" + (Bar $label 0 $total 0))
+    while ($jobs | Where-Object { $_.State -eq 'Running' }) {
+        Start-Sleep -Milliseconds 250
+        $done = & $read
+        if ($Mbps -gt 0) {
+            # a cap is a courtesy to the rest of the network: pause the poll,
+            # not the streams, so it stays approximate
+            $target = $done / ($Mbps * 1000000 / 8)
+            $ahead = $target - ((Get-Date) - $t0).TotalSeconds
+            if ($ahead -gt 0.25) { Start-Sleep -Milliseconds ([int][math]::Min(1000, $ahead * 1000)) }
+        }
+        $now = Get-Date; $dt = ($now - $tick).TotalSeconds
+        if ($dt -ge 0.25) {
+            $inst = ($done - $tickDone) / $dt
+            $rate = if ($rate -eq 0) { $inst } else { 0.7 * $rate + 0.3 * $inst }
+            $tick = $now; $tickDone = $done
+            Write-Host -NoNewline ("`r" + (Bar $label $done $total $rate))
+        }
+    }
+    $failed = @($jobs | Where-Object { $_.State -eq 'Failed' })
+    $jobs | Receive-Job -ErrorAction SilentlyContinue | Out-Null
+    $jobs | Remove-Job -Force
+    $done = & $read
+    Remove-Item $progDir -Recurse -Force -EA SilentlyContinue
+    if ($failed.Count) { throw "download of $label failed on $($failed.Count) stream(s)" }
+    $got = (Get-Item $dest).Length
+    if ($total -gt 0 -and $got -ne $total) { throw "download of $label is incomplete: $got of $total bytes" }
     $secs = [math]::Max(0.1, ((Get-Date) - $t0).TotalSeconds)
-    Write-Host ("`r" + (Bar $label $done $done ($done / $secs)).TrimEnd())
+    Write-Host ("`r" + (Bar $label $got $got ($got / $secs)).TrimEnd())
 }
 
 # ---------------------------------------------------------------- location
@@ -321,9 +385,12 @@ if ($Runtime -eq 'none') {
         if (Test-Path $RtDir) { Remove-Item $RtDir -Recurse -Force }
         New-Item -ItemType Directory -Force $RtDir | Out-Null
         try {
-            foreach ($a in @($asset, $cudart) | Where-Object { $_ }) {
+            $files = @($asset, $cudart) | Where-Object { $_ }
+            foreach ($a in $files) {
+                Download $a.browser_download_url (Join-Path $env:TEMP $a.name) $a.name
+            }
+            foreach ($a in $files) {
                 $tmp = Join-Path $env:TEMP $a.name
-                Download $a.browser_download_url $tmp $a.name
                 Expand-Archive -Path $tmp -DestinationPath $RtDir -Force
                 Remove-Item $tmp -Force
             }
