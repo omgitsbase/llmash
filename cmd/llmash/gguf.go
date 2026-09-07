@@ -154,13 +154,20 @@ func (g *ggufReader) skipArray(et uint32, n uint64) error {
 
 // readGGUFMeta pulls the header's scalar key-values; never the tensor data.
 func readGGUFMeta(path string) map[string]any {
-	out := map[string]any{}
 	f, err := os.Open(path)
 	if err != nil {
-		return out
+		return map[string]any{}
 	}
 	defer f.Close()
-	g := &ggufReader{r: bufio.NewReaderSize(f, 1<<20)}
+	return ggufMetaFrom(bufio.NewReaderSize(f, 1<<20))
+}
+
+// ggufMetaFrom reads the key-values it can reach and stops at the first one
+// it cannot, so a truncated header (the first few MB of a remote file) still
+// yields everything that precedes the tokenizer.
+func ggufMetaFrom(r *bufio.Reader) map[string]any {
+	out := map[string]any{}
+	g := &ggufReader{r: r}
 	magic := make([]byte, 4)
 	if _, err := io.ReadFull(g.r, magic); err != nil || string(magic) != "GGUF" {
 		return out

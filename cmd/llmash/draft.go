@@ -140,7 +140,15 @@ func modelStem(m *Model) string {
 			name = repo
 		}
 	}
-	name = strings.SplitN(name, ":", 2)[0]
+	parts := strings.SplitN(name, ":", 2)
+	name = parts[0]
+	if len(parts) == 2 && parts[1] != "latest" && parts[1] != "gguf" {
+		// a registry tag carries the size (e2b, 26b-a4b), which tells the
+		// drafters for one size of a family from another
+		name += "-" + parts[1]
+	} else if size := metaStr(readGGUFMeta(m.GGUF), "general.size_label"); size != "" {
+		name += "-" + size
+	}
 	for _, junk := range []string{"-GGUF", "-gguf", "-it-GGUF", "-UD", "-Instruct"} {
 		name = strings.TrimSuffix(name, junk)
 	}
