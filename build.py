@@ -48,6 +48,7 @@ def build() -> None:
     shutil.copy(ASSETS / "icon.png", OUT / "llmash.png")
     shutil.copy(HERE / "install.ps1", OUT / "install.ps1")
     shutil.copy(HERE / "VERSION", OUT / "VERSION")
+    shutil.copy(HERE / "LICENSE", OUT / "LICENSE")
 
 
 def stop_running(root: pathlib.Path) -> None:
