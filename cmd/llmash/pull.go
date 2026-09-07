@@ -359,7 +359,7 @@ func fetchBlocks(ctx context.Context, url, tmp string, total int64, progress fun
 	return nil
 }
 
-func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) (string, bool) {
+func hfPull(ctx context.Context, repo, quant, as string, emit func(map[string]any)) (string, bool) {
 	destDir := reg.LooseDir()
 	os.MkdirAll(destDir, 0o755)
 	emit(map[string]any{"status": fmt.Sprintf("looking up %s on Hugging Face", repo)})
@@ -387,17 +387,11 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 		jobs = append(jobs, job{f, filepath.Base(f.Name)})
 		wantBytes += f.Size
 	}
-	if len(want) > 1 {
-		emit(map[string]any{"status": fmt.Sprintf("taking the %s build, %s split over %d files",
-			quant, humanBytes(wantBytes), len(want))})
-	} else {
-		emit(map[string]any{"status": fmt.Sprintf("taking the %s build, %s", quant, humanBytes(wantBytes))})
-	}
 	if proj := pickMmproj(files); proj != nil {
 		stem := shardSuffix.ReplaceAllString(stemOf(want[0].Name), "")
 		jobs = append(jobs, job{*proj, stem + ".mmproj.gguf"})
-		emit(map[string]any{"status": "this model can read images, so its vision projector comes too"})
 	}
+	_ = wantBytes
 	for _, j := range jobs {
 		total := j.f.Size
 		dest := filepath.Join(destDir, j.saveAs)
@@ -463,6 +457,11 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 				emit(map[string]any{"status": "pulling " + j.saveAs, "digest": j.saveAs, "total": total, "completed": n})
 			}
 		}
+		// the name goes on before the file is visible, or a list rendered in
+		// between shows the file's own name
+		if as != "" && j.f.Name == want[0].Name {
+			reg.setAlias(j.saveAs, as)
+		}
 		os.Rename(tmp, dest)
 		reg.markComplete(dest)
 		emit(map[string]any{"status": "pulling " + j.saveAs, "digest": j.saveAs, "total": total, "completed": total})
@@ -470,11 +469,10 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 	reg.Invalidate()
 	cliInvalidate()
 	first := filepath.Join(destDir, filepath.Base(want[0].Name))
-	emit(map[string]any{"status": "checking the download reads as a model"})
 	meta := readGGUFMeta(first)
-	arch := metaStr(meta, "general.architecture")
-	if arch == "" {
-		arch = "?"
+	if metaStr(meta, "general.architecture") == "" {
+		emit(errorObj(filepath.Base(first) + " does not read as a model"))
+		return "", false
 	}
 	pulled := int64(0)
 	for _, j := range jobs {
@@ -482,8 +480,9 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 			pulled += st.Size()
 		}
 	}
-	emit(map[string]any{"status": fmt.Sprintf("%s is ready: %s of %s weights in %s",
-		reg.looseName(first), humanBytes(pulled), arch, destDir)})
+	if as == "" {
+		emit(map[string]any{"status": fmt.Sprintf("%s ready, %s", reg.looseName(first), humanBytes(pulled))})
+	}
 	return first, true
 }
 
@@ -787,12 +786,11 @@ func finishHF(ctx context.Context, repo, first, as, mtp string, emit func(map[st
 			os.Rename(tmp, dest)
 			emit(map[string]any{"status": "pulling " + mtp, "digest": mtp, "total": total, "completed": total})
 		}
-		emit(map[string]any{"status": "the MTP head is installed as " + filepath.Base(dest)})
 	}
 	reg.Invalidate()
 	cliInvalidate()
 	if as != "" {
-		emit(map[string]any{"status": as + " now serves the Hugging Face build"})
+		emit(map[string]any{"status": as + " ready"})
 	}
 	return true
 }
@@ -808,7 +806,6 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 	name := manifest.name()
 	base := manifest.base()
 	mfPath := manifest.path()
-	emit(map[string]any{"status": "checking the build reads as a model"})
 	if b := inspectRegistryBuild(ctx, manifest); b.unloadable != "" {
 		emit(map[string]any{"status": "the registry build of " + name + " " + b.unloadable + ", which llama.cpp does not load"})
 		if b.hfRepo == "" {
@@ -816,7 +813,7 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 			return
 		}
 		emit(map[string]any{"status": fmt.Sprintf("taking %s from Hugging Face instead, as %s", b.hfRepo, name)})
-		first, ok := hfPull(ctx, b.hfRepo, b.quant, emit)
+		first, ok := hfPull(ctx, b.hfRepo, b.quant, name, emit)
 		if !ok {
 			return
 		}
@@ -857,7 +854,7 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 	for _, l := range manifest.Layers {
 		pulled += l.Size
 	}
-	emit(map[string]any{"status": fmt.Sprintf("%s is ready, %s in %s", ref, humanBytes(pulled), reg.Blobs)})
+	emit(map[string]any{"status": fmt.Sprintf("%s ready, %s", ref, humanBytes(pulled))})
 }
 
 var hfPrefixes = []string{"hf:", "hf.co/", "huggingface.co/"}
@@ -880,7 +877,7 @@ func apiPull(w http.ResponseWriter, r *http.Request) {
 			if q == "" {
 				q = "Q4_K_M"
 			}
-			if first, ok := hfPull(r.Context(), repo, q, emit); ok {
+			if first, ok := hfPull(r.Context(), repo, q, as, emit); ok {
 				if as != "" {
 					if m, err := fetchManifest(r.Context(), as); err == nil {
 						reg.removeManifestModel(m.path())
@@ -893,7 +890,7 @@ func apiPull(w http.ResponseWriter, r *http.Request) {
 	}
 	fromOllama, _ := body["from_ollama"].(bool)
 	if rep, ok := hfReplacements[ref]; ok && !fromOllama {
-		if first, ok := hfPull(r.Context(), rep[0], first(quant, rep[1]), emit); ok {
+		if first, ok := hfPull(r.Context(), rep[0], first(quant, rep[1]), as, emit); ok {
 			finishHF(r.Context(), rep[0], first, as, mtp, emit)
 		}
 		return

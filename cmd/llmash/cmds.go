@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -452,79 +453,178 @@ func chooseBuild(model, quant string) (string, string) {
 		return quant, ""
 	}
 	repo := str(d, "repo")
-	quants := list(d, "quants")
+	var quants []quantInfo
+	for _, q := range list(d, "quants") {
+		m, _ := q.(map[string]any)
+		quants = append(quants, quantInfo{Name: str(m, "name"), Size: int64(num(m, "size")), Files: int(num(m, "files"))})
+	}
 	chosen := quant
 	if len(quants) > 0 {
-		def := -1
-		for _, want := range []string{quant, "Q8_0", "Q4_K_M"} {
-			if want == "" {
-				continue
-			}
+		t := tiersOf(quants)
+		row := func(label string, q quantInfo) string {
+			return fmt.Sprintf("%-7s %-12s %8s", label, q.Name, humanBytes(q.Size))
+		}
+		basic := []string{row("tiny", quants[t.tiny]), row("medium", quants[t.medium]), row("large", quants[t.large])}
+		var full []string
+		for _, q := range quants {
+			full = append(full, row("", q))
+		}
+		start := 2
+		if quant != "" {
 			for i, q := range quants {
-				if m, _ := q.(map[string]any); strings.EqualFold(str(m, "name"), want) {
-					def = i
+				if strings.EqualFold(q.Name, quant) {
+					start = i
 				}
 			}
-			if def >= 0 {
-				break
+		}
+		advanced := quant != "" && start != t.tiny && start != t.medium && start != t.large
+		cursor := start
+		if !advanced {
+			cursor = map[int]int{t.tiny: 0, t.medium: 1, t.large: 2}[start]
+			if quant == "" {
+				cursor = 2
 			}
 		}
-		if def < 0 {
-			def = len(quants) / 2
-		}
-		fmt.Printf("%s offers %d builds:\n", repo, len(quants))
-		for i, q := range quants {
-			m, _ := q.(map[string]any)
-			mark := "  "
-			if i == def {
-				mark = "* "
+		for {
+			var n int
+			if advanced {
+				n = pickMenu(repo+", every build:", full, cursor, "↑↓ move   enter choose   a back", "aA")
+			} else {
+				n = pickMenu(repo+", which build?", basic, cursor, "↑↓ move   enter choose   a all builds", "aA")
 			}
-			files := ""
-			if n := int(num(m, "files")); n > 1 {
-				files = fmt.Sprintf("  (%d files)", n)
+			if n == -1 {
+				exit(1)
 			}
-			fmt.Printf("  %s%2d. %-14s %8s%s\n", mark, i+1, str(m, "name"), humanBytes(int64(num(m, "size"))), files)
+			if n < -1 {
+				advanced = !advanced
+				if advanced {
+					cursor = []int{t.tiny, t.medium, t.large}[cursor]
+				} else {
+					cursor = 2
+				}
+				continue
+			}
+			if advanced {
+				chosen = quants[n].Name
+			} else {
+				chosen = quants[[]int{t.tiny, t.medium, t.large}[n]].Name
+			}
+			break
 		}
-		n := askNumber("Which one?", def+1, len(quants))
-		if n <= 0 {
-			exit(1)
-		}
-		m, _ := quants[n-1].(map[string]any)
-		chosen = str(m, "name")
 	}
 	heads := list(d, "mtp")
 	if len(heads) == 0 {
 		return chosen, ""
 	}
-	def := -1
+	var names []string
+	var sizes []int64
+	for _, h := range heads {
+		m, _ := h.(map[string]any)
+		names = append(names, str(m, "name"))
+		sizes = append(sizes, int64(num(m, "size")))
+	}
+	def := 0
 	for _, want := range []string{chosen, "Q8_0", "BF16"} {
-		for i, h := range heads {
-			if m, _ := h.(map[string]any); strings.EqualFold(quantTag(str(m, "name")), want) {
-				def = i
+		found := -1
+		for i, n := range names {
+			if strings.EqualFold(quantTag(n), want) {
+				found = i
 			}
 		}
-		if def >= 0 {
+		if found >= 0 {
+			def = found
 			break
 		}
 	}
-	if def < 0 {
-		def = 0
-	}
-	fmt.Printf("\nIt also ships %d MTP heads, which draft ahead of the model and make it faster:\n", len(heads))
-	for i, h := range heads {
-		m, _ := h.(map[string]any)
-		mark := "  "
-		if i == def {
-			mark = "* "
+	fmt.Printf("Use the suggested MTP head, %s (%s)? [Y/n/a] ", names[def], humanBytes(sizes[def]))
+	for {
+		switch k := readPick(); {
+		case k == 'y' || k == 'Y' || k == pickEnter:
+			fmt.Println("yes")
+			return chosen, names[def]
+		case k == 'n' || k == 'N' || k == pickEsc:
+			fmt.Println("no")
+			return chosen, ""
+		case k == 'a' || k == 'A':
+			fmt.Println("choose")
+			rows := []string{"none"}
+			for i, n := range names {
+				rows = append(rows, fmt.Sprintf("%-40s %8s", n, humanBytes(sizes[i])))
+			}
+			n := pickMenu("MTP heads:", rows, def+1, "↑↓ move   enter choose", "")
+			if n <= 0 {
+				return chosen, ""
+			}
+			return chosen, names[n-1]
 		}
-		fmt.Printf("  %s%2d. %-40s %8s\n", mark, i+1, str(m, "name"), humanBytes(int64(num(m, "size"))))
 	}
-	n := askNumber("Which one? (0 for none)", def+1, len(heads))
-	if n <= 0 {
-		return chosen, ""
+}
+
+// tiersOf picks three builds out of a repository's list: the largest
+// quantised one, the 4-bit one, and the smallest that keeps 3 bits.
+type tiers struct{ tiny, medium, large int }
+
+func tiersOf(quants []quantInfo) tiers {
+	find := func(names ...string) int {
+		for _, want := range names {
+			for i, q := range quants {
+				if strings.EqualFold(q.Name, want) {
+					return i
+				}
+			}
+		}
+		return -1
 	}
-	m, _ := heads[n-1].(map[string]any)
-	return chosen, str(m, "name")
+	byBits := func(min, max float64, smallest bool) int {
+		best := -1
+		for i, q := range quants {
+			b := bitsOf(q.Name)
+			if b < min || b > max {
+				continue
+			}
+			if best < 0 || (smallest && q.Size < quants[best].Size) || (!smallest && q.Size > quants[best].Size) {
+				best = i
+			}
+		}
+		return best
+	}
+	t := tiers{}
+	if t.large = find("Q8_0", "Q6_K", "UD-Q8_K_XL", "UD-Q6_K_XL", "Q5_K_M"); t.large < 0 {
+		if t.large = byBits(5, 8.5, false); t.large < 0 {
+			t.large = len(quants) - 1
+		}
+	}
+	if t.medium = find("Q4_K_M", "UD-Q4_K_XL", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q5_K_S"); t.medium < 0 {
+		if t.medium = byBits(4, 5.5, false); t.medium < 0 {
+			t.medium = len(quants) / 2
+		}
+	}
+	if t.tiny = find("Q3_K_M", "UD-Q3_K_XL", "IQ3_M", "IQ3_XS", "Q3_K_S", "IQ3_XXS", "UD-IQ3_XXS"); t.tiny < 0 {
+		if t.tiny = byBits(2.5, 3.9, true); t.tiny < 0 {
+			t.tiny = 0
+		}
+	}
+	return t
+}
+
+// bitsOf reads the bits per weight a quantisation name implies.
+func bitsOf(name string) float64 {
+	up := strings.ToUpper(name)
+	switch {
+	case strings.Contains(up, "F32"):
+		return 32
+	case strings.Contains(up, "F16"):
+		return 16
+	}
+	m := regexp.MustCompile(`(?:IQ|Q|TQ)([1-8])`).FindStringSubmatch(up)
+	if m == nil {
+		return 0
+	}
+	b := float64(m[1][0] - '0')
+	if strings.Contains(up, "_K") || strings.Contains(up, "XL") {
+		b += 0.5
+	}
+	return b
 }
 
 // askNumber reads a choice from 1 to max, Enter taking the suggestion; 0 is

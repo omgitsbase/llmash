@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -99,4 +100,74 @@ func clip(text string) bool {
 	cmd := exec.Command("clip")
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run() == nil
+}
+
+// A key from the console: arrows arrive as a 0xE0 or 0x00 prefix and a scan
+// code, everything else as the character.
+const (
+	pickUp    = 0x101
+	pickDown  = 0x102
+	pickEnter = 0x103
+	pickEsc   = 0x104
+)
+
+func readPick() int {
+	ch := getch()
+	switch ch {
+	case 0xE0, 0x00:
+		switch getch() {
+		case 0x48:
+			return pickUp
+		case 0x50:
+			return pickDown
+		}
+		return 0
+	case '\r', '\n':
+		return pickEnter
+	case 0x1b, 0x03:
+		return pickEsc
+	}
+	return int(ch)
+}
+
+// pickMenu draws a list with a cursor and moves it with the arrows. Enter returns
+// the row, Escape -1, and any key in extra is returned as its negative code
+// so the caller can act on it (a for the advanced view).
+func pickMenu(title string, rows []string, cursor int, hint string, extra string) int {
+	if cursor < 0 || cursor >= len(rows) {
+		cursor = 0
+	}
+	fmt.Printf("%s\n", title)
+	drawn := 0
+	draw := func() {
+		for i := 0; i < drawn; i++ {
+			fmt.Print("\x1b[A")
+		}
+		for i, r := range rows {
+			if i == cursor {
+				fmt.Printf("\x1b[1G\x1b[K  %s❯ %s%s\n", bold, r, reset)
+			} else {
+				fmt.Printf("\x1b[1G\x1b[K    %s\n", r)
+			}
+		}
+		fmt.Printf("\x1b[1G\x1b[K  %s%s%s\n", dim, hint, reset)
+		drawn = len(rows) + 1
+	}
+	draw()
+	for {
+		switch k := readPick(); {
+		case k == pickUp && cursor > 0:
+			cursor--
+			draw()
+		case k == pickDown && cursor < len(rows)-1:
+			cursor++
+			draw()
+		case k == pickEnter:
+			return cursor
+		case k == pickEsc:
+			return -1
+		case k > 0 && k < 0x100 && strings.ContainsRune(extra, rune(k)):
+			return -k
+		}
+	}
 }

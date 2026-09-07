@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const fallbackVersion = "0.3.2"
+const fallbackVersion = "0.3.3"
 
 var (
 	prog string // what was typed: llmash, llmash, ollama
