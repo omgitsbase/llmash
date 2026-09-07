@@ -2,12 +2,12 @@
   "models": {
     "gemma-4 26B-A4B (Q4_K_M)": {
       "llmash": {
-        "measured": "2026-09-06",
+        "measured": "2026-09-07",
         "model_id": "gemma4:26b",
         "workloads": {
-          "conversation": 177.6,
-          "coding": 179.1,
-          "thinking": 179.8
+          "conversation": 254.2,
+          "coding": 332.1,
+          "thinking": 417.3
         }
       },
       "ollama": {
@@ -22,12 +22,12 @@
     },
     "Qwen3.6 35B-A3B (IQ4_XS)": {
       "llmash": {
-        "measured": "2026-09-06",
+        "measured": "2026-09-07",
         "model_id": "nail-qwen3.6-35b-a3b-mtp-ud:gguf",
         "workloads": {
-          "conversation": 297.9,
-          "coding": 331.7,
-          "thinking": 333.0
+          "conversation": 382.5,
+          "coding": 473.6,
+          "thinking": 506.7
         }
       },
       "ollama": {
@@ -51,12 +51,12 @@
     },
     "Qwen3.8 27B (Q4_K_XL)": {
       "llmash": {
-        "measured": "2026-09-06",
+        "measured": "2026-09-07",
         "model_id": "dirk:gguf",
         "workloads": {
-          "conversation": 136.5,
-          "coding": 135.5,
-          "thinking": 147.0
+          "conversation": 130.1,
+          "coding": 160.1,
+          "thinking": 187.4
         }
       },
       "ollama": {
