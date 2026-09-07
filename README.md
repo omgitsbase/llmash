@@ -16,7 +16,8 @@ your PATH, and starts the server.
 
 ## Speed
 
-Tokens per second, same GPU, same prompts, same quantisation.
+Tokens per second on the same GPU, same prompts, 4-bit weights in each
+engine's own format. Every backend is run as it comes, with no hand tuning.
 
 <!-- BENCHMARK -->
 
@@ -32,6 +33,7 @@ Tokens per second, same GPU, same prompts, same quantisation.
 | backend | conversation | coding | thinking |
 |---|--:|--:|--:|
 | Ollama | 129.8 | 120.3 | 226.8 |
+| vLLM | 182.6 | 182.0 | 182.1 |
 | **llmash** | **513.2** | **599.6** | **596.7** |
 
 **Qwen3.8 27B (Q4_K_XL)**
@@ -42,6 +44,11 @@ Tokens per second, same GPU, same prompts, same quantisation.
 | **llmash** | **136.5** | **135.5** | **147.0** |
 
 Tokens per second while generating, median of three runs, excluding model load and prompt processing.
+
+vLLM here is the native Windows build on the AWQ int4 weights. Its FP8 builds
+of these three models do not load on this card: gemma-4 hits a transformers
+config error, and the Qwen FP8 kernels in that wheel are compiled for SM80,
+not Blackwell. So there is one vLLM row rather than three.
 
 <!-- /BENCHMARK -->
 

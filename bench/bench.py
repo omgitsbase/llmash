@@ -174,7 +174,7 @@ def save(args, rows):
 
 def table():
     data = load_results()
-    order = [("ollama", "Ollama"), ("vllm", "vLLM (Docker)"), ("llmash", "llmash")]
+    order = [("ollama", "Ollama"), ("vllm", "vLLM"), ("llmash", "llmash")]
     cols = ("conversation", "coding", "thinking")
     out = []
     for label, backends in data["models"].items():
