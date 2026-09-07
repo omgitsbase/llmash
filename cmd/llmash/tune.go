@@ -62,7 +62,8 @@ func (in *Instance) autoTune() ([]string, string) {
 	if tuneEnabled("batch") {
 		ub := envInt("LLMASH_UBATCH", 0)
 		b := envInt("LLMASH_BATCH", 0)
-		if ub == 0 && freeVRAMGB() > 24 {
+		free, gpu := freeVRAM()
+		if ub == 0 && gpu && free > 24 {
 			ub, b = 2048, 4096
 		}
 		if ub > 0 {
