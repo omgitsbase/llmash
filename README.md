@@ -80,6 +80,7 @@ logs the decision, and lets you override it.
 | | |
 |---|---|
 | Speculative decoding | A model with an MTP head uses it. Otherwise a draft model beside it, or `ngram-mod`, which drafts from the context and costs no VRAM. |
+| One graph per round | The whole speculative round is one CUDA graph: the replay, the decision about how many tokens were accepted, and every draft step, with the accept decided on the GPU rather than read back. The two graphs hand off device to device, ordered by an event, so nothing waits on a forward pass. Measured at 424 tok/s against 373 for a decode per drafted token. |
 | Prompt-prefix reuse | `--cache-reuse`, so a repeated prefix is not processed twice. |
 | Host-RAM prompt cache | Sized from free RAM, between 8 and 32 GiB. |
 | Batch size | A wider prompt batch when the card has the VRAM for it. |
