@@ -301,8 +301,8 @@ func explainLoadFailure(raw string) string {
 	switch {
 	case strings.Contains(low, "wrong number of tensors") || strings.Contains(low, "dimension_sections") ||
 		strings.Contains(low, "unknown model architecture"):
-		return "This model was converted by Ollama in a format llama.cpp can't read. It needs replacing with the " +
-			"HuggingFace build. Run `python migrate.py --only <model>` in the llmash folder. Until then, pick a different model."
+		return "This is an Ollama-packaged build that bundles its vision or audio encoders into one file, which llama.cpp " +
+			"does not load. Run `llmash pull` for this model again: it now takes the HuggingFace build instead."
 	case strings.Contains(low, "unable to allocate") || strings.Contains(low, "out of memory") || strings.Contains(low, "cudamalloc"):
 		return "Not enough VRAM to load this model at the requested context size. Lower the context window, or unload whatever else is resident."
 	case strings.Contains(low, "failed to fit") || strings.Contains(low, "common_fit_params"):

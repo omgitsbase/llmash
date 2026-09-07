@@ -503,6 +503,21 @@ func (r *Registry) aliases() map[string]string {
 	return data
 }
 
+func (r *Registry) setAlias(file, name string) error {
+	data := map[string]string{}
+	for k, v := range r.aliases() {
+		data[k] = v
+	}
+	data[file] = name
+	b, _ := json.MarshalIndent(data, "", "  ")
+	if err := os.WriteFile(filepath.Join(r.LooseDir(), "aliases.json"), b, 0o644); err != nil {
+		return err
+	}
+	r.aliasVal = nil
+	r.Invalidate()
+	return nil
+}
+
 func (r *Registry) looseName(p string) string {
 	if alias := r.aliases()[filepath.Base(p)]; alias != "" {
 		return alias

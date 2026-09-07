@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"math"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -351,23 +354,23 @@ func fetchBlocks(ctx context.Context, url, tmp string, total int64, progress fun
 	return nil
 }
 
-func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) {
+func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) (string, bool) {
 	destDir := reg.LooseDir()
 	os.MkdirAll(destDir, 0o755)
 	emit(map[string]any{"status": fmt.Sprintf("looking up %s on Hugging Face", repo)})
 	files, err := hfFiles(ctx, repo)
 	if err != nil {
 		emit(errorObj(err.Error()))
-		return
+		return "", false
 	}
 	if len(files) == 0 {
 		emit(errorObj("no GGUF files in " + repo))
-		return
+		return "", false
 	}
 	want := pickGGUF(files, quant)
 	if len(want) == 0 {
 		emit(errorObj(fmt.Sprintf("no %s build in %s", quant, repo)))
-		return
+		return "", false
 	}
 	type job struct {
 		f      hfFile
@@ -408,7 +411,7 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 		}
 		if total == 0 {
 			emit(errorObj("could not determine the size of " + j.f.Name))
-			return
+			return "", false
 		}
 		idxPath := tmp + ".idx"
 		if st, err := os.Stat(tmp); err == nil && !fileExists(idxPath) {
@@ -440,7 +443,7 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 			case err := <-doneCh:
 				if err != nil {
 					emit(errorObj(fmt.Sprintf("%T: %v", err, err)))
-					return
+					return "", false
 				}
 				break wait
 			case <-time.After(250 * time.Millisecond):
@@ -473,6 +476,143 @@ func hfPull(ctx context.Context, repo, quant string, emit func(map[string]any)) 
 	}
 	emit(map[string]any{"status": fmt.Sprintf("%s is ready: %s of %s weights in %s",
 		reg.looseName(first), humanBytes(pulled), arch, destDir)})
+	return first, true
+}
+
+// probeGGUFHeader reads the first few MB of a remote GGUF: enough for every
+// key that precedes the tokenizer, which is what tells one build from another.
+func probeGGUFHeader(ctx context.Context, url string) map[string]any {
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req.Header.Set("Range", "bytes=0-4194303")
+	resp, err := pullClient.Do(req)
+	if err != nil {
+		return map[string]any{}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 206 {
+		return map[string]any{}
+	}
+	head, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	return ggufMetaFrom(bufio.NewReader(bytes.NewReader(head)))
+}
+
+// unloadableBuild names what makes a registry build unreadable for llama.cpp,
+// or returns "" for a plain text-model GGUF. Ollama packs the vision and audio
+// encoders into the language model's file; llama.cpp keeps them in a separate
+// projector and rejects the combined file for its tensor count.
+func unloadableBuild(meta map[string]any) string {
+	arch := metaStr(meta, "general.architecture")
+	if arch == "" {
+		return ""
+	}
+	if arch == "mllama" {
+		return "is packaged for Ollama's own runtime"
+	}
+	vision, audio := false, false
+	for k := range meta {
+		if strings.HasPrefix(k, arch+".vision.") {
+			vision = true
+		}
+		if strings.HasPrefix(k, arch+".audio.") {
+			audio = true
+		}
+	}
+	switch {
+	case vision && audio:
+		return "bundles its vision and audio encoders into the one file"
+	case vision:
+		return "bundles its vision encoder into the one file"
+	case audio:
+		return "bundles its audio encoder into the one file"
+	}
+	return ""
+}
+
+var ggufFileTypes = map[int64]string{
+	0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 7: "Q8_0", 8: "Q5_0", 9: "Q5_1", 10: "Q2_K",
+	11: "Q3_K_S", 12: "Q3_K_M", 13: "Q3_K_L", 14: "Q4_K_S", 15: "Q4_K_M", 16: "Q5_K_S",
+	17: "Q5_K_M", 18: "Q6_K", 19: "IQ2_XXS", 20: "IQ2_XS", 21: "Q2_K_S", 22: "IQ3_XS",
+	23: "IQ3_XXS", 24: "IQ1_S", 25: "IQ4_NL", 26: "IQ3_S", 27: "IQ3_M", 28: "IQ2_S",
+	29: "IQ2_M", 30: "IQ4_XS", 31: "IQ1_M", 32: "BF16", 38: "MXFP4",
+}
+
+func quantOfFileType(meta map[string]any) string {
+	if ft, ok := metaInt(meta, "general.file_type"); ok {
+		if q, ok := ggufFileTypes[ft]; ok {
+			return q
+		}
+	}
+	return "Q4_K_M"
+}
+
+var sizeTagJunk = regexp.MustCompile(`(?i)^(i?q\d|f16|bf16|f32|fp16|mxfp4|instruct|it|chat|text|latest)`)
+
+var familyDigits = regexp.MustCompile(`([a-zA-Z])(\d)`)
+
+// hfEquivalent finds the Hugging Face GGUF repository that carries the same
+// model as a registry reference: same family, same size, from a quantiser
+// whose files are known to load.
+func hfEquivalent(repo, tag string, meta map[string]any) (string, bool) {
+	family := repo
+	if i := strings.LastIndex(family, "/"); i >= 0 {
+		family = family[i+1:]
+	}
+	var sizeParts []string
+	for _, part := range strings.Split(tag, "-") {
+		if part == "" || sizeTagJunk.MatchString(part) {
+			continue
+		}
+		sizeParts = append(sizeParts, part)
+	}
+	size := normalise(strings.Join(sizeParts, ""))
+	if size == "" {
+		size = normalise(metaStr(meta, "general.size_label"))
+	}
+	if size == "" {
+		// a bare family name matches every size the family comes in
+		return "", false
+	}
+	spaced := familyDigits.ReplaceAllString(family, "$1-$2")
+	sizeText := strings.Join(sizeParts, "-")
+	queries := []string{family + " " + sizeText, spaced + " " + sizeText, spaced}
+	orgRank := map[string]int{"ggml-org": 5, "unsloth": 4, "bartowski": 3, "lmstudio-community": 2}
+	markers := []string{"abliterat", "uncensored", "heretic", "distill", "merge", "roleplay", "mobile", "caption"}
+	seen := map[string]bool{}
+	best, bestScore := "", -1
+	for _, q := range queries {
+		for _, hit := range hubSearch(q, 40) {
+			if seen[hit.ID] || !strings.Contains(hit.ID, "/") {
+				continue
+			}
+			seen[hit.ID] = true
+			low := strings.ToLower(hit.ID)
+			n := normalise(hit.ID)
+			if !strings.Contains(low, "gguf") || !strings.Contains(n, normalise(family)) || !strings.Contains(n, size) {
+				continue
+			}
+			foreign := false
+			for _, m := range markers {
+				if strings.Contains(low, m) {
+					foreign = true
+				}
+			}
+			if foreign {
+				continue
+			}
+			score := orgRank[low[:strings.Index(low, "/")]] * 100
+			if strings.Contains(low, "-it") || strings.Contains(low, "instruct") {
+				score += 30
+			}
+			if strings.Contains(low, "qat") {
+				score -= 20
+			}
+			score += int(math.Log10(float64(hit.Downloads)+1)) * 3
+			if score > bestScore {
+				best, bestScore = hit.ID, score
+			}
+		}
+	}
+	return best, best != ""
 }
 
 func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
@@ -494,16 +634,54 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 	}
 	var manifest struct {
 		Layers []struct {
-			Digest string `json:"digest"`
-			Size   int64  `json:"size"`
+			MediaType string `json:"mediaType"`
+			Digest    string `json:"digest"`
+			Size      int64  `json:"size"`
 		} `json:"layers"`
 		Config *struct {
-			Digest string `json:"digest"`
-			Size   int64  `json:"size"`
+			MediaType string `json:"mediaType"`
+			Digest    string `json:"digest"`
+			Size      int64  `json:"size"`
 		} `json:"config"`
 	}
 	if json.Unmarshal(raw, &manifest) != nil {
 		emit(errorObj("bad manifest for " + ref))
+		return
+	}
+	name := repo + ":" + tag
+	if host == ollamaRegistry {
+		name = strings.TrimPrefix(name, "library/")
+	}
+	mfPath := filepath.Join(reg.Manifests, host, filepath.FromSlash(repo), tag)
+	for _, layer := range manifest.Layers {
+		if !strings.HasSuffix(layer.MediaType, ".model") {
+			continue
+		}
+		meta := probeGGUFHeader(ctx, base+"/blobs/"+layer.Digest)
+		why := unloadableBuild(meta)
+		if why == "" {
+			break
+		}
+		emit(map[string]any{"status": "the registry build of " + name + " " + why + ", which llama.cpp does not load"})
+		hfRepo, ok := hfEquivalent(repo, tag, meta)
+		if !ok {
+			emit(errorObj("no HuggingFace build of " + name + " was found to take instead; pull one directly with `llmash pull hf:<org>/<repo>`"))
+			return
+		}
+		quant := quantOfFileType(meta)
+		emit(map[string]any{"status": fmt.Sprintf("taking %s from Hugging Face instead, as %s", hfRepo, name)})
+		first, ok := hfPull(ctx, hfRepo, quant, emit)
+		if !ok {
+			return
+		}
+		if err := reg.setAlias(filepath.Base(first), name); err != nil {
+			emit(errorObj("could not record the name: " + err.Error()))
+			return
+		}
+		os.Remove(mfPath)
+		reg.Invalidate()
+		cliInvalidate()
+		emit(map[string]any{"status": name + " now serves the HuggingFace build"})
 		return
 	}
 	layers := manifest.Layers
@@ -530,7 +708,6 @@ func registryPull(ctx context.Context, ref string, emit func(map[string]any)) {
 		os.Rename(tmp, dest)
 		emit(map[string]any{"status": "pulling " + short, "digest": layer.Digest, "total": total, "completed": total})
 	}
-	mfPath := filepath.Join(reg.Manifests, host, filepath.FromSlash(repo), tag)
 	os.MkdirAll(filepath.Dir(mfPath), 0o755)
 	os.WriteFile(mfPath, raw, 0o644)
 	reg.Invalidate()
