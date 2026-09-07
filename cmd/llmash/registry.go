@@ -131,6 +131,15 @@ func findEagle3(gguf string) string {
 	return ""
 }
 
+func findMtp(gguf string) string {
+	stem := shardSuffix.ReplaceAllString(stemOf(gguf), "")
+	c := filepath.Join(filepath.Dir(gguf), stem+".mtp.gguf")
+	if fileExists(c) {
+		return c
+	}
+	return ""
+}
+
 func findDraft(gguf string) string {
 	stem := shardSuffix.ReplaceAllString(stemOf(gguf), "")
 	c := filepath.Join(filepath.Dir(gguf), stem+".draft.gguf")
@@ -387,6 +396,7 @@ type Model struct {
 	Draft       string
 	Eagle3      string
 	Dspark      string
+	Mtp         string
 	Template    string
 	System      string
 	Params      map[string]any
@@ -417,6 +427,8 @@ type Registry struct {
 	aliasAt  time.Time
 	aliasVal map[string]string
 	aliasKey string
+	doneMu   sync.Mutex
+	done     map[string]bool
 }
 
 const fpTTL = 2 * time.Second
@@ -518,6 +530,74 @@ func (r *Registry) setAlias(file, name string) error {
 	return nil
 }
 
+// removeManifestModel drops a registry model: its manifest, and every blob
+// no other manifest still names.
+func (r *Registry) removeManifestModel(mfPath string) {
+	type manifestRefs struct {
+		Layers []struct {
+			Digest string `json:"digest"`
+		} `json:"layers"`
+		Config *struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+	}
+	read := func(p string) (manifestRefs, bool) {
+		var m manifestRefs
+		b, err := os.ReadFile(p)
+		if err != nil || json.Unmarshal(b, &m) != nil {
+			return m, false
+		}
+		return m, true
+	}
+	gone, ok := read(mfPath)
+	if !ok {
+		return
+	}
+	used := map[string]bool{}
+	for _, other := range r.manifestFiles() {
+		if filepath.Clean(other) == filepath.Clean(mfPath) {
+			continue
+		}
+		m, ok := read(other)
+		if !ok {
+			continue
+		}
+		for _, l := range m.Layers {
+			used[l.Digest] = true
+		}
+		if m.Config != nil {
+			used[m.Config.Digest] = true
+		}
+	}
+	os.Remove(mfPath)
+	for _, l := range gone.Layers {
+		if !used[l.Digest] {
+			os.Remove(r.blob(l.Digest))
+		}
+	}
+	if gone.Config != nil && !used[gone.Config.Digest] {
+		os.Remove(r.blob(gone.Config.Digest))
+	}
+	r.Invalidate()
+}
+
+// markComplete records a file this server finished writing, so the scan
+// need not wait to see whether it is still growing.
+func (r *Registry) markComplete(p string) {
+	r.doneMu.Lock()
+	if r.done == nil {
+		r.done = map[string]bool{}
+	}
+	r.done[filepath.Clean(p)] = true
+	r.doneMu.Unlock()
+}
+
+func (r *Registry) isComplete(p string) bool {
+	r.doneMu.Lock()
+	defer r.doneMu.Unlock()
+	return r.done[filepath.Clean(p)]
+}
+
 func (r *Registry) looseName(p string) string {
 	if alias := r.aliases()[filepath.Base(p)]; alias != "" {
 		return alias
@@ -543,11 +623,12 @@ func (r *Registry) looseFiles() []string {
 			continue
 		}
 		if strings.HasSuffix(low, ".mmproj") || strings.HasSuffix(low, "-mmproj") ||
-			strings.HasSuffix(low, ".draft") || strings.HasSuffix(low, ".dspark") {
+			strings.HasSuffix(low, ".draft") || strings.HasSuffix(low, ".dspark") ||
+			strings.HasSuffix(low, ".eagle3") || strings.HasSuffix(low, ".mtp") {
 			continue
 		}
 		st, err := os.Stat(p)
-		if err != nil || now.Sub(st.ModTime()) < 20*time.Second {
+		if err != nil || (!r.isComplete(p) && now.Sub(st.ModTime()) < 20*time.Second) {
 			continue // still being written
 		}
 		out = append(out, p)
@@ -640,6 +721,7 @@ func (r *Registry) loadLoose(p string, deep bool) *Model {
 	m.Draft = findDraft(p)
 	m.Eagle3 = findEagle3(p)
 	m.Dspark = findDspark(p)
+	m.Mtp = findMtp(p)
 	pub := hfCaps(hfRepoOf(meta), filepath.Dir(p))
 	m.Caps = capsFor(m.Projector, m.Template, arch, pub, isEmbedding(meta, arch))
 	m.Missing = missingModalities(pub, m.Projector)
@@ -695,6 +777,7 @@ func (r *Registry) loadManifest(mf, name string, deep bool) *Model {
 	m.Draft = findDraft(m.GGUF)
 	m.Eagle3 = findEagle3(m.GGUF)
 	m.Dspark = findDspark(m.GGUF)
+	m.Mtp = findMtp(m.GGUF)
 	if data.Config.Digest != "" {
 		if t, err := os.ReadFile(r.blob(data.Config.Digest)); err == nil {
 			var cfg struct {

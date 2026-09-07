@@ -351,22 +351,49 @@ func human(n float64) string {
 
 // One bar per layer and a spinner for every other status, the way
 // `ollama pull` draws them.
-func cmdPull(model string, quant string) {
+func cmdPull(model string, quant string, offer bool) {
 	needServer()
-	if quant == "" && isHFRef(model) && !strings.Contains(model, "@") && isConsole(os.Stdin) && isConsole(os.Stdout) {
-		quant = chooseQuant(model)
+	interactive := isConsole(os.Stdin) && isConsole(os.Stdout)
+	repo, as := "", ""
+	if isHFRef(model) {
+		repo = model
+	} else if d, r, err := callJSON("GET", "/api/resolve?model="+url.QueryEscape(model), nil, 180*time.Second); err == nil && r.StatusCode == 200 && str(d, "source") == "hf" {
+		fmt.Printf("%s: the registry build %s, which llama.cpp does not load.\n", model, str(d, "reason"))
+		fmt.Printf("Taking %s from Hugging Face instead.\n", str(d, "repo"))
+		repo, as = "hf:"+str(d, "repo"), model
+		if quant == "" {
+			quant = str(d, "quant")
+		}
 	}
+	mtp := ""
+	if repo != "" && interactive && !strings.Contains(repo, "@") {
+		quant, mtp = chooseBuild(repo, quant)
+	}
+	body := map[string]any{"model": first(repo, model)}
+	if quant != "" {
+		body["quant"] = quant
+	}
+	if as != "" {
+		body["as"] = as
+	}
+	if mtp != "" {
+		body["mtp"] = mtp
+	}
+	pullStream(body)
+	if offer && mtp == "" {
+		offerDraft(first(as, model))
+	}
+}
+
+// pullStream renders the server's pull events: one bar per file, a spinner
+// for everything between.
+func pullStream(body map[string]any) {
 	p := newProgress(os.Stderr)
 	defer p.stop()
 	bars := map[string]*progBar{}
 	status := ""
 	var spin *progSpinner
 	var failed string
-
-	body := map[string]any{"model": model}
-	if quant != "" {
-		body["quant"] = quant
-	}
 	err := stream(context.Background(), "/api/pull", body, func(ev map[string]any) bool {
 		if e := str(ev, "error"); e != "" {
 			failed = e
@@ -412,6 +439,125 @@ func cmdPull(model string, quant string) {
 	if err != nil {
 		p.stop()
 		die("Error: %v", err)
+	}
+}
+
+// chooseBuild lists a repository's builds and, when it ships them, its MTP
+// heads, and asks for one of each. The 8-bit build is suggested: it is the
+// one that loses nothing, and these repositories are chosen for machines
+// with room for it.
+func chooseBuild(model, quant string) (string, string) {
+	d, r, err := callJSON("GET", "/api/quants?repo="+url.QueryEscape(model), nil, 60*time.Second)
+	if err != nil || r.StatusCode != 200 {
+		return quant, ""
+	}
+	repo := str(d, "repo")
+	quants := list(d, "quants")
+	chosen := quant
+	if len(quants) > 0 {
+		def := -1
+		for _, want := range []string{quant, "Q8_0", "Q4_K_M"} {
+			if want == "" {
+				continue
+			}
+			for i, q := range quants {
+				if m, _ := q.(map[string]any); strings.EqualFold(str(m, "name"), want) {
+					def = i
+				}
+			}
+			if def >= 0 {
+				break
+			}
+		}
+		if def < 0 {
+			def = len(quants) / 2
+		}
+		fmt.Printf("%s offers %d builds:\n", repo, len(quants))
+		for i, q := range quants {
+			m, _ := q.(map[string]any)
+			mark := "  "
+			if i == def {
+				mark = "* "
+			}
+			files := ""
+			if n := int(num(m, "files")); n > 1 {
+				files = fmt.Sprintf("  (%d files)", n)
+			}
+			fmt.Printf("  %s%2d. %-14s %8s%s\n", mark, i+1, str(m, "name"), humanBytes(int64(num(m, "size"))), files)
+		}
+		n := askNumber("Which one?", def+1, len(quants))
+		if n <= 0 {
+			exit(1)
+		}
+		m, _ := quants[n-1].(map[string]any)
+		chosen = str(m, "name")
+	}
+	heads := list(d, "mtp")
+	if len(heads) == 0 {
+		return chosen, ""
+	}
+	def := -1
+	for _, want := range []string{chosen, "Q8_0", "BF16"} {
+		for i, h := range heads {
+			if m, _ := h.(map[string]any); strings.EqualFold(quantTag(str(m, "name")), want) {
+				def = i
+			}
+		}
+		if def >= 0 {
+			break
+		}
+	}
+	if def < 0 {
+		def = 0
+	}
+	fmt.Printf("\nIt also ships %d MTP heads, which draft ahead of the model and make it faster:\n", len(heads))
+	for i, h := range heads {
+		m, _ := h.(map[string]any)
+		mark := "  "
+		if i == def {
+			mark = "* "
+		}
+		fmt.Printf("  %s%2d. %-40s %8s\n", mark, i+1, str(m, "name"), humanBytes(int64(num(m, "size"))))
+	}
+	n := askNumber("Which one? (0 for none)", def+1, len(heads))
+	if n <= 0 {
+		return chosen, ""
+	}
+	m, _ := heads[n-1].(map[string]any)
+	return chosen, str(m, "name")
+}
+
+// askNumber reads a choice from 1 to max, Enter taking the suggestion; 0 is
+// none, and Escape or Ctrl-C give -1.
+func askNumber(prompt string, def, max int) int {
+	fmt.Printf("%s [%d] ", prompt, def)
+	var buf []byte
+	for {
+		ch := getch()
+		switch {
+		case ch == '\r' || ch == '\n':
+			fmt.Println()
+			n := def
+			if len(buf) > 0 {
+				fmt.Sscanf(string(buf), "%d", &n)
+			}
+			if n >= 0 && n <= max {
+				return n
+			}
+			fmt.Printf("%s [%d] ", prompt, def)
+			buf = buf[:0]
+		case ch == 0x1b || ch == 0x03:
+			fmt.Println()
+			return -1
+		case ch >= '0' && ch <= '9':
+			buf = append(buf, ch)
+			fmt.Print(string(ch))
+		case ch == 8 || ch == 127:
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+				fmt.Print("\b \b")
+			}
+		}
 	}
 }
 
@@ -813,67 +959,3 @@ func isHFRef(name string) bool {
 
 // chooseQuant lists the builds a repository offers and takes a choice. Enter
 // keeps the default, which is the Q4_K_M build when there is one.
-func chooseQuant(model string) string {
-	d, r, err := callJSON("GET", "/api/quants?repo="+url.QueryEscape(model), nil, 60*time.Second)
-	if err != nil || r.StatusCode != 200 {
-		return ""
-	}
-	quants := list(d, "quants")
-	if len(quants) < 2 {
-		return ""
-	}
-	def := -1
-	for i, q := range quants {
-		if m, _ := q.(map[string]any); strings.EqualFold(str(m, "name"), "Q4_K_M") {
-			def = i
-		}
-	}
-	repo := strings.TrimPrefix(strings.TrimPrefix(model, "hf.co/"), "hf:")
-	fmt.Printf("%s offers %d builds:\n", repo, len(quants))
-	for i, q := range quants {
-		m, _ := q.(map[string]any)
-		mark := "  "
-		if i == def {
-			mark = "* "
-		}
-		files := ""
-		if n := int(num(m, "files")); n > 1 {
-			files = fmt.Sprintf("  (%d files)", n)
-		}
-		fmt.Printf("  %s%2d. %-14s %8s%s\n", mark, i+1, str(m, "name"), humanBytes(int64(num(m, "size"))), files)
-	}
-	if def >= 0 {
-		fmt.Printf("Which one? [%d] ", def+1)
-	} else {
-		fmt.Print("Which one? ")
-	}
-	var buf []byte
-	for {
-		ch := getch()
-		switch {
-		case ch == '\r' || ch == '\n':
-			fmt.Println()
-			n := def
-			if len(buf) > 0 {
-				fmt.Sscanf(string(buf), "%d", &n)
-				n--
-			}
-			if n >= 0 && n < len(quants) {
-				m, _ := quants[n].(map[string]any)
-				return str(m, "name")
-			}
-			return ""
-		case ch == 0x1b || ch == 0x03:
-			fmt.Println()
-			return ""
-		case ch >= '0' && ch <= '9':
-			buf = append(buf, ch)
-			fmt.Print(string(ch))
-		case ch == 8 || ch == 127:
-			if len(buf) > 0 {
-				buf = buf[:len(buf)-1]
-				fmt.Print("\b \b")
-			}
-		}
-	}
-}

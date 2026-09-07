@@ -42,6 +42,8 @@ func hasOwnDrafter(m *Model) string {
 
 func installedDrafter(m *Model) string {
 	switch {
+	case m.Mtp != "" && fileExists(m.Mtp):
+		return "an MTP head"
 	case m.Dspark != "" && fileExists(m.Dspark):
 		return "a DSpark drafter"
 	case m.Draft != "" && fileExists(m.Draft):
@@ -174,6 +176,7 @@ func modelFor(name string) *Model {
 	m.Dspark = findDspark(gguf)
 	m.Draft = findDraft(gguf)
 	m.Eagle3 = findEagle3(gguf)
+	m.Mtp = findMtp(gguf)
 	return m
 }
 
@@ -194,18 +197,29 @@ func offerDraft(name string) {
 		fmt.Printf("%snone published%s\n", dim, reset)
 		return
 	}
-	best, ok := pickDrafter(m, cands, func(string, ...any) {})
-	if !ok {
+	var fit []draftCand
+	for _, c := range cands {
+		if fitsTarget(m, c) == nil {
+			fit = append(fit, c)
+		}
+		if len(fit) == 4 {
+			break
+		}
+	}
+	if len(fit) == 0 {
 		fmt.Printf("%snone that fit these weights%s\n", dim, reset)
 		return
 	}
-	fmt.Printf("\n  %s (%s) drafts for this model and usually makes it\n", best.Repo, best.Note)
-	fmt.Println("  meaningfully faster.")
-	if !confirm("  Install it?") {
+	fmt.Printf("\n  a drafter usually makes this model meaningfully faster. These fit:\n")
+	for i, c := range fit {
+		fmt.Printf("    %2d. %-56s %s\n", i+1, c.Repo, c.Note)
+	}
+	n := askNumber("  Install one? (0 for none)", 1, len(fit))
+	if n <= 0 {
 		fmt.Printf("  skipped. `%s pulldraft %s` does it later.\n", prog, name)
 		return
 	}
-	path, err := installDraft(m, best)
+	path, err := installDraft(m, fit[n-1])
 	if err != nil {
 		fmt.Printf("  could not install it: %v\n", err)
 		return
