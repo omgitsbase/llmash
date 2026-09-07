@@ -38,6 +38,15 @@
           "coding": 120.3,
           "thinking": 226.8
         }
+      },
+      "vllm": {
+        "measured": "2026-09-06",
+        "model_id": "qwen36",
+        "workloads": {
+          "conversation": 182.6,
+          "coding": 182.0,
+          "thinking": 182.1
+        }
       }
     },
     "Qwen3.8 27B (Q4_K_XL)": {
