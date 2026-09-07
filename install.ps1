@@ -502,8 +502,9 @@ if (-not $NoOllama -and ($ollamaProcs.Count -or $ollamaAtLogin)) {
 }
 
 # --------------------------------------------------------- ollama's models
-# Ollama's models are GGUFs in a blob store llmash reads directly, so pointing
-# at the existing folder saves downloading them again.
+# Ollama's models are GGUFs in a blob store llmash reads directly. That folder
+# is the one store: llmash pulls into it, apps that share it see everything,
+# and a store a previous install used is read alongside it.
 $ollamaModels = $env:OLLAMA_MODELS
 if (-not $ollamaModels) { $ollamaModels = [Environment]::GetEnvironmentVariable('OLLAMA_MODELS', 'User') }
 if (-not $ollamaModels) { $ollamaModels = [Environment]::GetEnvironmentVariable('OLLAMA_MODELS', 'Machine') }
@@ -516,23 +517,20 @@ if (Test-Path $localPath) {
             ForEach-Object { $localCfg[$_.Name] = $_.Value } } catch { $localCfg = @{} }
 }
 
-if ((Test-Path (Join-Path $ollamaModels 'manifests')) -and -not $localCfg['models_root']) {
-    $blobs = Join-Path $ollamaModels 'blobs'
-    $count = @(Get-ChildItem (Join-Path $ollamaModels 'manifests') -Recurse -File -EA SilentlyContinue).Count
-    $bytes = (Get-ChildItem $blobs -File -EA SilentlyContinue | Measure-Object Length -Sum).Sum
-    if ($count -gt 0) {
-        Step 'Models you already have'
-        Say ("Ollama has {0} model(s), {1:N1} GB, in {2}" -f $count, ($bytes / 1GB), $ollamaModels)
-        Say 'llmash can serve them from there, so nothing needs downloading again.'
-        if (Ask 'Use that folder for models?') {
-            $localCfg['models_root'] = $ollamaModels
-            $localCfg | ConvertTo-Json -Depth 10 | Set-Content $localPath -Encoding UTF8
-            Good "llmash will read models from $ollamaModels"
-        } else {
-            Say ("llmash will keep its own models in {0}" -f (Join-Path $env:USERPROFILE '.ollama\models'))
-        }
-    }
+$extras = @()
+if ($localCfg['extra_roots']) { $extras = @($localCfg['extra_roots']) }
+$previous = $localCfg['models_root']
+if ($previous -and ((Resolve-Path $previous -EA SilentlyContinue).Path -ne (Resolve-Path $ollamaModels -EA SilentlyContinue).Path) -and (Test-Path (Join-Path $previous 'manifests'))) {
+    if ($extras -notcontains $previous) { $extras += $previous }
 }
+$localCfg['models_root'] = $ollamaModels
+if ($extras.Count) { $localCfg['extra_roots'] = $extras }
+$localCfg | ConvertTo-Json -Depth 10 | Set-Content $localPath -Encoding UTF8
+$count = @(Get-ChildItem (Join-Path $ollamaModels 'manifests') -Recurse -File -EA SilentlyContinue).Count
+Step 'Models'
+if ($count -gt 0) { Say ("{0} model(s) already in {1}; llmash serves them from there and pulls into it" -f $count, $ollamaModels) }
+else { Say "models go in $ollamaModels" }
+foreach ($e in $extras) { Say "also reading the models in $e" }
 
 # --------------------------------------------------------------------- start
 Step 'Starting llmash'

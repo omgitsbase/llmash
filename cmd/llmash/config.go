@@ -19,7 +19,7 @@ import (
 // install has an empty LOCAL and behaves like plain Ollama on llama.cpp.
 
 const (
-	serverVersion = "0.3.3"
+	serverVersion = "0.3.4"
 	serverBuild   = "llmash"
 )
 
@@ -40,6 +40,17 @@ func loadLocal() {
 	}
 	if v := str(local, "gguf_dir"); v != "" && env("LLMASH_GGUF") == "" {
 		os.Setenv("LLMASH_GGUF", v)
+	}
+	if env("LLMASH_EXTRA_ROOTS") == "" {
+		var extras []string
+		for _, e := range list(local, "extra_roots") {
+			if s, _ := e.(string); strings.TrimSpace(s) != "" {
+				extras = append(extras, strings.TrimSpace(s))
+			}
+		}
+		if len(extras) > 0 {
+			os.Setenv("LLMASH_EXTRA_ROOTS", strings.Join(extras, ";"))
+		}
 	}
 }
 
