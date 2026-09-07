@@ -422,6 +422,39 @@ if (-not $NoOllama -and ($ollamaProcs.Count -or $ollamaAtLogin)) {
     }
 }
 
+# --------------------------------------------------------- ollama's models
+# Ollama's models are GGUFs in a blob store llmash reads directly, so pointing
+# at the existing folder saves downloading them again.
+$ollamaModels = $env:OLLAMA_MODELS
+if (-not $ollamaModels) { $ollamaModels = [Environment]::GetEnvironmentVariable('OLLAMA_MODELS', 'User') }
+if (-not $ollamaModels) { $ollamaModels = [Environment]::GetEnvironmentVariable('OLLAMA_MODELS', 'Machine') }
+if (-not $ollamaModels) { $ollamaModels = Join-Path $env:USERPROFILE '.ollama\models' }
+
+$localPath = Join-Path $Root 'local.json'
+$localCfg = @{}
+if (Test-Path $localPath) {
+    try { (Get-Content $localPath -Raw | ConvertFrom-Json).PSObject.Properties |
+            ForEach-Object { $localCfg[$_.Name] = $_.Value } } catch { $localCfg = @{} }
+}
+
+if ((Test-Path (Join-Path $ollamaModels 'manifests')) -and -not $localCfg['models_root']) {
+    $blobs = Join-Path $ollamaModels 'blobs'
+    $count = @(Get-ChildItem (Join-Path $ollamaModels 'manifests') -Recurse -File -EA SilentlyContinue).Count
+    $bytes = (Get-ChildItem $blobs -File -EA SilentlyContinue | Measure-Object Length -Sum).Sum
+    if ($count -gt 0) {
+        Step 'Models you already have'
+        Say ("Ollama has {0} model(s), {1:N1} GB, in {2}" -f $count, ($bytes / 1GB), $ollamaModels)
+        Say 'llmash can serve them from there, so nothing needs downloading again.'
+        if (Ask 'Use that folder for models?') {
+            $localCfg['models_root'] = $ollamaModels
+            $localCfg | ConvertTo-Json -Depth 10 | Set-Content $localPath -Encoding UTF8
+            Good "llmash will read models from $ollamaModels"
+        } else {
+            Say ("llmash will keep its own models in {0}" -f (Join-Path $env:USERPROFILE '.ollama\models'))
+        }
+    }
+}
+
 # --------------------------------------------------------------------- start
 Step 'Starting llmash'
 function PortBusy { try { $null = Invoke-WebRequest 'http://127.0.0.1:11434/' -UseBasicParsing -TimeoutSec 2; return $true } catch { return $false } }
