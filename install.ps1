@@ -525,7 +525,7 @@ if ($previous -and ((Resolve-Path $previous -EA SilentlyContinue).Path -ne (Reso
 }
 $localCfg['models_root'] = $ollamaModels
 if ($extras.Count) { $localCfg['extra_roots'] = $extras }
-$localCfg | ConvertTo-Json -Depth 10 | Set-Content $localPath -Encoding UTF8
+[IO.File]::WriteAllText($localPath, ($localCfg | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))
 $count = @(Get-ChildItem (Join-Path $ollamaModels 'manifests') -Recurse -File -EA SilentlyContinue).Count
 Step 'Models'
 if ($count -gt 0) { Say ("{0} model(s) already in {1}; llmash serves them from there and pulls into it" -f $count, $ollamaModels) }

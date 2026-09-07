@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"regexp"
 	"context"
 	"crypto/rand"
@@ -784,6 +785,7 @@ func cmdUninstall(keep bool) {
 	// by hand) is never deleted; only the registration goes.
 	dev := true
 	if b, err := os.ReadFile(filepath.Join(root, "install.json")); err == nil {
+		b = bytes.TrimPrefix(b, []byte{0xEF, 0xBB, 0xBF})
 		b = []byte(strings.TrimPrefix(string(b), "\ufeff"))
 		var info map[string]any
 		if json.Unmarshal(b, &info) == nil && len(info) > 0 {
