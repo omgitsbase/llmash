@@ -601,8 +601,8 @@ func quantsOf(files []hfFile) []quantInfo {
 	var order []string
 	for _, f := range files {
 		low := strings.ToLower(f.Name)
-		if !strings.HasSuffix(low, ".gguf") || strings.Contains(low, "mmproj") {
-			continue
+		if !strings.HasSuffix(low, ".gguf") || strings.Contains(low, "mmproj") || kindOf(f.Name) != nil {
+			continue // a projector or a draft head is not a build of the model
 		}
 		q := quantTag(f.Name)
 		if q == "" {
