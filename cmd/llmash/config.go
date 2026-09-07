@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -19,7 +20,7 @@ import (
 // install has an empty LOCAL and behaves like plain Ollama on llama.cpp.
 
 const (
-	serverVersion = "0.3.4"
+	serverVersion = "0.3.5"
 	serverBuild   = "llmash"
 )
 
@@ -31,6 +32,8 @@ func loadLocal() {
 	if err != nil {
 		return
 	}
+	// PowerShell writes a byte-order mark in front of UTF-8; JSON does not allow it
+	b = bytes.TrimPrefix(b, []byte{0xEF, 0xBB, 0xBF})
 	if err := json.Unmarshal(b, &local); err != nil {
 		fmt.Fprintf(os.Stderr, "[llmash] bad local.json (%v); ignoring it\n", err)
 		local = map[string]any{}
