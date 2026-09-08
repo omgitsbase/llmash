@@ -748,6 +748,16 @@ func cmdTray() {
 	cmd.Dir = root
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000 | 0x00000008}
 	if err := cmd.Start(); err != nil {
+		// ERROR_VIRUS_INFECTED (225): an antivirus stopped the file from
+		// running. llmash is unsigned, and a freshly built program with no
+		// reputation behind it is a common false positive.
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "virus") || strings.Contains(low, "potentially unwanted") {
+			die("your antivirus blocked %s from running.\n"+
+				"The command line still works; only the tray is stopped.\n"+
+				"Allow it in your antivirus (in Windows Security it is under Protection history), then run `llmash tray` again.\n"+
+				"Reporting it helps everyone else: https://www.microsoft.com/en-us/wdsi/filesubmission", exe)
+		}
 		die("could not start the tray: %v", err)
 	}
 	cmd.Process.Release()
