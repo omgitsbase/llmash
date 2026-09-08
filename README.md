@@ -35,7 +35,7 @@ Your numbers will differ.
 | backend | conversation | coding | thinking |
 |---|--:|--:|--:|
 | Ollama | 173.0 | 189.5 | 118.5 |
-| **llmash** | **254.2** | **332.1** | **417.3** |
+| **llmash** | **255.6** | **338.6** | **432.0** |
 
 **Qwen3.6 35B-A3B (IQ4_XS)**
 
@@ -43,7 +43,7 @@ Your numbers will differ.
 |---|--:|--:|--:|
 | Ollama | 129.8 | 120.3 | 226.8 |
 | vLLM | 182.6 | 182.0 | 182.1 |
-| **llmash** | **382.5** | **473.6** | **506.7** |
+| **llmash** | **385.0** | **482.0** | **514.4** |
 
 **Qwen3.8 27B (Q4_K_XL)**
 
@@ -51,7 +51,7 @@ Your numbers will differ.
 |---|--:|--:|--:|
 | Ollama | 63.1 | 62.3 | 63.4 |
 | vLLM | 72.9 | 73.7 | 73.7 |
-| **llmash** | **130.1** | **160.1** | **187.4** |
+| **llmash** | **129.9** | **160.1** | **188.1** |
 
 Tokens per second while generating, median of three runs, excluding model load and prompt processing.
 
@@ -72,37 +72,47 @@ of its layers are 256 wide and 5 are 512.
 - **Routes** send a named model to another OpenAI-compatible server, and fall
   back to llama.cpp when that server is not running.
 
-## What it turns on
+It also picks the ordinary llama.cpp settings per model at launch, and logs each
+choice: prompt-prefix reuse, a host-RAM prompt cache sized from free RAM, batch
+width when the card has room, raised process priority, and DirectIO loading.
+`LLMASH_TUNE_OFF` disables any of them.
 
-llama.cpp options that are off by default. llmash sets each per model at launch,
-logs the decision, and lets you override it.
+## The speculative round is one CUDA graph
 
-| | |
-|---|---|
-| Speculative decoding | A model with an MTP head uses it. Otherwise a draft model beside it, or `ngram-mod`, which drafts from the context and costs no VRAM. |
-| One graph per round | The whole speculative round is one CUDA graph: the replay, the decision about how many tokens were accepted, and every draft step, with the accept decided on the GPU rather than read back. The two graphs hand off device to device, ordered by an event, so nothing waits on a forward pass. Measured at 424 tok/s against 373 for a decode per drafted token. |
-| Prompt-prefix reuse | `--cache-reuse`, so a repeated prefix is not processed twice. |
-| Host-RAM prompt cache | Sized from free RAM, between 8 and 32 GiB. |
-| Batch size | A wider prompt batch when the card has the VRAM for it. |
-| Process priority | Raised, so background work does not stall generation. |
-| DirectIO loading | `--load-mode dio` reads weights straight to the card instead of memory-mapping them. |
+A model carrying an MTP head drafts for itself: no draft model to fetch, no
+pairing to declare, nothing to configure. If the head is in the weights, it is
+used.
+
+The round then runs as a single graph rather than a decode per drafted token.
+The replay of the verify batch, the decision about how many tokens the target
+accepted, and every draft step are one graph; the accept is decided on the GPU
+instead of read back to the host; and the target and draft graphs hand off
+device to device, ordered by an event, so nothing waits on a forward pass
+mid-round. Measured at 424 tok/s against 373 for the same model drafting a
+token per decode.
+
+Speculation itself is no longer unusual, and other runners have it. Running the
+round without returning to the host is the part that is ours.
+
+What is left is the kernels, and they are the honest limit. A round costs
+5.8 ms of GPU on this card and yields 2.9 accepted tokens, so 2.0 ms a token,
+which is the ceiling until the matmuls get cheaper. Checking four drafted
+tokens at once should be nearly free, since the weights are read once for the
+whole batch; float weights behave that way, going 1.12x from one token to four,
+while quantized ones cost 1.5x to 2.3x. Handing that batch to the tensor-core
+quantized path instead was measured 15% slower, so llama.cpp's crossover is
+already right and the gap is the vector kernel itself.
 
 ## Draft models
 
-A draft model guesses the next few tokens so the real model can check several at
-once. `pulldraft` finds one for a model you have, and a pull offers the same
-thing when it finishes.
+For a model with no MTP head, `pulldraft` finds one on Hugging Face and a pull
+offers the same when it finishes. No account, no token. Candidates are checked
+against the weights they would serve before anything downloads: matching
+vocabularies, an encoder shaped for this model's hidden size, and the layers it
+reads present. A model with a head of its own is left alone.
 
-Candidates come from Hugging Face; no account, no token. Repositories built for
-a fine-tune of the model, or packaged for another runtime, are refused, and the
-rest are checked against the weights they would serve before anything is
-downloaded: matching vocabularies, an encoder shaped for this model's hidden
-size, and the layers it reads present. A model with an MTP head of its own is
-left alone.
-
-Measured on this machine: gemma-4 26B-A4B went from 244 to 342 tok/s on a
-fetched EAGLE-3 head. Qwen3.6 35B-A3B ran 308 tok/s on its own MTP head against
-265 on a downloaded one.
+Measured here: gemma-4 26B-A4B went from 244 to 342 tok/s on a fetched EAGLE-3
+head.
 
 ## Commands
 
