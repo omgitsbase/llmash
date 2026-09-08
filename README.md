@@ -94,21 +94,18 @@ token per decode.
 Speculation itself is no longer unusual, and other runners have it. Running the
 round without returning to the host is the part that is ours.
 
-What is left is the kernels, and they are the honest limit. A round costs
-5.8 ms of GPU on this card and yields 2.9 accepted tokens, so 2.0 ms a token,
-which is the ceiling until the matmuls get cheaper. Checking four drafted
-tokens at once should be nearly free, since the weights are read once for the
-whole batch; float weights behave that way, going 1.12x from one token to four,
-while quantized ones cost 1.5x to 2.3x.
+What is left is the kernels, and there is less there than it looks. A round
+costs 5.8 ms of GPU on this card for 2.9 accepted tokens, so 2.0 ms a token.
+Verifying four drafted tokens costs 1.34x a single-token pass, against a floor
+near 1.0x if the weights were read once and reused across the batch; for a
+mixture-of-experts model the four tokens route to different experts, so much of
+that 0.34 is weight the card genuinely has to fetch, not waste.
 
-That is the vector kernel becoming arithmetic-bound: at one token it reads
-weights at 77% of this card's peak bandwidth, at four it is down to 48% and
-waiting on integer dot products instead. Two ways out were measured and both
-lost. Handing the batch to the tensor-core quantized path is 15% slower, so
-llama.cpp's crossover is already right; doubling the warps per block changes
-nothing, which is what an arithmetic-bound kernel does. What is left is
-decoding each weight block once per batch instead of once per column, and that
-is a rewrite of the dot product for every quantized format, not a setting.
+Three ways at it were measured and all three lost. Handing the batch to the
+tensor-core quantized path is 15% slower, so llama.cpp's crossover is already
+right. Doubling the warps per block changes nothing. Reordering the inner loop
+so that calls sharing a weight block sit together changes nothing either, which
+says the compiler was already hoisting those loads.
 
 ## Draft models
 
