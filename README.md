@@ -112,10 +112,19 @@ model is 923 kernel launches, and a launch costs about 2.3 microseconds here,
 measured by fusing 38 of them away and watching the graph time move. That puts
 roughly 2.1 ms of a 4.66 ms graph in dispatch rather than in arithmetic or
 memory. The model is launch-bound, so the lever is fewer and larger kernels,
-not faster ones: the elementwise-chain pass already collapses 2141 nodes per
-graph, and the next wins are the same kind, such as folding a residual add into
-the norm that follows it, worth another 30 launches. Making one kernel quicker
-cannot reach the 45% that is spent getting to kernels at all.
+not faster ones. Making one kernel quicker cannot reach the 45% that is spent
+getting to kernels at all.
+
+So that is what the CUDA work here is. An elementwise-chain pass collapses runs
+of elementwise ops into one launch, 2141 nodes a graph, and it widens when a
+value computed over few elements is broadcast into many, which is how a gate
+reaches the tensor it gates. A residual add is folded into the rms_norm and
+weight-multiply that read it, another 30 launches; llama.cpp fuses the mirror
+image, norm-then-add, but not the add-then-norm every block opens with, and the
+sum has to be written out as well because the next block reads it. Both apply
+to any model that has the pattern, with no per-model configuration, and both
+have a switch. Neither is large alone, 0.8% for the residual fold, but they are
+the shape the remaining work takes.
 
 ## Draft models
 
