@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"context"
 	"errors"
 	"fmt"
@@ -52,6 +53,64 @@ var vramKnown bool // whether vramFree came from a real card
 // caller it had an 80 GB card: the context was never trimmed, the batch was
 // widened for a big card, and the weights went to system RAM anyway. Unknown
 // is its own answer now, and callers treat it as no GPU.
+
+// The devices llama.cpp itself reports, which is the only honest answer to
+// whether there is anything to offload to. nvidia-smi answers for one vendor,
+// and the installer fetches a Vulkan build whenever the machine has a GPU that
+// is not NVIDIA, so asking nvidia-smi alone left every AMD, Intel and
+// integrated-graphics machine running its Vulkan runtime with nothing on it.
+var (
+	devMu    sync.Mutex
+	devNames []string
+	devAt    time.Time
+	devKnown bool
+)
+
+func offloadDevices() []string {
+	devMu.Lock()
+	defer devMu.Unlock()
+	if devKnown && time.Since(devAt) < time.Minute {
+		return devNames
+	}
+	devNames, devKnown, devAt = nil, true, time.Now()
+	if llamaBin == "" {
+		return devNames
+	}
+	cmd := quiet(exec.Command(llamaBin, "--list-devices"))
+	done := make(chan struct{})
+	var out []byte
+	go func() { out, _ = cmd.Output(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		return devNames
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		// "  CUDA0: NVIDIA ... (97886 MiB, 95346 MiB free)"
+		name, _, ok := strings.Cut(line, ":")
+		if !ok || name == "" || strings.Contains(name, " ") {
+			continue
+		}
+		if strings.EqualFold(name, "CPU") || strings.HasPrefix(strings.ToUpper(name), "CPU") {
+			continue
+		}
+		devNames = append(devNames, name)
+	}
+	return devNames
+}
+
+// whether the weights have somewhere to go other than system RAM
+func canOffload() bool {
+	if _, gpu := freeVRAM(); gpu {
+		return true
+	}
+	return len(offloadDevices()) > 0
+}
+
 func freeVRAM() (float64, bool) {
 	vramMu.Lock()
 	defer vramMu.Unlock()
@@ -256,11 +315,34 @@ func (in *Instance) Progress() float64 {
 	return math.Max(0, math.Min(0.99, best/total))
 }
 
+
+// The threads to give a model that is running on the CPU. llama.cpp counts
+// every logical processor it can see; on a hybrid chip that hands work to the
+// efficient cores and to both threads of each core, and both are slower than
+// the performance cores alone. Measured on a 13900KF with llama 3B Q4_K_M:
+// 22.2 tok/s at 8 threads against 19.4 at the default 24, and 16.2 at 32.
+func cpuThreads() (int, uint64) {
+	n, mask := perfCoresAndMask()
+	if v := envInt("LLMASH_THREADS", 0); v > 0 {
+		return v, 0
+	}
+	if n <= 0 || n > runtime.NumCPU() {
+		return 0, 0 // topology unreadable: leave llama.cpp's default alone
+	}
+	return n, mask
+}
+
 func (in *Instance) args() []string {
 	m := in.Model
 	a := []string{llamaBin, "-m", m.GGUF, "--host", "127.0.0.1", "--port", strconv.Itoa(in.Port)}
-	if _, gpu := freeVRAM(); gpu {
+	if canOffload() {
 		a = append(a, "-ngl", "999")
+	} else if t, mask := cpuThreads(); t > 0 {
+		// nothing to offload to, so the thread count is the whole game
+		a = append(a, "-t", strconv.Itoa(t), "-tb", strconv.Itoa(t))
+		if mask != 0 {
+			a = append(a, "-C", fmt.Sprintf("%x", mask), "--cpu-strict", "1")
+		}
 	}
 	// llama.cpp adjusts what it was not given (--fit, on by default), so on a
 	// machine with no GPU it places the layers itself rather than being told
