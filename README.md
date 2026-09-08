@@ -72,9 +72,8 @@ Tokens per second while generating, median of three runs, excluding model load a
 
 <!-- /BENCHMARK -->
 
-vLLM here is the native Windows build on AWQ int4 weights. gemma-4 has no vLLM
-row because that build gives every layer one head_dim, and gemma-4 does not: 25
-of its layers are 256 wide and 5 are 512.
+vLLM is the native Windows build on AWQ int4 weights. gemma-4 has no vLLM row
+because that build cannot run its mixed head sizes.
 
 ## How it fits together
 
@@ -87,70 +86,31 @@ of its layers are 256 wide and 5 are 512.
 - **Routes** send a named model to another OpenAI-compatible server, and fall
   back to llama.cpp when that server is not running.
 
-It also picks the ordinary llama.cpp settings per model at launch, and logs each
-choice: prompt-prefix reuse, a host-RAM prompt cache sized from free RAM, batch
-width when the card has room, raised process priority, and DirectIO loading.
+Per model, at launch, it picks the ordinary llama.cpp settings and logs each:
+prompt-prefix reuse, a host-RAM prompt cache sized from free RAM, batch width
+when the card has room, raised process priority, and DirectIO loading.
 `LLMASH_TUNE_OFF` disables any of them.
 
-## The speculative round is one CUDA graph
+## Speculation
 
-A model carrying an MTP head drafts for itself: no draft model to fetch, no
-pairing to declare, nothing to configure. If the head is in the weights, it is
-used.
+A model carrying an MTP head drafts for itself, with nothing to fetch or
+configure. The whole round is one CUDA graph: the verify batch, the accept
+decision and every draft step, with the accept decided on the GPU rather than
+read back to the host. Measured at 424 tok/s against 373 for the same model
+drafting one token per decode.
 
-The round then runs as a single graph rather than a decode per drafted token.
-The replay of the verify batch, the decision about how many tokens the target
-accepted, and every draft step are one graph; the accept is decided on the GPU
-instead of read back to the host; and the target and draft graphs hand off
-device to device, ordered by an event, so nothing waits on a forward pass
-mid-round. Measured at 424 tok/s against 373 for the same model drafting a
-token per decode.
+For a model with no head, `pulldraft` finds a drafter on Hugging Face, checked
+against the weights before anything downloads. gemma-4 26B-A4B went from 244
+to 342 tok/s on a fetched EAGLE-3 head.
 
-Speculation itself is no longer unusual, and other runners have it. Running the
-round without returning to the host is the part that is ours.
+## Kernels
 
-What is left is the kernels, and there is less there than it looks. A round
-costs 5.8 ms of GPU on this card for 2.9 accepted tokens, so 2.0 ms a token.
-Verifying four drafted tokens costs 1.34x a single-token pass, against a floor
-near 1.0x if the weights were read once and reused across the batch; for a
-mixture-of-experts model the four tokens route to different experts, so much of
-that 0.34 is weight the card genuinely has to fetch, not waste.
-
-Three ways at it were measured and all three lost. Handing the batch to the
-tensor-core quantized path is 15% slower, so llama.cpp's crossover is already
-right. Doubling the warps per block changes nothing. Reordering the inner loop
-so that calls sharing a weight block sit together changes nothing either, which
-says the compiler was already hoisting those loads.
-
-They lost because they were aimed at the wrong half. A decode graph on this
-model is 923 kernel launches, and a launch costs about 2.3 microseconds here,
-measured by fusing 38 of them away and watching the graph time move. That puts
-roughly 2.1 ms of a 4.66 ms graph in dispatch rather than in arithmetic or
-memory. The model is launch-bound, so the lever is fewer and larger kernels,
-not faster ones. Making one kernel quicker cannot reach the 45% that is spent
-getting to kernels at all.
-
-So that is what the CUDA work here is. An elementwise-chain pass collapses runs
-of elementwise ops into one launch, 2141 nodes a graph, and it widens when a
-value computed over few elements is broadcast into many, which is how a gate
-reaches the tensor it gates. A residual add is folded into the rms_norm and
-weight-multiply that read it, another 30 launches; llama.cpp fuses the mirror
-image, norm-then-add, but not the add-then-norm every block opens with, and the
-sum has to be written out as well because the next block reads it. Both apply
-to any model that has the pattern, with no per-model configuration, and both
-have a switch. Neither is large alone, 0.8% for the residual fold, but they are
-the shape the remaining work takes.
-
-## Draft models
-
-For a model with no MTP head, `pulldraft` finds one on Hugging Face and a pull
-offers the same when it finishes. No account, no token. Candidates are checked
-against the weights they would serve before anything downloads: matching
-vocabularies, an encoder shaped for this model's hidden size, and the layers it
-reads present. A model with a head of its own is left alone.
-
-Measured here: gemma-4 26B-A4B went from 244 to 342 tok/s on a fetched EAGLE-3
-head.
+Decode on this card is launch-bound: a graph is 923 kernel launches at about
+2.3 µs each, so close to half of a 4.66 ms graph is dispatch. The CUDA work is
+therefore fewer launches, not faster kernels. An elementwise-chain pass
+collapses runs of elementwise ops into one launch, and a residual add is folded
+into the rms_norm that reads it. Both apply to any model with the pattern, and
+both have a switch.
 
 ## Commands
 
