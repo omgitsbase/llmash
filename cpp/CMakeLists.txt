@@ -5,13 +5,34 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Header-only, both vendored, both the ones llama.cpp's own server uses.
-add_library(llmash_vendor INTERFACE)
-target_include_directories(llmash_vendor INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+# cpp-httplib is vendored in its split form: the header declares, httplib.cpp
+# defines. Without the .cpp every Client call is an unresolved symbol.
+add_library(llmash_vendor STATIC vendor/httplib.cpp)
+target_include_directories(llmash_vendor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+if (WIN32)
+    target_link_libraries(llmash_vendor PUBLIC ws2_32 crypt32)
+endif()
 
 set(LLMASH_SOURCES
     src/config.cpp
     src/gguf.cpp
     src/registry.cpp
+    src/manager.cpp
+    src/help.cpp
+    src/launch.cpp
+    src/remote.cpp
+    src/readline.cpp
+    src/cmd_doctor.cpp
+    src/cmd_models.cpp
+    src/cli_console.cpp
+    src/cli_format.cpp
+    src/cli_http.cpp
+    src/cli_process.cpp
+    src/cli_run.cpp
+    src/cli_util.cpp
+    src/cli_win.cpp
+    src/tray.cpp
+    src/tray_process.cpp
 )
 
 add_library(llmash_core STATIC ${LLMASH_SOURCES})
@@ -25,7 +46,7 @@ if (WIN32)
         _CRT_SECURE_NO_WARNINGS
         UNICODE
         _UNICODE)
-    target_link_libraries(llmash_core PUBLIC shlwapi)
+    target_link_libraries(llmash_core PUBLIC shlwapi user32 shell32 advapi32 ws2_32 psapi)
 endif()
 
 add_executable(llmash src/main.cpp)
@@ -39,6 +60,8 @@ if (MSVC)
 endif()
 
 enable_testing()
-add_executable(llmash_test src/test_main.cpp)
-target_link_libraries(llmash_test PRIVATE llmash_core)
-add_test(NAME llmash_test COMMAND llmash_test)
+foreach(t test_main cli_run_test test_cli_doctor_models tray_test)
+    add_executable(${t} src/${t}.cpp)
+    target_link_libraries(${t} PRIVATE llmash_core)
+    add_test(NAME ${t} COMMAND ${t})
+endforeach()
