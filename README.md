@@ -107,6 +107,16 @@ right. Doubling the warps per block changes nothing. Reordering the inner loop
 so that calls sharing a weight block sit together changes nothing either, which
 says the compiler was already hoisting those loads.
 
+They lost because they were aimed at the wrong half. A decode graph on this
+model is 923 kernel launches, and a launch costs about 2.3 microseconds here,
+measured by fusing 38 of them away and watching the graph time move. That puts
+roughly 2.1 ms of a 4.66 ms graph in dispatch rather than in arithmetic or
+memory. The model is launch-bound, so the lever is fewer and larger kernels,
+not faster ones: the elementwise-chain pass already collapses 2141 nodes per
+graph, and the next wins are the same kind, such as folding a residual add into
+the norm that follows it, worth another 30 launches. Making one kernel quicker
+cannot reach the 45% that is spent getting to kernels at all.
+
 ## Draft models
 
 For a model with no MTP head, `pulldraft` finds one on Hugging Face and a pull
