@@ -502,13 +502,25 @@ if (-not $NoOllama -and ($ollamaProcs.Count -or $ollamaAtLogin)) {
 }
 
 # --------------------------------------------------------- ollama's models
-# Ollama's models are GGUFs in a blob store llmash reads directly. That folder
-# is the one store: llmash pulls into it, apps that share it see everything,
-# and a store a previous install used is read alongside it.
-$ollamaModels = $env:OLLAMA_MODELS
-if (-not $ollamaModels) { $ollamaModels = [Environment]::GetEnvironmentVariable('OLLAMA_MODELS', 'User') }
-if (-not $ollamaModels) { $ollamaModels = [Environment]::GetEnvironmentVariable('OLLAMA_MODELS', 'Machine') }
-if (-not $ollamaModels) { $ollamaModels = Join-Path $env:USERPROFILE '.ollama\models' }
+# One setting, OLLAMA_MODELS (LLMASH_MODELS is the same thing under llmash's
+# name), read for what it points at: an Ollama store, which llmash reads
+# directly and pulls into, or a folder of GGUFs, which it reads in place.
+# `llmash models set` writes the same setting to local.json. A store a
+# previous install used is read alongside.
+function EnvAny($name) {
+    $v = [Environment]::GetEnvironmentVariable($name, 'Process')
+    if (-not $v) { $v = [Environment]::GetEnvironmentVariable($name, 'User') }
+    if (-not $v) { $v = [Environment]::GetEnvironmentVariable($name, 'Machine') }
+    return $v
+}
+function IsStore($p) { return [bool]($p -and (Test-Path (Join-Path $p 'manifests'))) }
+function IsGgufFolder($p) {
+    return [bool]($p -and (Test-Path $p) -and -not (IsStore $p) -and
+        @(Get-ChildItem $p -Recurse -Filter '*.gguf' -File -EA SilentlyContinue).Count)
+}
+$ollamaStore = Join-Path $env:USERPROFILE '.ollama\models'
+$modelsVar = EnvAny 'OLLAMA_MODELS'
+if (-not $modelsVar) { $modelsVar = EnvAny 'LLMASH_MODELS' }
 
 $localPath = Join-Path $Root 'local.json'
 $localCfg = @{}
@@ -520,16 +532,28 @@ if (Test-Path $localPath) {
 $extras = @()
 if ($localCfg['extra_roots']) { $extras = @($localCfg['extra_roots']) }
 $previous = $localCfg['models_root']
-if ($previous -and ((Resolve-Path $previous -EA SilentlyContinue).Path -ne (Resolve-Path $ollamaModels -EA SilentlyContinue).Path) -and (Test-Path (Join-Path $previous 'manifests'))) {
+
+# models_root: the variable when set, else a folder of GGUFs a previous
+# `llmash models set` chose, else Ollama's store
+$modelsRoot = $ollamaStore
+if ($modelsVar) { $modelsRoot = $modelsVar }
+elseif (IsGgufFolder $previous) { $modelsRoot = $previous }
+# the store is the setting when it is one (or does not exist yet), else Ollama's own
+$ollamaModels = if ((IsStore $modelsRoot) -or -not (Test-Path $modelsRoot)) { $modelsRoot } else { $ollamaStore }
+if ((IsStore $previous) -and ((Resolve-Path $previous -EA SilentlyContinue).Path -ne (Resolve-Path $ollamaModels -EA SilentlyContinue).Path)) {
     if ($extras -notcontains $previous) { $extras += $previous }
 }
-$localCfg['models_root'] = $ollamaModels
+$localCfg['models_root'] = $modelsRoot
 if ($extras.Count) { $localCfg['extra_roots'] = $extras }
 [IO.File]::WriteAllText($localPath, ($localCfg | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))
 $count = @(Get-ChildItem (Join-Path $ollamaModels 'manifests') -Recurse -File -EA SilentlyContinue).Count
 Step 'Models'
 if ($count -gt 0) { Say ("{0} model(s) already in {1}; llmash serves them from there and pulls into it" -f $count, $ollamaModels) }
 else { Say "models go in $ollamaModels" }
+if (IsGgufFolder $modelsRoot) {
+    $n = @(Get-ChildItem $modelsRoot -Recurse -Filter '*.gguf' -File -EA SilentlyContinue).Count
+    Say ("reading the {0} GGUF(s) in {1} where they are" -f $n, $modelsRoot)
+}
 foreach ($e in $extras) { Say "also reading the models in $e" }
 
 # --------------------------------------------------------------------- start

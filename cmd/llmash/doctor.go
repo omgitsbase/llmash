@@ -158,6 +158,23 @@ func cmdDoctor() {
 			state = stWarn
 		}
 		d.add(state, "model store", "%s, %.0f GB free", store, freeGB)
+		for _, l := range list(p, "library") {
+			dir := fmt.Sprint(l)
+			clean, skipped := countLibrary(dir)
+			switch {
+			case clean == 0:
+				d.add(stWarn, "models folder", "%s yields no models; `%s models set` picks another", dir, prog)
+			case skipped > 0:
+				d.add(stWarn, "models folder", "%s, %d models read in place, %d files skipped", dir, clean, skipped)
+			default:
+				d.add(stOK, "models folder", "%s, %d models read in place", dir, clean)
+			}
+		}
+	}
+	for _, l := range libraryDirs() {
+		if !dirExists(l) {
+			d.add(stWarn, "models folder", "%s is missing; `%s models set` picks another", l, prog)
+		}
 	}
 
 	// ---- the card --------------------------------------------------------

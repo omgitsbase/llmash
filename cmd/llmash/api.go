@@ -128,9 +128,7 @@ func buildMux() *http.ServeMux {
 	})
 	mux.HandleFunc("/cli/list", func(w http.ResponseWriter, r *http.Request) { writeText(w, 200, cliCached("list")) })
 	mux.HandleFunc("/cli/ps", func(w http.ResponseWriter, r *http.Request) { writeText(w, 200, cliCached("ps")) })
-	mux.HandleFunc("/api/paths", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"root": root, "loose_dir": reg.LooseDir(), "models": reg.Root})
-	})
+	mux.HandleFunc("/api/paths", apiPaths)
 	mux.HandleFunc("/api/create", apiCreate)
 	mux.HandleFunc("/api/copy", apiCopy)
 	mux.HandleFunc("/api/keep_alive", apiKeepAlive)
@@ -308,6 +306,25 @@ func apiShow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiPaths reports where models are read from and written to. A POST makes
+// the server re-read local.json first, which is how `llmash models` applies
+// a new library folder or extra store to a server that is already up.
+func apiPaths(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" {
+		reg.Reload()
+		cliInvalidate()
+	}
+	extras, library := reg.extras(), reg.library()
+	if extras == nil {
+		extras = []string{}
+	}
+	if library == nil {
+		library = []string{}
+	}
+	writeJSON(w, 200, map[string]any{"root": root, "loose_dir": reg.LooseDir(), "models": reg.Root,
+		"extra_roots": extras, "library": library})
+}
+
 func apiDelete(w http.ResponseWriter, r *http.Request) {
 	body, _ := readBody(r)
 	name := str(body, "model")
@@ -343,6 +360,10 @@ func apiDelete(w http.ResponseWriter, r *http.Request) {
 	reg.Invalidate()
 	cliInvalidate()
 	if len(removed) == 0 {
+		if reg.InLibrary(m.GGUF) {
+			writeJSON(w, 409, errorObj(fmt.Sprintf("%s is read from %s, a folder llmash only reads; delete the file yourself", m.Name, m.GGUF)))
+			return
+		}
 		writeJSON(w, 409, errorObj(fmt.Sprintf("found %s but nothing to delete. Its file is at %s, outside the model directory", m.Name, m.GGUF)))
 		return
 	}
