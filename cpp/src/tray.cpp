@@ -1,3 +1,4 @@
+#include "cli_win.h"
 #include "tray.h"
 #include "tray_internal.h"
 
@@ -784,17 +785,6 @@ int TrayApp::run() {
 
 // ---------------------------------------------------------- public API
 
-std::string ps_quote(const std::string & s) {
-    std::string out;
-    out.reserve(s.size());
-    for (const char c : s) {
-        out += c;
-        if (c == '\'') {
-            out += '\'';
-        }
-    }
-    return out;
-}
 
 std::string stop_script(const std::string & root) {
     const std::string r    = ps_quote(root);

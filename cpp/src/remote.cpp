@@ -1,3 +1,4 @@
+#include "cli_win.h"
 #include "remote.h"
 
 #include <httplib.h>
@@ -141,16 +142,6 @@ bool file_exists(const std::string & p) {
     return fs::exists(p, ec) && !fs::is_directory(p, ec);
 }
 
-std::string ps_quote(const std::string & s) {
-    std::string out;
-    for (char c : s) {
-        out += c;
-        if (c == '\'') {
-            out += '\'';
-        }
-    }
-    return out;
-}
 
 #ifdef _WIN32
 std::string wide_to_utf8(const wchar_t * s, int len) {

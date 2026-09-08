@@ -1,3 +1,4 @@
+#include "cli_format.h"
 #include "cli_run.h"
 
 #include <httplib.h>
@@ -339,11 +340,6 @@ int term_width() {
 
 } // namespace
 
-int disp_width(const std::string & utf8) {
-    int n = 0;
-    for (const auto & r : utf8_runes(utf8)) n += codepoint_width(decode_one(r));
-    return n;
-}
 
 void display_response(const std::string & content, bool word_wrap, DisplayState & state) {
     int w = term_width();

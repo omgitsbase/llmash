@@ -1,3 +1,4 @@
+#include "cli_win.h"
 #include "cmd_models.h"
 
 #include "cli_util.h"
@@ -140,16 +141,6 @@ void reload_paths() {
     }
 }
 
-std::string ps_quote(const std::string & s) {
-    std::string out;
-    for (char c : s) {
-        out += c;
-        if (c == '\'') {
-            out += '\'';
-        }
-    }
-    return out;
-}
 
 bool tray_server_up() {
     httplib::Client cli(server_host());

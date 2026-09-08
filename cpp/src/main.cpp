@@ -1,3 +1,5 @@
+#include "cli_commands.h"
+#include "cli_http.h"
 #include "cli_run.h"
 #include "cmd_doctor.h"
 #include "cmd_models.h"
@@ -59,7 +61,8 @@ int main(int argc, char ** argv) {
         return 0;
     }
 
-    Config cfg = load_config();
+    Config   cfg = load_config();
+    Registry reg(cfg);
 
     try {
         if (cmd == "run") {
@@ -82,15 +85,25 @@ int main(int argc, char ** argv) {
             return 0;
         }
 
-        for (const char * c : {"list", "ls", "ps", "show", "rm", "stop", "pull",
-                               "install", "create", "cp", "push", "signin", "signout"}) {
-            if (cmd == c) {
-                std::fprintf(stderr,
-                             "%s: not ported to the C++ build yet (cmds.go). Use the Go build for this one.\n",
-                             cmd.c_str());
-                return 1;
-            }
+        if (cmd == "pulldraft") {
+            return cmd_pulldraft(args, reg);
         }
+        if (cmd == "link")      { return cmd_link(args, cfg); }
+        if (cmd == "unlink")    { return cmd_unlink(); }
+        if (cmd == "uninstall") { return cmd_uninstall(args, cfg); }
+        if (cmd == "push")      { return cmd_push(); }
+        if (cmd == "signin")    { return cmd_signin(); }
+        if (cmd == "signout")   { return cmd_signout(); }
+
+        ApiClient api(cfg);
+        if (cmd == "list" || cmd == "ls")      { return cmd_list(args, api, cfg); }
+        if (cmd == "ps")                       { return cmd_ps(args, api, cfg); }
+        if (cmd == "show")                     { return cmd_show(args, api); }
+        if (cmd == "rm")                       { return cmd_rm(args, api); }
+        if (cmd == "stop")                     { return cmd_stop(args, api); }
+        if (cmd == "pull" || cmd == "install") { return cmd_pull(args, api); }
+        if (cmd == "create")                   { return cmd_create(args, api); }
+        if (cmd == "cp")                       { return cmd_cp(args, api); }
     } catch (const CliUsageError & e) {
         std::fprintf(stderr, "%s\n", e.what());
         return 1;
