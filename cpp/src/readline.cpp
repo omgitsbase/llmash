@@ -403,9 +403,6 @@ int disp_width(const std::u32string & s) {
     return n;
 }
 
-int disp_width(const std::string & utf8) {
-    return disp_width(utf8_decode(utf8));
-}
 
 // -------------------------------------------------------------- rune sources
 

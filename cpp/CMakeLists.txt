@@ -33,6 +33,12 @@ set(LLMASH_SOURCES
     src/cli_win.cpp
     src/tray.cpp
     src/tray_process.cpp
+    src/api_logic.cpp
+    src/api.cpp
+    src/chat.cpp
+    src/cli_commands.cpp
+    src/pull.cpp
+    src/draft.cpp
 )
 
 add_library(llmash_core STATIC ${LLMASH_SOURCES})
@@ -60,7 +66,8 @@ if (MSVC)
 endif()
 
 enable_testing()
-foreach(t test_main cli_run_test test_cli_doctor_models tray_test)
+foreach(t test_main cli_run_test test_cli_doctor_models tray_test
+              api_logic_test api_test chat_test cli_commands_test pull_test)
     add_executable(${t} src/${t}.cpp)
     target_link_libraries(${t} PRIVATE llmash_core)
     add_test(NAME ${t} COMMAND ${t})
