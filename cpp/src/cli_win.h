@@ -13,14 +13,10 @@ namespace llmash {
 bool reg_delete_hkcu_key(const std::string & subkey);
 
 // Removes every entry equal to bin_dir (case-insensitively) from HKCU's
-// Environment\Path; returns whether anything changed. The value's type
-// (REG_SZ vs REG_EXPAND_SZ) is preserved.
+// Environment\Path; returns whether anything changed.
 bool remove_from_user_path(const std::string & bin_dir);
 
-// A hidden PowerShell (-NoProfile -NonInteractive -WindowStyle Hidden). When
-// wait is false it is fire-and-forget (used for a tunnel or a delayed
-// self-delete that must outlive this process) and the return value is
-// always empty/0.
+// A hidden PowerShell (-NoProfile -NonInteractive -WindowStyle Hidden).
 std::string hidden_powershell(const std::string & script, bool wait, int * exit_code = nullptr);
 
 // Escapes a single-quoted PowerShell string literal.

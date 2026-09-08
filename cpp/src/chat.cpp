@@ -80,8 +80,7 @@ std::vector<std::string> csv(const std::string & s) {
 }
 
 // The four local.json tables chat.go reads that Config does not carry, read
-// once from the same file config.cpp reads. Everything else comes from the
-// environment, exactly as loadConfig() does in Go.
+// once from the same file config.cpp reads.
 struct Knobs {
     std::vector<std::string> think_off;
     std::vector<std::string> no_inject;
@@ -355,9 +354,7 @@ Upstream post_json(int port, const std::string & path, const json & payload, std
 using Emit   = std::function<void(const json &)>;
 using Events = std::function<void(const Emit &)>;
 
-// chatBody() up to the point where it would start streaming. Returns false
-// when it has already written the whole response into res (the keep_alive=0
-// unload, a load failure); otherwise events/stream are filled in.
+// chatBody() up to the point where it would start streaming.
 bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg, Events & events,
                   bool & stream) {
     (void) reg;
@@ -541,9 +538,7 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
     return true;
 }
 
-// deliver(): ndjson out, or one folded object. `shape` rewrites each event on
-// the way out, which is the whole difference between /api/chat and
-// /api/generate.
+// deliver(): ndjson out, or one folded object.
 void deliver(httplib::Response & res, bool stream, const Events & events, int err_code,
              const std::function<json(json)> & shape) {
     if (stream) {

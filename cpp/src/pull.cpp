@@ -268,9 +268,7 @@ bool open_stream(const std::string & url, const std::string & method, const std:
 
 // ------------------------------------------------- GGUF header, from a URL
 
-// pull.go's own quantisation table. gguf.h's file_type_name() covers only the
-// ids registry.cpp needs and answers "" for the rest, which would silently
-// turn an MXFP4 or IQ build into the Q4_K_M default below.
+// pull.go's own quantisation table.
 std::string gguf_file_type(int64_t ft) {
     switch (ft) {
         case 0:  return "F32";
@@ -488,9 +486,7 @@ BlockPlan plan_blocks(const std::vector<unsigned char> & have, int64_t total) {
 }
 
 // A .part left by an older single-stream download has no block map, so the
-// whole blocks it already holds are marked before the streams start. `prefix`
-// comes back as the byte count that survives. The bound on i is ours: a .part
-// longer than `total` would otherwise run off the end of the map.
+// whole blocks it already holds are marked before the streams start.
 bool seed_block_map(const std::string & tmp, int64_t total, int64_t & prefix) {
     prefix = 0;
     const std::string idx = tmp + ".idx";

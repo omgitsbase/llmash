@@ -296,9 +296,7 @@ std::wstring last_error_message() {
 }
 
 // Starts `exe arg` hidden, detached from us: closing our handles to it
-// (below, via ProcessHandles) does not stop it running. `werr` gets the raw
-// FormatMessage text on failure, the same text Windows gives for an
-// antivirus quarantine (ERROR_VIRUS_INFECTED).
+// (below, via ProcessHandles) does not stop it running.
 bool spawn_detached(const std::wstring & exe, const std::wstring & arg, const std::wstring & cwd, DWORD extra_flags,
                     std::wstring * werr) {
     std::wstring     cmdline = L"\"" + exe + L"\" " + arg;

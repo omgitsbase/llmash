@@ -107,8 +107,7 @@ struct ScopedSubprocess {
 };
 
 // Runs a short-lived helper to completion (or timeout) and returns its
-// combined stdout+stderr. Used for --list-devices and nvidia-smi, never for
-// llama-server itself.
+// combined stdout+stderr.
 bool run_capture(const std::vector<std::string> & argv, int timeout_ms, std::string & out) {
     std::vector<const char *> cargv;
     cargv.reserve(argv.size() + 1);
@@ -407,10 +406,7 @@ int free_port() {
 bool can_offload() { return can_offload_with(guess_llama_bin()); }
 
 // The cores worth giving inference threads, and a mask with one bit per
-// core. A hybrid chip's efficiency cores sit in a lower class than its
-// performance cores and both threads of one core wait on the same units, so
-// only the top class, one thread each, is worth arguing for; 0,0 means the
-// topology could not be read and llama.cpp's own default should stand.
+// core.
 static std::pair<int, uint64_t> perf_cores_and_mask() {
     DWORD len = 0;
     GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
@@ -627,17 +623,13 @@ std::vector<std::string> Instance::args() const {
                            std::to_string(native)});
     }
 
-    // no GPU: speculation costs more than it saves. It trades arithmetic for
-    // memory traffic, which pays on a card because decode there waits on the
-    // weights, and loses on a CPU because decode there waits on the
-    // arithmetic.
+    // no GPU: speculation costs more than it saves.
     if (!free_vram_gb().second) {
         return a;
     }
 
     // A model's own head is trained with its weights and wins over a
-    // downloaded one. Where a model has none, self-speculation from the
-    // text already in context still costs no VRAM.
+    // downloaded one.
     const int mtp_draft = env_int("LLMASH_MTP_DRAFT", 3);
     if (model.has_mtp) {
         a.insert(a.end(), {"--spec-type", "draft-mtp", "--spec-draft-n-max", std::to_string(mtp_draft)});
@@ -755,9 +747,9 @@ std::string Instance::start() {
 }
 
 void Instance::mark_loaded() {
-    // No wait primitive is exposed for this signal (see the report): the
-    // one caller in the Go original that blocked on it can never observe a
-    // not-yet-finished load here, since Manager::get serializes every load
+    // No wait primitive is exposed for this signal (see the report): the one
+    // caller in the Go original that blocked on it can never observe a not-
+    // yet-finished load here, since Manager::get serializes every load
     // behind one global lock before calling start().
 }
 

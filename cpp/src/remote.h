@@ -16,8 +16,7 @@ namespace llmash {
 
 // A fast route: a model-name substring naming an OpenAI-compatible server
 // that answers for it, brought up on demand as a Docker container or a plain
-// executable. Fields mirror routes.json (or its older name, vllm_routes.json)
-// directly.
+// executable.
 struct Route {
     std::string match;
     std::string url;
@@ -35,8 +34,7 @@ struct RouteLoad {
 
 // Routes a model name to a remote backend: matches it against routes.json,
 // probes whether the backend already answers, and starts/stops it on demand,
-// falling back to the local llama.cpp path when it will not come up. One
-// instance per server process.
+// falling back to the local llama.cpp path when it will not come up.
 class RemoteRouter {
 public:
     RemoteRouter(Config cfg, Registry * reg);

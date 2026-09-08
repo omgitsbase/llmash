@@ -1,10 +1,7 @@
 #pragma once
 
 // The testable core of the API layer: JSON shaping, the API-key check, and
-// the file-system work behind /api/create, /api/copy and /api/delete. Kept
-// free of httplib and manager.h so it links and runs standalone, without a
-// live server or a real Instance (whose methods are defined in manager.cpp,
-// not yet written). api.cpp adapts httplib::Request/Response to these calls.
+// the file-system work behind /api/create, /api/copy and /api/delete.
 
 #include "config.h"
 #include "registry.h"
@@ -47,14 +44,10 @@ std::string human_bytes(double n);
 
 // ------------------------------------------------------------ model JSON
 
-// Architectures llama.cpp cannot load; kept in sync with Go's badArch. A
-// per-model runtime "broken" flag also gates this in Go (set after a load
-// fails) but has no home in the given Manager/Registry contracts yet.
+// Architectures llama.cpp cannot load; kept in sync with Go's badArch.
 bool loadable(const Model & m);
 
-// A default context length. Go's advertisedCtx() additionally applies
-// per-model overrides and a remote-backend ceiling that live in tune.go /
-// remote.go, neither of which this Config carries yet.
+// A default context length.
 int advertised_ctx(const Config & cfg);
 
 nlohmann::json tag_entry_json(const Model & m, const Config & cfg);
@@ -69,8 +62,7 @@ nlohmann::json ps_json(const std::vector<InstanceView> & live, const Config & cf
 
 // A cheap, non-cryptographic stand-in: registry.h's Model carries no digest
 // (an ollama-store model's real one lives in its manifest, which Registry
-// does not expose either). Stable for a given name/size/quant/arch, not a
-// content hash.
+// does not expose either).
 std::string digest_of(const Model & m);
 
 // ---------------------------------------------------------------- auth
@@ -83,10 +75,7 @@ bool check_api_key(const std::string & authorization_header,
                     const std::string & expected_key);
 
 // The key gating cfg.public_port: LLMASH_LINK_KEY, else <root>/link.json,
-// else a freshly minted one persisted there. Same source of truth the `link`
-// CLI command reads in Go (cmds.go); reimplemented here since it is small,
-// self-contained, and nothing declared in config.h/registry.h/manager.h
-// currently carries it.
+// else a freshly minted one persisted there.
 std::string link_key(const Config & cfg);
 
 // -------------------------------------------------------- keep_alive
@@ -99,8 +88,7 @@ double keep_alive_out(double ka);
 // ----------------------------------------------------- create / copy
 
 // LLMASH_GGUF, or <models_root>/gguf: where a pulled or imported model is
-// written. Registry (its owner in Go) does not expose this, so it is
-// recomputed here from the same Config fields Registry itself reads.
+// written.
 std::string loose_dir(const Config & cfg);
 std::string safe_model_name(const std::string & name);
 
@@ -117,9 +105,7 @@ void quantize_gguf(const Config & cfg, const std::string & src, const std::strin
 using Emit = std::function<void(const nlohmann::json &)>;
 
 // Each ndjson line apiCreate/apiCopy would have streamed, in order, via
-// emit. Never throws: every failure is reported through emit instead, the
-// way the Go handlers report to their ndjson writer instead of erroring the
-// HTTP response.
+// emit.
 void run_create(const Config & cfg, const std::string & name, const std::string & from,
                 const std::string & quantize, const std::string & draft_quantize, const Emit & emit);
 void run_copy(const Config & cfg, const Model & source, const std::string & destination, const Emit & emit);
@@ -133,17 +119,13 @@ struct DeleteOutcome {
 
 // The file-system half of apiDelete: given the model apiDelete already
 // resolved (404 before this point if it did not), removes its file and any
-// shard siblings, or reports why it would not. Unloading the running
-// instance is the caller's job (Manager is not linkable here).
+// shard siblings, or reports why it would not.
 DeleteOutcome run_delete(const Model & m);
 
 // -------------------------------------------------------------- cli cache
 
 // Go's cliCached()/cliBuild(): serve a build no older than ttl, otherwise
-// rebuild synchronously. Go also warms this from a 2s background ticker
-// (cliCacheTick, started in serve.go); register_routes() has no lifecycle
-// hook to stop such a thread without leaking it, so this cache is
-// rebuild-on-read only. Thread-safe; one instance per cached "kind".
+// rebuild synchronously.
 class CliTextCache {
 public:
     std::string get(const std::string & kind, double ttl_seconds, const std::function<std::string()> & build);

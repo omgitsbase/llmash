@@ -1,9 +1,5 @@
 // Drives chat.cpp's translation layer on recorded llama.cpp SSE and recorded
-// Ollama ndjson, with no server and no model. Build it standalone:
-//
-//   cl /std:c++17 /EHsc /I cpp/vendor /I cpp/src cpp/src/chat_test.cpp
-//
-// It is deliberately NOT in cpp/CMakeLists.txt; the integrator wires it in.
+// Ollama ndjson, with no server and no model.
 
 #include "chat_stream.h"
 

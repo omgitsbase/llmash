@@ -2,8 +2,6 @@
 // just the header) so it can exercise the anonymous-namespace internals
 // (InterruptGuard, Spinner, the wire JSON helpers) directly, the same way
 // test_main.cpp checks registry.cpp/gguf.cpp through their public headers.
-// This file is not wired into CMakeLists.txt (protected); it is compiled
-// and run standalone per the job's own verification step.
 #include "cli_run.cpp"
 
 #include <cmath>

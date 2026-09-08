@@ -19,12 +19,10 @@
 
 namespace llmash {
 
-// Implemented in pull.cpp, a separate module ported from pull.go (~970
-// lines of Ollama-registry and Hugging Face client logic: manifest and blob
+// Implemented in pull.cpp, a separate module ported from pull.go (~970 lines
+// of Ollama-registry and Hugging Face client logic: manifest and blob
 // fetching, range-probing a remote GGUF header to pick a quant, downloading
-// with resumable progress). None of that is HTTP route wiring, so it does
-// not belong in api.cpp any more than the chat proxy does; register_routes()
-// only wires these three paths to it. Not implemented here.
+// with resumable progress).
 void handle_pull(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
 void handle_quants(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
 void handle_resolve(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
@@ -51,9 +49,8 @@ struct HttpResult {
     std::string error;               // set only when the request itself failed
 };
 
-// A single buffered GET/HEAD. `range` is a Range header value ("bytes=0-99"),
-// or empty for the whole body. `headers` are extra "Name: Value" lines.
-// Redirects are followed automatically.
+// A single buffered GET/HEAD. `range` is a Range header value
+// ("bytes=0-99"), or empty for the whole body.
 HttpResult http_request(const std::string & url, const std::string & method = "GET",
                          const std::string & range = "",
                          const std::vector<std::string> & headers = {});
@@ -65,15 +62,7 @@ enum GGUFValueType : uint32_t {
     GGUF_I64 = 11, GGUF_F64 = 12,
 };
 
-// The low-level cursor gguf.h keeps to itself. read_gguf() exposes a fixed
-// field set (arch/quant/params/tensors/mtp/vision) read from a local file;
-// this module needs the embedding size, block count, vocabulary size and
-// tensor shapes of a byte window fetched from the hub, none of which
-// read_gguf reports, and it has no local file at all to point read_gguf at.
-// Both probe_gguf_header() here (a registry build's own header, to see
-// whether llama.cpp can load it) and draft.cpp's scan_gguf() (a drafter's
-// compatibility with its target) read a header with this instead of
-// re-deriving the byte layout a second time each.
+// The low-level cursor gguf.h keeps to itself.
 class GGUFReader {
 public:
     explicit GGUFReader(std::istream & in) : in_(in) {}
@@ -154,9 +143,7 @@ using ProgressFn = std::function<void(int64_t)>;
 int     dl_streams();
 int64_t dl_block();
 
-// dest already holding exactly `total` bytes: nothing to download. total==0
-// (size unknown) counts an existing file of any size as already fetched,
-// matching pull.go's own reading of a zero Content-Length.
+// dest already holding exactly `total` bytes: nothing to download.
 bool already_have(const std::string & dest, int64_t total);
 
 // Several ranged connections at once, with a `<tmp>.idx` block map beside
@@ -175,14 +162,11 @@ using Emit = std::function<void(const nlohmann::json &)>;
 std::string loose_dir(const Config & cfg);
 
 // aliases.json in the loose-GGUF folder: the display name a Hugging Face
-// pull was given. registry.h's Registry does not read this file yet (see
-// concerns_about_contracts), so a pull recorded here does not surface under
-// that name from Registry::all()/find() until it grows a reader for it.
+// pull was given.
 void set_alias(const Config & cfg, const std::string & file, const std::string & name);
 
 // Downloads a Hugging Face repo's chosen build (and its mmproj, if any) into
-// the loose-GGUF folder. Returns the path of the first file pulled, or ""
-// when it failed (emit carries the reason).
+// the loose-GGUF folder.
 std::string hf_pull(const std::string & repo, const std::string & quant, const std::string & as,
                      const Config & cfg, Registry & reg, const Emit & emit);
 
@@ -214,14 +198,13 @@ bool        fetch_manifest(const std::string & ref, RegistryManifest & out, std:
 std::string blob_path(const Config & cfg, const std::string & digest);
 
 // Drops a registry model: its manifest, and every blob no other manifest
-// still names. registry.h's Registry keeps no such method (it only reads);
-// this walks the same manifest folders registry.cpp scans to find what
-// still points at a blob before removing it, then invalidates `reg`.
+// still names.
 void remove_manifest_model(const Config & cfg, Registry & reg, const std::string & manifest_path);
 
-// registryBuild: what makes a registry build unreadable for llama.cpp (Ollama
-// packs vision/audio encoders and mllama models the vendored server rejects),
-// and the Hugging Face build to take instead, at the same quantisation.
+// registryBuild: what makes a registry build unreadable for llama.cpp
+// (Ollama packs vision/audio encoders and mllama models the vendored server
+// rejects), and the Hugging Face build to take instead, at the same
+// quantisation.
 struct RegistryBuild {
     std::string unloadable;
     std::string hf_repo;
@@ -232,9 +215,7 @@ RegistryBuild inspect_registry_build(const RegistryManifest & m);
 void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, const Emit & emit);
 
 // The logic behind handle_pull/handle_resolve/handle_quants, kept free of
-// httplib types. `body` is the parsed JSON POST body of /api/pull (model,
-// quant, as, mtp, from_ollama). api_resolve's and api_quants' "error" key,
-// when present, is the 404/502 case; anything else is 200.
+// httplib types.
 void           run_pull(const nlohmann::json & body, const Config & cfg, Registry & reg, const Emit & emit);
 nlohmann::json api_resolve(const std::string & ref, const Config & cfg);
 nlohmann::json api_quants(const std::string & repo_arg);

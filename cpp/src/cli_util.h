@@ -2,9 +2,7 @@
 
 // Small pieces shared by cmd_doctor.cpp and cmd_models.cpp: process launches
 // with a timeout, the local server's HTTP API, local.json, and a couple of
-// formatters. Kept in the llmash::clidoc sub-namespace so it never collides
-// with same-named ports of table.go/http.go landing at llmash:: from other
-// concurrent work on this codebase.
+// formatters.
 
 #include <nlohmann/json.hpp>
 
@@ -48,8 +46,7 @@ std::string server_host();
 bool server_up();
 
 // http.go's callJSON: only a transport failure or a non-JSON, non-empty body
-// counts as an error. A non-2xx status is not, matching the Go original
-// exactly (it never inspects the status code).
+// counts as an error.
 bool call_json(const std::string & method, const std::string & path, const nlohmann::json * body,
                int timeout_s, nlohmann::json & out, std::string & err);
 
@@ -65,8 +62,7 @@ bool write_local_json(const std::string & root, const nlohmann::json & j, std::s
 // ------------------------------------------------------- a timed subprocess
 
 // doctor.go's run(): the command's combined output, trimmed, and whether it
-// exited zero inside timeout_ms. {"", false} when the executable cannot be
-// found at all (no process is started), matching the Go original's guard.
+// exited zero inside timeout_ms.
 std::pair<std::string, bool> run_with_timeout(const std::string & exe, const std::vector<std::string> & args,
                                               int timeout_ms);
 

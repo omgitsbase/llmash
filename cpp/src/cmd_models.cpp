@@ -58,8 +58,7 @@ std::string lower(std::string s) {
 // registry.cpp classifies exactly these files out of a folder scan (they are
 // drafters, projectors, or a shard after the first) but keeps that logic to
 // itself; there is no public accessor for it, so the two regexes and the tag
-// list are repeated here, only for the "N models, M skipped" line. Worth
-// hoisting onto Registry itself if another caller ever needs it too.
+// list are repeated here, only for the "N models, M skipped" line.
 bool is_sidecar(const std::string & stem) {
     const std::string s = lower(stem);
     for (const char * tag : {".mtp", ".eagle3", ".dspark", ".draft", ".mmproj", "-mmproj", "eagle3", "dspark",
@@ -124,11 +123,7 @@ std::vector<std::string> local_string_list(const json & cfg, const char * key) {
 }
 
 // tray.go/models.go's reloadPaths and restartForPaths: models set only ever
-// calls these when a server is actually up. The server process itself is
-// managed by whoever ports serve.go/tray.go, not this file; the WMI kill and
-// relaunch below duplicate that logic (there being no other contract for
-// "restart the llmash server itself") purely so `models set` keeps behaving
-// the way its Go original does. Worth consolidating once that port lands.
+// calls these when a server is actually up.
 void reload_paths() {
     if (!server_up()) {
         return;

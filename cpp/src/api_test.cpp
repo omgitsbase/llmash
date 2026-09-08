@@ -3,17 +3,6 @@
 // mux gives every path, the catch-all 404, CORS/OPTIONS, the public-port key
 // gate, the ndjson framing of /api/create and /api/copy, and every response
 // api.cpp shapes on its own.
-//
-// api_logic.cpp, chat.cpp, pull.cpp and table.cpp are being written
-// concurrently, so this file defines link-time stand-ins for the symbols
-// they will export (marked STUB below). Routes whose body comes out of one
-// of those modules are therefore only checked for what api.cpp itself owns:
-// that the path is mounted, the status and content type are right, and the
-// arguments api.cpp extracted from the request reached the callee. What a
-// stub returns is never asserted as if it were the real answer, and the
-// routes that are nothing but a forward (/api/chat, /api/generate,
-// /api/embed, /api/embeddings, /v1/chat/completions, /v1/completions,
-// /api/pull, /api/quants, /api/resolve) are left untested here.
 
 #include "api.h"
 #include "api_logic.h"

@@ -28,10 +28,7 @@
 // (cmds.go's cmdList/showInfo, pull.go's cmdPull, draft_install.go's
 // confirm, readline.go's raw-mode editor, progress.go's multi-state
 // renderer) are not ported here — they are a different Go file each, and
-// this job is run.go only. Everything below that stands in for one of them
-// is confined to this file's anonymous namespace, with a short note at the
-// point it matters, so wiring in the real thing later means replacing a
-// call site here, not un-picking a shared header.
+// this job is run.go only.
 
 namespace llmash {
 
@@ -552,10 +549,7 @@ struct StreamResult {
     std::string   error;
 };
 
-// One ndjson line at a time, as http.go's stream() does. `on_event`
-// returning false stops the stream deliberately (an application error line,
-// or a caller that got what it needed) and is reported back as Ok, not an
-// error; `cancelled` stopping it is reported as Cancelled.
+// One ndjson line at a time, as http.go's stream() does.
 StreamResult http_stream(const std::string & path, const json & body, const std::atomic<bool> & cancelled,
                           const std::function<bool(const json &)> & on_event) {
     httplib::Client cli(resolve_host());
@@ -613,8 +607,7 @@ bool server_up() {
 
 // die()'s C++ shape (see cli_run.h): print, then unwind via CliExit rather
 // than calling std::exit, so a test can catch it instead of the process
-// dying. Kept file-local like the rest of this anonymous namespace so it
-// can't collide with another module's own die() at link time.
+// dying.
 [[noreturn]] void die(const std::string & msg) {
     std::fprintf(stderr, "%s\n", msg.c_str());
     throw CliExit(1, msg);
@@ -666,8 +659,8 @@ private:
 };
 
 // newProgress+newSpinner's C++ shape: run.go only ever adds one spinner to
-// one progress and stops it the same call, so the two collapse into one
-// RAII guard instead of the general multi-state renderer in progress.go.
+// one progress and stops it the same call, so the two collapse into one RAII
+// guard instead of the general multi-state renderer in progress.go.
 class Spinner {
 public:
     explicit Spinner(std::ostream & out) : out_(out) { thread_ = std::thread([this] { run(); }); }
@@ -818,8 +811,6 @@ bool confirm(const std::string & question) {
 }
 
 // pull.go's cmdPull is a whole other command (download, verify, decompress).
-// Not ported here; an unknown model gets an honest error instead of a
-// silent no-op so a user isn't left waiting on a pull that never starts.
 void stand_in_pull(const std::string & name) {
     die("Error: '" + name + "' is not installed and pulling models isn't wired into this build yet; " +
         "install it first with the model's own release, then run it.");
@@ -1075,11 +1066,7 @@ enum class ReadOutcome { Ok, Eof };
 
 // Stand-in for readline.go's raw-mode editor (history navigation, Ctrl+G
 // external-editor, bracketed paste) — that file is its own module and isn't
-// ported here. This keeps just enough shape (readline() returning a line
-// plus an outcome, useAlt/pasting/history flags) for run.go's own REPL
-// control flow above to stay faithful; it reads one line at a time with no
-// mid-line editing. Bracketed paste is deliberately left off (see
-// generate_interactive) since nothing here parses its markers.
+// ported here.
 class SimpleEditor {
 public:
     bool    use_alt          = false;
@@ -1195,9 +1182,9 @@ void generate_interactive(RunOptions o) {
         else o.messages.push_back(nm);
     };
 
-    // Bracketed paste is intentionally never turned on here: it wraps
-    // pasted text in ESC[200~ / ESC[201~, and SimpleEditor (unlike
-    // readline.go's raw-mode reader) doesn't strip those markers back out.
+    // Bracketed paste is intentionally never turned on here: it wraps pasted
+    // text in ESC[200~ / ESC[201~, and SimpleEditor (unlike readline.go's
+    // raw-mode reader) doesn't strip those markers back out.
     for (;;) {
         const std::string cur_prompt = (multiline != Multiline::None) ? "... " : ">>> ";
         const auto [line, outcome]   = ed.readline(cur_prompt);

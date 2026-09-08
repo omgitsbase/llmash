@@ -1,10 +1,8 @@
 #pragma once
 
 // Port of the pure, non-interactive parts of cmd/llmash/table.go and
-// cmd/llmash/render.go: the borderless table layout `list`/`ps`/`show` print,
-// and ollama's byte/time/count formatters. Needed by cli_commands.cpp, which
-// owns the actual list/ps/show command logic; kept in its own file because it
-// has no HTTP or process concerns of its own.
+// cmd/llmash/render.go: the borderless table layout `list`/`ps`/`show`
+// print, and ollama's byte/time/count formatters.
 
 #include <cstdint>
 #include <ctime>
@@ -56,8 +54,8 @@ std::string human_time(std::time_t t, bool is_zero, const std::string & zero_val
 std::string human_time_iso(const std::string & s, const std::string & zero_value, double now);
 
 // cmds.go's own byte formatter (1024-based, used nowhere by the client
-// commands themselves today but ported for fidelity: it is the same
-// package-level `human` that api.go's create/copy handlers call).
+// commands themselves today but ported for fidelity: it is the same package-
+// level `human` that api.go's create/copy handlers call).
 std::string human(double n);
 
 // A UTC "YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM]" timestamp as a Unix time, or

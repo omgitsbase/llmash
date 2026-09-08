@@ -1,8 +1,4 @@
-// Standalone verification for tray.cpp. Not wired into CMakeLists.txt (a
-// protected file for this job); compiled and run directly against
-// tray.cpp/tray_process.cpp/config.cpp, mirroring the Go package's own
-// tray_test.go rather than exercising a live server or the real Startup
-// folder.
+// Standalone verification for tray.cpp.
 
 #include "config.h"
 #include "tray.h"

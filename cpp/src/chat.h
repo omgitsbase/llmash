@@ -9,10 +9,7 @@
 namespace llmash {
 
 // Implemented in chat.cpp, a separate module ported concurrently from
-// chat.go. Owns the proxy to a spawned llama-server.exe instance: loading a
-// model on demand, relaying /v1 SSE streams into Ollama's ndjson framing,
-// and the non-streaming embeddings call. register_routes() only wires paths
-// to these; the bodies are intentionally not implemented here.
+// chat.go.
 void handle_chat(const httplib::Request & req, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg);
 void handle_generate(const httplib::Request & req, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg);
 void handle_embed(const httplib::Request & req, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg);

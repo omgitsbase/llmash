@@ -79,10 +79,7 @@ std::string trim_set(const std::string & s, const char * set) {
 
 // ------------------------------------------------- the target's own header
 
-// The keys hfRepoOf and modelStem read. read_gguf() reports general.repo_url
-// and general.size_label but not the base_model.0.* trio hfRepoOf prefers, so
-// this walks the key-values once with pull.h's reader rather than parsing the
-// format a second time.
+// The keys hfRepoOf and modelStem read.
 struct RepoMeta {
     std::string bm_repo_url, repo_url, bm_org, bm_name, size_label;
 };
@@ -321,9 +318,9 @@ std::string foreign_base(const std::vector<std::string> & bases, const std::stri
                 return b;
             }
         }
-        // Take the model name without the organisation, remove the target and
-        // the words that mean nothing (packaging, quantisation, drafter
-        // kinds). Whatever is left is a fine-tune's own name.
+        // Take the model name without the organisation, remove the target
+        // and the words that mean nothing (packaging, quantisation, drafter
+        // kinds).
         std::string  name = b;
         const size_t i    = name.find_last_of('/');
         if (i != std::string::npos) {
