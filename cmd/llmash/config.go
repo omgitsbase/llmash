@@ -185,7 +185,11 @@ func loadConfig() {
 	// 318 tok/s on one slot against 300 on four. One personal server rarely
 	// serves four conversations at once, so one is the default.
 	nParallel = envInt("LLMASH_PARALLEL", 1)
-	mtpDraft = envInt("LLMASH_MTP_DRAFT", 4)
+	// 3, measured. A longer draft amortises the dense weights over more tokens
+	// but touches more experts, and expert traffic does not amortise: on
+	// Qwen3.6-35B-A3B, 2 and 3 ran at 418 and 420 tok/s against 385 at 4, 373
+	// at 5 and 355 at 6. On the dense Qwen3.8-27B, 3 and 4 tie at about 148.
+	mtpDraft = envInt("LLMASH_MTP_DRAFT", 3)
 	dsparkDraft = envInt("LLMASH_DSPARK_DRAFT", 6)
 	dsparkDraftMin = envInt("LLMASH_DSPARK_DRAFT_MIN", 6)
 	lowlatPredict = envInt("LLMASH_LOWLAT_PREDICT", 8)
