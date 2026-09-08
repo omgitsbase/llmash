@@ -18,6 +18,17 @@ struct Model {
     bool        has_mtp = false;
     bool        in_library = false;   // read-only: never deleted from
     std::string mtp_path;             // a sidecar drafter, when there is one
+
+    std::string digest;      // sha256 of the manifest blob, or derived
+    std::string family;      // general.basename, size suffix stripped
+    std::string param_size;  // "8B", "35B-A3B"
+    std::string tmpl;        // tokenizer.chat_template
+    std::string projector;   // an mmproj sidecar, when there is one
+    double      modified = 0;
+    int         ctx_train = 0;
+    int         experts = 0;
+    int         experts_used = 0;
+    std::vector<std::string> caps;
 };
 
 // The folders read, and whether a path came from one of them.

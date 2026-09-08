@@ -41,6 +41,16 @@ struct Reader {
         return s;
     }
 
+    uint64_t num_any(uint32_t type) {
+        switch (type) {
+            case T_UINT8:  case T_INT8:  case T_BOOL: { uint8_t v = num<uint8_t>();  return v; }
+            case T_UINT16: case T_INT16:              { uint16_t v = num<uint16_t>(); return v; }
+            case T_UINT32: case T_INT32:              { uint32_t v = num<uint32_t>(); return v; }
+            case T_UINT64: case T_INT64:              { return num<uint64_t>(); }
+            default: skip_value(type); return 0;
+        }
+    }
+
     // Advances past a value without keeping it.
     void skip_value(uint32_t type) {
         switch (type) {
@@ -62,6 +72,11 @@ struct Reader {
         }
     }
 };
+
+bool ends_with(const std::string & s, const char * suffix) {
+    const size_t n = std::strlen(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
 
 bool contains(const std::string & hay, const char * needle) {
     return hay.find(needle) != std::string::npos;
@@ -134,6 +149,20 @@ GGUFInfo read_gguf(const std::string & path) {
             info.quant = file_type_name(r.num<uint32_t>());
         } else if (key == "general.parameter_count" && (type == T_UINT64 || type == T_INT64)) {
             info.n_params = r.num<uint64_t>();
+        } else if (key == "general.basename" && type == T_STRING) {
+            info.basename = r.str();
+        } else if (key == "general.size_label" && type == T_STRING) {
+            info.size_label = r.str();
+        } else if (key == "tokenizer.chat_template" && type == T_STRING) {
+            info.chat_template = r.str();
+        } else if (ends_with(key, ".context_length")) {
+            info.ctx_train = r.num_any(type);
+        } else if (ends_with(key, ".expert_count")) {
+            info.experts = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".expert_used_count")) {
+            info.experts_used = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".pooling_type")) {
+            info.has_pooling = r.num_any(type) != 0;
         } else {
             r.skip_value(type);
         }
