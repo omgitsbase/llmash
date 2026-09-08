@@ -270,7 +270,10 @@ func (in *Instance) args() []string {
 		"--parallel", strconv.Itoa(nParallel)}...)
 	if !in.plainArgs {
 		// only a build of ours is known to take these
-		a = append(a, "--load-mode", in.loadMode, "-bs")
+		a = append(a, "--load-mode", in.loadMode)
+		if _, gpu := freeVRAM(); gpu {
+			a = append(a, "-bs")
+		}
 	}
 	native := m.Ctx
 	if native == 0 {
@@ -297,6 +300,16 @@ func (in *Instance) args() []string {
 	if m.Projector != "" && fileExists(m.Projector) && (in.Vision || !(blocked || mmprojOnDemand)) {
 		a = append(a, "--mmproj", m.Projector)
 	}
+	// no GPU: speculation costs more than it saves. It trades arithmetic for
+	// memory traffic, which pays on a card because decode there waits on the
+	// weights, and loses on a CPU because decode there waits on the arithmetic.
+	// It is also the heaviest path in the server, and the one a slow machine
+	// sits in with nothing to show.
+	if _, gpu := freeVRAM(); !gpu {
+		in.specNote = "none (no GPU)"
+		return a
+	}
+
 	// A model's own head is trained with its weights and wins: on
 	// Qwen3.6-35B-A3B it ran 308 tok/s at 60% acceptance against a downloaded
 	// DSpark head's 265 at 33%. Where a model has none, a downloaded head is
