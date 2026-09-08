@@ -302,6 +302,11 @@ try {
     Die "download failed  ($($_.Exception.Message))"
 }
 Expand-Archive -Path $zip -DestinationPath $Root -Force
+# A zip fetched over the internet stamps every file it holds as coming from
+# there, and Windows treats an unsigned program carrying that mark as
+# untrusted. The zip was just downloaded from the release this script names,
+# so clear it; it is the difference between a warning and a refusal to start.
+Get-ChildItem $Root -Recurse -File -EA SilentlyContinue | Unblock-File -EA SilentlyContinue
 Remove-Item $zip -Force
 Good "unpacked into $Root"
 
@@ -392,6 +397,7 @@ if ($Runtime -eq 'none') {
             foreach ($a in $files) {
                 $tmp = Join-Path $env:TEMP $a.name
                 Expand-Archive -Path $tmp -DestinationPath $RtDir -Force
+                Get-ChildItem $RtDir -Recurse -File -EA SilentlyContinue | Unblock-File -EA SilentlyContinue
                 Remove-Item $tmp -Force
             }
             if (-not (Test-Path $RtExe)) {
@@ -568,13 +574,30 @@ if ($busy) {
         Say  'stop whatever holds it, then run:  llmash tray'
     }
 } else {
-    Start-Process -FilePath $exew -ArgumentList 'tray' -WorkingDirectory $Root -WindowStyle Hidden
+    $started = $true
+    try {
+        Start-Process -FilePath $exew -ArgumentList 'tray' -WorkingDirectory $Root -WindowStyle Hidden
+    } catch {
+        $started = $false
+        $msg = $_.Exception.Message
+        if ($msg -match 'virus|potentially unwanted|1265|225') {
+            Warn 'your antivirus blocked llmashw.exe from starting'
+            Say  'Everything is installed and the command line works; only the tray was stopped.'
+            Say  'llmash is unsigned, and a freshly built program with no reputation is a common false positive.'
+            Say  'Allow it in your antivirus (in Windows Security it is under Protection history), then:  llmash tray'
+            Say  'Reporting it also helps everyone else: https://www.microsoft.com/en-us/wdsi/filesubmission'
+        } else {
+            Warn "could not start the tray: $msg"
+            Say  'Everything is installed; start it yourself with:  llmash tray'
+        }
+    }
     $ok = $false
+    if (-not $started) { $ok = $null }
     foreach ($i in 1..40) {
         Start-Sleep -Milliseconds 400
         if (PortBusy) { $ok = $true; break }
     }
-    if ($ok) { Good 'listening on 127.0.0.1:11434 - look for the icon in the tray' } else { Warn 'not answering yet; try:  llmash tray' }
+    if ($ok) { Good 'listening on 127.0.0.1:11434 - look for the icon in the tray' } elseif ($null -eq $ok) { } else { Warn 'not answering yet; try:  llmash tray' }
 }
 
 Write-Host ''
