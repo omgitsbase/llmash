@@ -1,17 +1,4 @@
-// Standalone test for pull.cpp and draft.cpp. Nothing here touches the
-// network: the download engine is exercised through its block map (a complete
-// map needs no request at all, an incomplete one is pointed at a closed port),
-// and the pickers are fed a recorded Hugging Face API body.
-//
-// pull.cpp is #included rather than linked so the block-map helpers it keeps
-// in its anonymous namespace -- plan_blocks, seed_block_map, load_block_map,
-// parse_hf_siblings -- can be asserted directly. draft.cpp is linked normally.
-//
-// Build (from cpp/):
-//   cl /std:c++17 /EHsc /DNOMINMAX /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS
-//      /Ivendor /Isrc src\pull_test.cpp src\draft.cpp src\config.cpp src\gguf.cpp
-//      src\registry.cpp src\cli_format.cpp vendor\httplib.cpp
-//      /link ws2_32.lib crypt32.lib shlwapi.lib
+// Standalone test for pull.cpp and draft.cpp.
 
 #include "pull.cpp"
 

@@ -18,11 +18,7 @@ struct ProcessResult {
 
 // argv[0] is the program (found via PATH, as Windows always does); the rest
 // are its arguments, each passed as one Win32 argument (no shell involved,
-// so no quoting to get wrong). When stdin_data is non-null it is written and
-// the pipe is then closed so the child sees EOF. capture_stdout reads the
-// child's stdout to completion before joining. wait=false starts the process
-// and returns immediately (used for a tunnel or a delayed self-delete that
-// must outlive this process).
+// so no quoting to get wrong).
 ProcessResult run_hidden(const std::vector<std::string> & argv, const std::string * stdin_data, bool capture_stdout,
                           bool wait);
 

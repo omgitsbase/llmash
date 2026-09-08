@@ -8,9 +8,7 @@
 
 namespace llmash {
 
-// One raw key at a time, decoded to a Unicode code point. Implementations
-// read ahead as needed (a paste marker consumes the bytes after it itself),
-// so this is the same shape as bufio.Reader.ReadRune in the Go original.
+// One raw key at a time, decoded to a Unicode code point.
 class RuneSource {
 public:
     virtual ~RuneSource()                    = default;

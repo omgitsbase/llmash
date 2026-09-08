@@ -2,16 +2,8 @@
 
 // Port of cmd/llmash/draft.go, draft_verify.go and draft_install.go: finding
 // a drafter published for a model already on disk, proving from its GGUF
-// header alone that it pairs with those exact weights, and installing it as a
-// sidecar beside them.
-//
-// A drafter is trained against one specific target, and the wrong one is worse
-// than none: it loads, drafts badly, and costs speed. So this rejects rather
-// than guesses, and every rejection carries its reason -- a silent one looks
-// like "none exists".
-//
-// The Hugging Face API used here needs no account and no token. The transport,
-// the hub client and the download engine all come from pull.h.
+// header alone that it pairs with those exact weights, and installing it as
+// a sidecar beside them.
 
 #include "config.h"
 #include "pull.h"
@@ -108,8 +100,6 @@ std::string spec_of_url(const std::string & url, GGUFSpec & out, bool & unreadab
 std::string pairs(const GGUFSpec & target, const GGUFSpec & draft);
 
 // pairs() for a candidate not yet downloaded: its header is range-fetched.
-// A target that will not read, or a hub that will not answer, is not the
-// candidate's fault and comes back as "".
 std::string fits_target(const Model & m, const DraftCand & c);
 
 // ------------------------------------------------------------- installing

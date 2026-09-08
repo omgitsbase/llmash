@@ -24,8 +24,7 @@ const std::map<std::string, std::string> & integration_aliases();
 std::string resolve_integration(const std::string & name);
 
 // integrations.json beside the program: the model saved per integration by
-// `llmash launch <name> --model <m>`. Never throws: a missing or unreadable
-// file reads back as {}.
+// `llmash launch <name> --model <m>`.
 std::string  profile_file(const Config & cfg);
 nlohmann::json load_profiles(const Config & cfg);
 void         save_profiles(const Config & cfg, const nlohmann::json & profiles);
@@ -53,8 +52,8 @@ std::string ollama_host();
 std::vector<std::string> generic_launch_env(const std::string & host, const std::string & model);
 
 // Runs the named integration against this server and does not return: exits
-// the process with the child's exit code (or 1 on a launch failure), mirroring
-// runInherit/launchClaude/launchGeneric in the Go original.
+// the process with the child's exit code (or 1 on a launch failure),
+// mirroring runInherit/launchClaude/launchGeneric in the Go original.
 [[noreturn]] void launch_claude(const Config & cfg, const std::string & model, const std::vector<std::string> & extra);
 [[noreturn]] void launch_generic(const std::string & key, const std::string & model,
                                   const std::vector<std::string> & extra);

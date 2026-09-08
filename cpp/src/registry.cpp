@@ -62,8 +62,7 @@ std::string pretty_params(uint64_t n) {
 }
 
 // Go's sizeInName, [-_ ][A-Za-z]?\d+(\.\d+)?[bBmM] at a word boundary: the
-// name is cut where the first such size starts. The boundary is checked by
-// hand because  inside an alternation is not dependable in std::regex.
+// name is cut where the first such size starts.
 std::string family_of(const GGUFInfo & g) {
     const std::string & base = g.basename;
     static const std::regex size_re(R"([-_ ][A-Za-z]?\d+(\.\d+)?[bBmM])");

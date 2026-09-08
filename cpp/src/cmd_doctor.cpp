@@ -267,8 +267,7 @@ void cmd_doctor() {
 
     // manager.h does not expose a VRAM query (that is where Go's freeVRAMGB
     // lives, via NVML/DXGI); nvidia-smi's own totals, already fetched above,
-    // stand in for it here. RAM needs no such substitute: it is a direct
-    // Win32 call in the Go original too.
+    // stand in for it here.
     double free_vram_gb = 0;
     if (gpu_fields.size() >= 4) {
         try {
@@ -304,8 +303,8 @@ void cmd_doctor() {
     }
 
     // auto-tuning: doctor.go reports this via (&Instance{}).autoTune(), a
-    // method manager.h does not declare; skipped here rather than guessed at,
-    // see the job report for the gap this leaves.
+    // method manager.h does not declare; skipped here rather than guessed
+    // at, see the job report for the gap this leaves.
 
     // ---- speculation ---------------------------------------------------
     const std::string spec_fallback = env_str("LLMASH_SPEC_FALLBACK", "ngram-mod");

@@ -2,11 +2,7 @@
 
 // Port of the pieces of cmd/llmash/console.go that cmds.go itself calls
 // directly (isConsole, getch, the pick-menu key decoder, the ANSI colour
-// constants used by `link`'s output). The animated parts of the terminal UI
-// (progress.go's redrawing bars/spinners, console.go's pickMenu draw loop)
-// are not ported pixel-for-pixel here -- see cli_commands.cpp's top-of-file
-// comment for why -- but the pure decision logic each one drives (read_pick,
-// ask_number_feed) is, and is what cli_commands_test.cpp exercises.
+// constants used by `link`'s output).
 
 #include <functional>
 #include <string>
@@ -35,10 +31,7 @@ enum PickKey { kPickUp = 0x101, kPickDown = 0x102, kPickEnter = 0x103, kPickEsc 
 using ByteSource = std::function<int()>;
 int read_pick(const ByteSource & next_byte);
 
-// One step of askNumber's digit-buffer state machine. `buf` accumulates
-// digits; ch is a raw byte (not a PickKey). `reprompt` means the Enter that
-// was pressed did not parse into [0, max] and buf was cleared for another
-// try; `done` means a final value (b.value) was reached, -1 for Escape.
+// One step of askNumber's digit-buffer state machine.
 struct AskNumberStep {
     bool done     = false;
     bool reprompt = false;

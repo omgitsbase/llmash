@@ -1,8 +1,6 @@
 #pragma once
 
 // Port of cmd/llmash/run.go: `llmash run`, the interactive chat client.
-// Talks to the server over the same ollama-compatible wire (see
-// cmd/llmash/api.go / http.go for the routes and JSON this mirrors).
 
 #include <nlohmann/json.hpp>
 
@@ -15,9 +13,7 @@ namespace llmash {
 
 // ------------------------------------------------------- command-line flags
 
-// Same fields as Go's runOpts (main.go's parseRun). `think`/`think_set` stand
-// in for cobra's optional-value --think flag: unset, "true", "false", or a
-// level name.
+// Same fields as Go's runOpts (main.go's parseRun).
 struct RunArgs {
     std::string model;
     std::string prompt;
@@ -36,7 +32,7 @@ struct RunArgs {
 
 // Raised for anything cobra would have rejected with a die() and exit(1): an
 // unknown flag, a flag missing its argument, an invalid --think level, no
-// model argument. what() carries the exact line the user would see.
+// model argument.
 struct CliUsageError : std::runtime_error {
     explicit CliUsageError(const std::string & msg) : std::runtime_error(msg) {}
 };
@@ -65,8 +61,7 @@ struct DisplayState {
 };
 
 // Streams `content` to stdout, wrapping at the terminal width when word_wrap
-// is set. state carries the in-progress line/word across repeated calls, the
-// way one streamed response is drawn token by token.
+// is set.
 void display_response(const std::string & content, bool word_wrap, DisplayState & state);
 
 struct FileExtraction {

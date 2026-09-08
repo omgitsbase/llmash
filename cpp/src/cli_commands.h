@@ -2,25 +2,7 @@
 
 // Port of cmd/llmash/cmds.go: the CLI-side implementation of list, ps, show,
 // pull, rm, cp, stop, pulldraft, create, push, link, unlink, uninstall,
-// signin and signout. Every command talks to the local server named by
-// OLLAMA_HOST/LLMASH_PORT over the same /api and /cli routes cmd/llmash's
-// Go server (and this port's own, elsewhere in cpp/) both serve; none of
-// them touch llama.cpp or a model file directly.
-//
-// What's deliberately NOT a pixel-for-pixel port, and why:
-//   - console.go/progress.go's animated redraw (ANSI cursor moves, ticking
-//     spinners/bars) is UI presentation, not cmds.go logic, and isn't part
-//     of this file in the Go tree either. pull's progress is reported here
-//     as one printed line per status/bar change instead of an in-place
-//     redraw -- same information, simpler renderer. The key-handling state
-//     machines those files also own (read_pick, ask_number_feed) ARE ported
-//     faithfully, in cli_console.h, since cmds.go calls them directly.
-//   - draft_install.go's cmdPullDraft depends on draft.go/draft_verify.go
-//     (Hugging Face drafter search + GGUF spec matching), a separate
-//     subsystem this job was not given. cmd_pulldraft below ports the
-//     surrounding flow byte-for-byte (already-has-a-drafter checks, confirm
-//     prompt, messages) but the candidate search itself is a stub that
-//     always reports none found -- see find_drafter_candidates.
+// signin and signout.
 
 #include "cli_http.h"
 #include "cli_run.h"
@@ -123,9 +105,7 @@ int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg);
 int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg);
 
 // The name main() was invoked as ("llmash", "ollama", a shim's own name),
-// substituted into every message above that carries `prog`. Defaults to
-// "llmash"; main.cpp owns detecting the real one (LLMASH_PROG / argv[0]'s
-// basename), same as Go's main.go init() does today.
+// substituted into every message above that carries `prog`.
 void               set_prog(const std::string & prog);
 const std::string & prog();
 

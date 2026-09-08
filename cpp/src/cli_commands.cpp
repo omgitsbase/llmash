@@ -450,9 +450,7 @@ std::string build_row(const std::string & label, const QuantInfo & q) {
 }
 
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
-// heads, and asks for one of each. The 8-bit build is suggested: it is the
-// one that loses nothing, and these repositories are chosen for machines
-// with room for it.
+// heads, and asks for one of each.
 std::pair<std::string, std::string> choose_build(ApiClient & api, const std::string & model, std::string quant) {
     ApiResult  r;
     const json d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(model), nullptr, 60, r);
@@ -568,7 +566,7 @@ std::pair<std::string, std::string> choose_build(ApiClient & api, const std::str
 // draft.go/draft_verify.go (the Hugging Face drafter search and its GGUF
 // spec matching) are a separate subsystem this module was not given, so the
 // search reports nothing and the surrounding flow -- which is cmds.go's --
-// runs unchanged. reg is what a real search would install into.
+// runs unchanged.
 struct DraftCandidate {
     std::string repo;
     std::string note;

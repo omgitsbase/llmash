@@ -85,9 +85,7 @@ void mount(httplib::Server & srv, const std::string & pattern, httplib::Server::
     srv.Patch(pattern, h);
 }
 
-// newNDJSON: one JSON object per line, flushed as it is produced. The work
-// runs inside the content provider, so everything it reads must either be
-// captured by value or outlive the server.
+// newNDJSON: one JSON object per line, flushed as it is produced.
 void stream_ndjson(Response & res, std::function<void(const Emit &)> work) {
     res.set_chunked_content_provider(
         "application/x-ndjson", [work = std::move(work)](size_t, httplib::DataSink & sink) {
@@ -239,8 +237,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     // ------------------------------------------------------------- paths
 
     // A POST re-reads local.json first, which is how `llmash models` applies
-    // a new library folder to a server that is already up. Registry holds its
-    // own copy of Config, so what it scans only changes once it re-reads too.
+    // a new library folder to a server that is already up.
     mount(srv, "/api/paths", [&cfg, &reg, st](const Request & req, Response & res) {
         if (req.method == "POST") {
             {
@@ -286,9 +283,10 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
         Instance * in = mgr.find(name);
         if (in == nullptr) {
-            // Go also answers here for a model served by a fast backend, whose
-            // idle clock lives in remote.h's RemoteRouter; register_routes is
-            // not given one, so that branch has no home yet.
+            // Go also answers here for a model served by a fast backend,
+            // whose idle clock lives in remote.h's RemoteRouter;
+            // register_routes is not given one, so that branch has no home
+            // yet.
             write_json(res, 404, error_obj("model '" + name + "' is not loaded"));
             return;
         }

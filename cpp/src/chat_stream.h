@@ -2,12 +2,7 @@
 
 // The testable core of chat.cpp: every translation between llama.cpp's
 // OpenAI-shaped SSE and Ollama's newline-delimited JSON, with no httplib and
-// no Manager in sight, so chat_test.cpp can drive it on recorded lines. The
-// handlers in chat.cpp are the I/O shell around this.
-//
-// Names live in llmash::chatstream, not llmash, because api_logic.h declares
-// its own iso()/now_unix() for the same clock and only one of them may win at
-// link time.
+// no Manager in sight, so chat_test.cpp can drive it on recorded lines.
 
 #include <nlohmann/json.hpp>
 
@@ -221,8 +216,6 @@ inline json error_obj(const std::string & msg) {
 }
 
 // The requested model name put back over the real one llama-server echoes.
-// Both arguments are already JSON-quoted, so a name is never confused with a
-// substring of the surrounding text.
 inline std::string rewrite_model(std::string chunk, const std::string & real, const std::string & want) {
     if (real.empty() || real == want) {
         return chunk;
@@ -343,15 +336,12 @@ struct Step {
 };
 
 // One /v1/chat/completions SSE event in, the Ollama /api/chat events it
-// becomes out. The caller sets `now` before each call, which is what makes
-// the tool-argument flush interval and the think nudge testable.
+// becomes out.
 class ChatStream {
 public:
     std::string model;
 
-    // The injected assistant prefill, empty when nothing was injected. With
-    // it set, llama.cpp replays the prefill in `content`, so the visible text
-    // has to be recovered by subtraction and split on </think> by hand.
+    // The injected assistant prefill, empty when nothing was injected.
     std::string hoff;
     std::string prefill;
     double      nudge_after_s = 15;

@@ -1,8 +1,4 @@
 // Standalone verification for cmd_doctor.cpp / cmd_models.cpp / help.cpp.
-// Not part of the CMake build (see the job's own rule 4); compiled and run
-// directly. Every HTTP call this test makes is redirected to a port nothing
-// is listening on, so it can never reach a real llmash server that happens
-// to be running on this machine.
 
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -65,8 +61,7 @@ void write_gguf(const fs::path & p, const std::string & arch, const char * tenso
 }
 
 // A port nothing is listening on right now: bind ephemeral, read back what
-// the OS gave us, close it. Used only as an address for OLLAMA_HOST so this
-// test's HTTP calls fail fast instead of ever reaching a real server.
+// the OS gave us, close it.
 int free_port_for_test() {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);

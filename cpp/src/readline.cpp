@@ -89,9 +89,7 @@ std::string join(const std::vector<std::string> & v, const std::string & sep) {
     return out;
 }
 
-// The combining-mark blocks actually seen in typed text. Go's unicode.Mn /
-// unicode.Me are the full Unicode general-category tables; reproducing
-// those from scratch is out of scope here.
+// The combining-mark blocks actually seen in typed text.
 bool is_combining_mark(char32_t r) {
     return (r >= 0x0300 && r <= 0x036F) || (r >= 0x1AB0 && r <= 0x1AFF) ||
            (r >= 0x1DC0 && r <= 0x1DFF) || (r >= 0x20D0 && r <= 0x20FF) ||
@@ -123,9 +121,8 @@ int editor_width() {
     return w < 10 ? 80 : w;
 }
 
-// Raw-mode console state, restored on destruction; a no-op guard when
-// stdin is not a real console (GetConsoleMode fails, e.g. redirected/piped
-// input in a test run), same as the Go rawState{} zero value.
+// Raw-mode console state, restored on destruction; a no-op guard when stdin
+// is not a real console (GetConsoleMode fails, e.g.
 class RawModeGuard {
 public:
     RawModeGuard() {
