@@ -22,6 +22,21 @@ for your GPU, puts `llmash` on your PATH, and starts the server. With no
 NVIDIA card it takes the Vulkan or CPU build instead, and models load into
 system RAM, which works but is slower.
 
+## Models you already have
+
+Ollama's store is found and used as it is. A folder of GGUFs from llama.cpp
+or LM Studio is one command away:
+
+```powershell
+llmash models set D:\models
+```
+
+It reads the folder where it is, subfolders included, and says how many
+models it found. Nothing is copied, downloaded or deleted, and `rm` will not
+touch it. `llmash models` shows what is being read. It is the same setting
+as `OLLAMA_MODELS`, which llmash takes the way Ollama does, pointed at
+either kind of folder.
+
 ## Speed
 
 One GPU, an RTX PRO 6000 Blackwell with 96 GB: same prompts, 4-bit weights in
@@ -144,6 +159,7 @@ head.
 | `list` `ps` `show` `run` `pull` `rm` `cp` `stop` | as in Ollama |
 | `serve` | start the server; the tray does this for you |
 | `pulldraft` | find and install a draft model for a model you have |
+| `models` | show where models are read from, or point llmash at a folder of them |
 | `doctor` | check the install, runtime, GPU, models and routes |
 | `update` | install the latest release |
 | `launch` | point Claude Code, Codex, Droid and others at this server |
@@ -158,6 +174,8 @@ Optional. `local.json` next to the program, or environment variables.
 
 | | |
 |---|---|
+| `OLLAMA_MODELS` | the models directory, as Ollama takes it: a store, or a folder of GGUFs read in place (default `~\.ollama\models`) |
+| `LLMASH_MODELS` | same as `OLLAMA_MODELS`; `llmash models set` sets the same thing |
 | `LLMASH_PORT` | local API port (default 11434) |
 | `LLMASH_CTX` | default context length (default 8192) |
 | `LLMASH_KV` | K/V cache type, `f16` or `q8_0` |

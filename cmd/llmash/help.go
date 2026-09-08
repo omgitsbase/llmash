@@ -28,6 +28,7 @@ Available Commands:
   unlink       Take the public API back down
   tray         Show the notification-area icon
   pulldraft    Find and install a draft model to make a model faster
+  models       Show where models are read from, or point llmash at a folder
   doctor       Check this machine over and report what is wrong
   update       Update llmash from the host it was installed from
   uninstall    Remove llmash from this machine
@@ -66,6 +67,24 @@ A draft model guesses the next few tokens so the real model can check several
 at once. Hugging Face is searched for one trained against this exact model;
 candidates built for a fine-tune, or packaged for another runtime, are refused.
 A model with an MTP head of its own is left alone. No account is needed.
+`,
+	"models": `Show where models are read from, or point llmash at a folder
+
+Usage:
+  llmash models
+  llmash models set DIR
+
+With no folder, shows where models are read from and how many are there.
+
+set reads a folder for what it is. Ollama's store, found on its own when
+there is one, or any folder with a manifests folder inside, becomes the model
+store, where pulls go. Any other folder is taken as a folder of GGUFs, the
+kind llama.cpp keeps, and is read where it is, subfolders included: nothing
+in it is copied, moved or deleted, and rm will not touch it.
+
+It is the same setting as OLLAMA_MODELS, which llmash takes the way Ollama
+does, pointed at either kind of folder. LLMASH_MODELS is the same variable
+under this program's name.
 `,
 	"doctor": `Check this machine over and report what is wrong
 
@@ -116,8 +135,10 @@ Flags:
 Environment Variables:
       OLLAMA_HOST                   IP Address for the ollama server (default 127.0.0.1:11434)
       OLLAMA_KEEP_ALIVE             The duration that models stay loaded in memory (default "15m")
-      OLLAMA_MODELS                 The path to the models directory
+      OLLAMA_MODELS                 The path to the models directory: an Ollama store, or a folder of GGUFs read in place
+      LLMASH_MODELS                Same as OLLAMA_MODELS
       LLMASH_GGUF                  The path to the loose GGUF directory (default: gguf/ inside the model store)
+      LLMASH_EXTRA_ROOTS           Other Ollama stores read alongside the models directory, ';' between them
       LLMASH_PORT                  Port for the local API (default 11434)
       LLMASH_PUBLIC_PORT           Keyed public listener for ` + "`ollama link`" + ` (default 11435, 0 = off)
       LLMASH_CTX                   Default context length (default 8192)

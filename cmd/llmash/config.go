@@ -20,15 +20,58 @@ import (
 // install has an empty LOCAL and behaves like plain Ollama on llama.cpp.
 
 const (
-	serverVersion = "0.3.8"
+	serverVersion = "0.3.9"
 	serverBuild   = "llmash"
 )
 
 var local map[string]any
 
+// local.json's models_root (what `llmash models set` writes, the same thing
+// OLLAMA_MODELS says) and extra_roots (other Ollama stores read alongside),
+// which a running server re-reads on request.
+var (
+	localModelsRoot string
+	localExtraRoots []string
+)
+
+func localPath() string { return filepath.Join(root, "local.json") }
+
+// readLocal parses local.json as it is, for a command that will write it
+// back. A missing file is an empty map; a broken one is an error, since
+// writing over it would lose whatever the person had there.
+func readLocal() (map[string]any, error) {
+	m := map[string]any{}
+	b, err := os.ReadFile(localPath())
+	if os.IsNotExist(err) {
+		return m, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	b = bytes.TrimPrefix(b, []byte{0xEF, 0xBB, 0xBF})
+	if len(bytes.TrimSpace(b)) == 0 {
+		return m, nil
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("%s: %v", localPath(), err)
+	}
+	return m, nil
+}
+
+// writeLocal writes local.json the way the installer does: UTF-8, no
+// byte-order mark, indented.
+func writeLocal(m map[string]any) error {
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(localPath(), append(b, '\n'), 0o644)
+}
+
 func loadLocal() {
 	local = map[string]any{}
-	b, err := os.ReadFile(filepath.Join(root, "local.json"))
+	localModelsRoot, localExtraRoots = "", nil
+	b, err := os.ReadFile(localPath())
 	if err != nil {
 		return
 	}
@@ -38,22 +81,10 @@ func loadLocal() {
 		fmt.Fprintf(os.Stderr, "[llmash] bad local.json (%v); ignoring it\n", err)
 		local = map[string]any{}
 	}
-	if v := str(local, "models_root"); v != "" && os.Getenv("OLLAMA_MODELS") == "" {
-		os.Setenv("OLLAMA_MODELS", v)
-	}
+	localModelsRoot = strings.TrimSpace(str(local, "models_root"))
+	localExtraRoots = localStringsOf(local, "extra_roots")
 	if v := str(local, "gguf_dir"); v != "" && env("LLMASH_GGUF") == "" {
 		os.Setenv("LLMASH_GGUF", v)
-	}
-	if env("LLMASH_EXTRA_ROOTS") == "" {
-		var extras []string
-		for _, e := range list(local, "extra_roots") {
-			if s, _ := e.(string); strings.TrimSpace(s) != "" {
-				extras = append(extras, strings.TrimSpace(s))
-			}
-		}
-		if len(extras) > 0 {
-			os.Setenv("LLMASH_EXTRA_ROOTS", strings.Join(extras, ";"))
-		}
 	}
 }
 

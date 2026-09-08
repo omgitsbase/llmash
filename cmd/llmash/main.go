@@ -50,7 +50,7 @@ func progText(text string) string {
 	return r.Replace(text)
 }
 
-var aliases = map[string]string{"ls": "list", "start": "serve"}
+var aliases = map[string]string{"ls": "list", "start": "serve", "set": "models"}
 
 var thinkLevels = map[string]bool{"true": true, "false": true, "high": true, "medium": true, "low": true, "max": true}
 
@@ -198,6 +198,8 @@ func main() {
 		cmdPullDraft(o.pos[0], o.flags["--yes"] || o.flags["-y"], o.flags["--force"])
 	case "doctor":
 		cmdDoctor()
+	case "models":
+		cmdModels(rest)
 	case "update":
 		o := parseSimple(rest, map[string]bool{"--force": true}, nil)
 		cmdUpdate(o.flags["--force"])

@@ -360,9 +360,31 @@ func contains(xs []string, s string) bool {
 
 // ------------------------------------------------------------------ store
 
+// modelsDir is the one models setting: OLLAMA_MODELS as Ollama takes it,
+// LLMASH_MODELS as the same thing under this program's name, or local.json's
+// models_root, which `llmash models set` writes. It may name an Ollama store
+// or a plain folder of GGUFs; the folder is read for what it is.
+func modelsDir() string {
+	if v := strings.TrimSpace(os.Getenv("OLLAMA_MODELS")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(env("LLMASH_MODELS")); v != "" {
+		return v
+	}
+	return localModelsRoot
+}
+
+func isOllamaStore(dir string) bool { return dirExists(filepath.Join(dir, "manifests")) }
+
+// isGGUFFolder: a folder that is not an Ollama store and has GGUFs in it
+// somewhere. Ollama would make a store of it; llmash reads it in place.
+func isGGUFFolder(dir string) bool {
+	return dirExists(dir) && !isOllamaStore(dir) && len(walkGGUF(dir)) > 0
+}
+
 func defaultModelsRoot() string {
-	if env := os.Getenv("OLLAMA_MODELS"); env != "" {
-		return env
+	if v := modelsDir(); v != "" && !isGGUFFolder(v) {
+		return v
 	}
 	home, _ := os.UserHomeDir()
 	guesses := []string{filepath.Join(home, ".ollama", "models")}
@@ -416,7 +438,11 @@ type Registry struct {
 	Blobs     string
 	Manifests string
 	Extras    []string // other stores read alongside the root: their manifests, blobs and gguf folders
+	Library   []string // folders of GGUFs read in place, every subfolder included; never written to
 
+	cfgMu    sync.RWMutex // Extras and Library, which Reload replaces while requests run
+	libMu    sync.Mutex
+	libCache map[string]libScan
 	mu       sync.Mutex
 	cache    map[string]*Model
 	looseFP  string
@@ -437,22 +463,105 @@ const fpTTL = 2 * time.Second
 func newRegistry() *Registry {
 	root := defaultModelsRoot()
 	r := &Registry{Root: root, Blobs: filepath.Join(root, "blobs"), Manifests: filepath.Join(root, "manifests"),
-		cache: map[string]*Model{}}
-	for _, e := range extraRoots() {
-		if filepath.Clean(e) != filepath.Clean(root) && dirExists(e) {
-			r.Extras = append(r.Extras, e)
-		}
-	}
+		cache: map[string]*Model{}, libCache: map[string]libScan{}}
+	r.Extras, r.Library = r.configuredDirs()
 	return r
 }
 
-// extraRoots lists the other model stores to read: LLMASH_EXTRA_ROOTS, one
-// per ';', which local.json's extra_roots fills in.
-func extraRoots() []string {
+// configuredDirs reads the extra stores and library folders as configured
+// right now, dropping the root itself and anything that is not a folder.
+func (r *Registry) configuredDirs() (extras, library []string) {
+	for _, e := range extraRoots() {
+		if filepath.Clean(e) != filepath.Clean(r.Root) && dirExists(e) {
+			extras = append(extras, e)
+		}
+	}
+	for _, l := range libraryDirs() {
+		if dirExists(l) {
+			library = append(library, l)
+		}
+	}
+	return extras, library
+}
+
+// Reload re-reads local.json's extra_roots and library, so `llmash models`
+// takes effect without a restart. The store root itself stays: pulls are
+// writing into it.
+func (r *Registry) Reload() {
+	loadLocal()
+	extras, library := r.configuredDirs()
+	r.cfgMu.Lock()
+	r.Extras, r.Library = extras, library
+	r.cfgMu.Unlock()
+	r.libMu.Lock()
+	r.libCache = map[string]libScan{}
+	r.libMu.Unlock()
+	r.Invalidate()
+}
+
+func (r *Registry) extras() []string {
+	r.cfgMu.RLock()
+	defer r.cfgMu.RUnlock()
+	return r.Extras
+}
+
+func (r *Registry) library() []string {
+	r.cfgMu.RLock()
+	defer r.cfgMu.RUnlock()
+	return r.Library
+}
+
+// InLibrary says whether a file lives under one of the library folders,
+// which llmash reads but never deletes from.
+func (r *Registry) InLibrary(p string) bool {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	for _, l := range r.library() {
+		if la, err := filepath.Abs(l); err == nil {
+			if rel, err := filepath.Rel(la, abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// splitDirs takes a ';'-separated list of folders, the way LLMASH_EXTRA_ROOTS
+// is written.
+func splitDirs(s string) []string {
 	var out []string
-	for _, e := range strings.Split(env("LLMASH_EXTRA_ROOTS"), ";") {
+	for _, e := range strings.Split(s, ";") {
 		if e = strings.TrimSpace(e); e != "" {
 			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// extraRoots lists the other model stores to read: local.json's extra_roots,
+// and LLMASH_EXTRA_ROOTS with ';' between them.
+func extraRoots() []string { return mergeDirs(localExtraRoots, env("LLMASH_EXTRA_ROOTS")) }
+
+// libraryDirs is the folder of GGUFs read in place, when the models setting
+// names one rather than an Ollama store.
+func libraryDirs() []string {
+	if v := modelsDir(); v != "" && isGGUFFolder(v) {
+		return []string{v}
+	}
+	return nil
+}
+
+// mergeDirs is the configured folders followed by the variable's, each once.
+func mergeDirs(configured []string, variable string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, d := range append(append([]string{}, configured...), splitDirs(variable)...) {
+		key := strings.ToLower(filepath.Clean(d))
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, d)
 		}
 	}
 	return out
@@ -461,7 +570,7 @@ func extraRoots() []string {
 // manifestDirs is every manifests folder read, the root's first.
 func (r *Registry) manifestDirs() []string {
 	out := []string{r.Manifests}
-	for _, e := range r.Extras {
+	for _, e := range r.extras() {
 		out = append(out, filepath.Join(e, "manifests"))
 	}
 	return out
@@ -481,9 +590,60 @@ func (r *Registry) looseDirs() []string {
 	}
 	add(r.LooseDir())
 	add(filepath.Join(r.Root, "gguf"))
-	for _, e := range r.Extras {
+	for _, e := range r.extras() {
 		add(filepath.Join(e, "gguf"))
 	}
+	return out
+}
+
+type libScan struct {
+	at    time.Time
+	files []string
+}
+
+const libTTL = 10 * time.Second
+
+// libraryFiles is every GGUF under the library folders. A walk of a big tree
+// is not free, and the fingerprint asks every couple of seconds, so each
+// folder's listing is kept for a little while.
+func (r *Registry) libraryFiles() []string {
+	var out []string
+	now := time.Now()
+	r.libMu.Lock()
+	defer r.libMu.Unlock()
+	for _, d := range r.library() {
+		key := filepath.Clean(d)
+		if c, ok := r.libCache[key]; ok && now.Sub(c.at) < libTTL {
+			out = append(out, c.files...)
+			continue
+		}
+		files := walkGGUF(d)
+		r.libCache[key] = libScan{at: now, files: files}
+		out = append(out, files...)
+	}
+	return out
+}
+
+// walkGGUF lists the GGUFs under dir, subfolders included, sorted by path.
+// Hidden folders are skipped, and the walk does not follow links.
+func walkGGUF(dir string) []string {
+	var out []string
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != dir && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type().IsRegular() && strings.EqualFold(filepath.Ext(p), ".gguf") {
+			out = append(out, p)
+		}
+		return nil
+	})
+	sort.Strings(out)
 	return out
 }
 
@@ -532,7 +692,7 @@ func (r *Registry) blob(digest string) string {
 	if fileExists(p) {
 		return p
 	}
-	for _, e := range r.Extras {
+	for _, e := range r.extras() {
 		if q := filepath.Join(e, "blobs", name); fileExists(q) {
 			return q
 		}
@@ -688,17 +848,20 @@ func (r *Registry) looseFiles() []string {
 		sort.Strings(fs)
 		files = append(files, fs...)
 	}
+	files = append(files, r.libraryFiles()...)
 	var out []string
 	now := time.Now()
+	seen := map[string]bool{}
 	for _, p := range files {
+		if seen[filepath.Clean(p)] {
+			continue
+		}
+		seen[filepath.Clean(p)] = true
 		stem := stemOf(p)
-		low := strings.ToLower(stem)
 		if shardSuffix.MatchString(stem) && !firstShard.MatchString(stem) {
 			continue
 		}
-		if strings.HasSuffix(low, ".mmproj") || strings.HasSuffix(low, "-mmproj") ||
-			strings.HasSuffix(low, ".draft") || strings.HasSuffix(low, ".dspark") ||
-			strings.HasSuffix(low, ".eagle3") || strings.HasSuffix(low, ".mtp") {
+		if isSidecar(stem) {
 			continue
 		}
 		st, err := os.Stat(p)
@@ -706,6 +869,42 @@ func (r *Registry) looseFiles() []string {
 			continue // still being written
 		}
 		out = append(out, p)
+	}
+	return out
+}
+
+// isSidecar: a projector, drafter or MTP head that belongs to a model, not a
+// model in its own right.
+func isSidecar(stem string) bool {
+	low := strings.ToLower(stem)
+	return strings.Contains(low, "mmproj") ||
+		strings.HasSuffix(low, ".draft") || strings.HasSuffix(low, ".dspark") ||
+		strings.HasSuffix(low, ".eagle3") || strings.HasSuffix(low, ".mtp")
+}
+
+type looseEntry struct{ path, name string }
+
+// looseNamed is every loose GGUF with the name it is served under. Two files
+// that strip to the same name, the same model at two quantisations say, would
+// otherwise be one name twice: the first keeps it and the next is told apart
+// by its quantisation (`qwen3-8b:q8-0`), or by a counter when it has none.
+func (r *Registry) looseNamed() []looseEntry {
+	var out []looseEntry
+	taken := map[string]bool{}
+	for _, p := range r.looseFiles() {
+		name := r.looseName(p)
+		if taken[name] {
+			stem := shardSuffix.ReplaceAllString(stemOf(p), "")
+			base := strings.TrimSuffix(name, ":gguf")
+			if q := quantSuffix.FindString(stem); q != "" && strings.HasSuffix(name, ":gguf") {
+				name = base + ":" + strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(q, "-")), "_", "-")
+			}
+			for n := 2; taken[name]; n++ {
+				name = fmt.Sprintf("%s:gguf-%d", base, n)
+			}
+		}
+		taken[name] = true
+		out = append(out, looseEntry{p, name})
 	}
 	return out
 }
@@ -748,12 +947,12 @@ func fileDigest(p string) string {
 
 var sizeInName = regexp.MustCompile(`[-_ ][A-Za-z]?\d+(?:\.\d+)?[bBmM]\b`)
 
-func (r *Registry) loadLoose(p string, deep bool) *Model {
+func (r *Registry) loadLoose(p, name string, deep bool) *Model {
 	st, err := os.Stat(p)
 	if err != nil {
 		return nil
 	}
-	m := &Model{Name: r.looseName(p), GGUF: p, Size: shardBytes(p), Digest: "sha256:" + fileDigest(p),
+	m := &Model{Name: name, GGUF: p, Size: shardBytes(p), Digest: "sha256:" + fileDigest(p),
 		Modified: float64(st.ModTime().UnixNano()) / 1e9, Params: map[string]any{}}
 	if !deep {
 		return m
@@ -948,13 +1147,27 @@ func (r *Registry) Get(name string) *Model {
 }
 
 func (r *Registry) get(name string, deep bool) *Model {
-	if !strings.Contains(name, ":") {
+	bare := !strings.Contains(name, ":")
+	if bare {
 		name += ":latest"
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, p := range r.looseFiles() {
-		if r.looseName(p) != name {
+	if m := r.getExact(name, deep); m != nil {
+		return m
+	}
+	// A loose file has no tag of its own and is listed as `name:gguf`, so a
+	// bare name that nothing was pulled under still finds the file.
+	if bare {
+		return r.getExact(strings.TrimSuffix(name, ":latest")+":gguf", deep)
+	}
+	return nil
+}
+
+// getExact resolves one full name; the caller holds r.mu.
+func (r *Registry) getExact(name string, deep bool) *Model {
+	for _, e := range r.looseNamed() {
+		if e.name != name {
 			continue
 		}
 		fp := r.fingerprintCached()
@@ -970,7 +1183,7 @@ func (r *Registry) get(name string, deep bool) *Model {
 		if m, ok := r.cache[key]; ok {
 			return m
 		}
-		m := r.loadLoose(p, deep)
+		m := r.loadLoose(e.path, e.name, deep)
 		if m != nil {
 			r.cache[key] = m
 		}
@@ -1002,8 +1215,8 @@ func (r *Registry) All(deep bool) []*Model {
 	}
 	var out []*Model
 	seen := map[string]bool{}
-	for _, p := range r.looseFiles() {
-		if m := r.loadLoose(p, deep); m != nil {
+	for _, e := range r.looseNamed() {
+		if m := r.loadLoose(e.path, e.name, deep); m != nil {
 			out = append(out, m)
 			seen[m.Name] = true
 		}
