@@ -5,9 +5,9 @@
         "measured": "2026-09-07",
         "model_id": "gemma4:26b",
         "workloads": {
-          "conversation": 254.2,
-          "coding": 332.1,
-          "thinking": 417.3
+          "conversation": 255.6,
+          "coding": 338.6,
+          "thinking": 432.0
         }
       },
       "ollama": {
@@ -25,9 +25,9 @@
         "measured": "2026-09-07",
         "model_id": "nail-qwen3.6-35b-a3b-mtp-ud:gguf",
         "workloads": {
-          "conversation": 382.5,
-          "coding": 473.6,
-          "thinking": 506.7
+          "conversation": 385.0,
+          "coding": 482.0,
+          "thinking": 514.4
         }
       },
       "ollama": {
@@ -54,9 +54,9 @@
         "measured": "2026-09-07",
         "model_id": "dirk:gguf",
         "workloads": {
-          "conversation": 130.1,
+          "conversation": 129.9,
           "coding": 160.1,
-          "thinking": 187.4
+          "thinking": 188.1
         }
       },
       "ollama": {
