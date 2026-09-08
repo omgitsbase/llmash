@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -49,6 +50,72 @@ bool is_sidecar(const std::string & stem) {
         }
     }
     return s.rfind("mmproj", 0) == 0;
+}
+
+std::string pretty_params(uint64_t n) {
+    char buf[32];
+    if (n >= 1000000000000ull)   { std::snprintf(buf, sizeof(buf), "%.1fT", n / 1e12); }
+    else if (n >= 1000000000ull) { std::snprintf(buf, sizeof(buf), "%.1fB", n / 1e9);  }
+    else if (n >= 1000000ull)    { std::snprintf(buf, sizeof(buf), "%.2fM", n / 1e6);  }
+    else                         { std::snprintf(buf, sizeof(buf), "%llu", (unsigned long long) n); }
+    return buf;
+}
+
+// Go's sizeInName, [-_ ][A-Za-z]?\d+(\.\d+)?[bBmM] at a word boundary: the
+// name is cut where the first such size starts. The boundary is checked by
+// hand because  inside an alternation is not dependable in std::regex.
+std::string family_of(const GGUFInfo & g) {
+    const std::string & base = g.basename;
+    static const std::regex size_re(R"([-_ ][A-Za-z]?\d+(\.\d+)?[bBmM])");
+
+    auto it  = std::sregex_iterator(base.begin(), base.end(), size_re);
+    const auto end = std::sregex_iterator();
+    for (; it != end; ++it) {
+        const size_t after = static_cast<size_t>(it->position(0) + it->length(0));
+        if (after < base.size() && (std::isalnum(static_cast<unsigned char>(base[after])) != 0)) {
+            continue; // "35Bx" is not a size
+        }
+        std::string cut = base.substr(0, static_cast<size_t>(it->position(0)));
+        while (!cut.empty() && (cut.back() == '-' || cut.back() == '_' || cut.back() == ' ')) cut.pop_back();
+        return cut.empty() ? g.arch : cut;
+    }
+    return base.empty() ? g.arch : base;
+}
+
+std::vector<std::string> caps_for(const GGUFInfo & g, const std::string & projector) {
+    if (g.has_pooling) {
+        return {"embedding"};
+    }
+    std::vector<std::string> caps{"completion"};
+    if (!projector.empty()) {
+        caps.push_back("vision");
+    }
+    const std::string tl = lower(g.chat_template);
+    const bool oss = g.arch == "gpt-oss";
+    if (oss || tl.find("tool") != std::string::npos || tl.find("function") != std::string::npos) {
+        caps.push_back("tools");
+    }
+    if (oss || tl.find("think") != std::string::npos || tl.find("reason") != std::string::npos) {
+        caps.push_back("thinking");
+    }
+    return caps;
+}
+
+// an mmproj sidecar beside the weights
+std::string find_projector_for(const std::string & path) {
+    const fs::path dir = fs::path(path).parent_path();
+    const std::string stem = fs::path(path).stem().string();
+    std::error_code ec;
+    for (const auto & cand : { dir / (stem + ".mmproj.gguf"), dir / ("mmproj-" + stem + ".gguf") }) {
+        if (fs::exists(cand, ec)) return cand.string();
+    }
+    for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); ++it) {
+        const std::string n = lower(it->path().filename().string());
+        if (n.rfind("mmproj", 0) == 0 && n.size() > 5 && n.substr(n.size() - 5) == ".gguf") {
+            return it->path().string();
+        }
+    }
+    return "";
 }
 
 } // namespace
@@ -179,6 +246,14 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out) c
         mo.arch       = g.arch;
         mo.has_mtp    = g.has_mtp;
         mo.in_library = true;
+        mo.family       = family_of(g);
+        mo.param_size   = g.n_params > 0 ? pretty_params(g.n_params) : g.size_label;
+        mo.tmpl         = g.chat_template;
+        mo.ctx_train    = static_cast<int>(g.ctx_train);
+        mo.experts      = g.experts;
+        mo.experts_used = g.experts_used;
+        mo.projector    = find_projector_for(path);
+        mo.caps         = caps_for(g, mo.projector);
 
         std::error_code ec;
         mo.size = static_cast<uint64_t>(fs::file_size(path, ec));
@@ -247,6 +322,15 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
         mo.arch    = g.arch;
         mo.has_mtp = g.has_mtp;
         mo.size    = static_cast<uint64_t>(fs::file_size(path, ec));
+        mo.digest       = blob;
+        mo.family       = family_of(g);
+        mo.param_size   = g.n_params > 0 ? pretty_params(g.n_params) : g.size_label;
+        mo.tmpl         = g.chat_template;
+        mo.ctx_train    = static_cast<int>(g.ctx_train);
+        mo.experts      = g.experts;
+        mo.experts_used = g.experts_used;
+        mo.projector    = find_projector_for(path.string());
+        mo.caps         = caps_for(g, mo.projector);
         out.push_back(std::move(mo));
     }
 }

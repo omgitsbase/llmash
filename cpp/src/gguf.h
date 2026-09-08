@@ -16,6 +16,14 @@ struct GGUFInfo {
     bool        has_mtp = false;
     bool        has_vision = false;
     std::string repo;
+
+    std::string basename;      // general.basename
+    std::string size_label;    // general.size_label
+    std::string chat_template; // tokenizer.chat_template
+    uint64_t    ctx_train    = 0;  // <arch>.context_length
+    int         experts      = 0;  // <arch>.expert_count
+    int         experts_used = 0;  // <arch>.expert_used_count
+    bool        has_pooling  = false; // an embedding model
 };
 
 // ok=false for anything that is not a GGUF.
