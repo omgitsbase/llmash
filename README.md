@@ -99,9 +99,16 @@ What is left is the kernels, and they are the honest limit. A round costs
 which is the ceiling until the matmuls get cheaper. Checking four drafted
 tokens at once should be nearly free, since the weights are read once for the
 whole batch; float weights behave that way, going 1.12x from one token to four,
-while quantized ones cost 1.5x to 2.3x. Handing that batch to the tensor-core
-quantized path instead was measured 15% slower, so llama.cpp's crossover is
-already right and the gap is the vector kernel itself.
+while quantized ones cost 1.5x to 2.3x.
+
+That is the vector kernel becoming arithmetic-bound: at one token it reads
+weights at 77% of this card's peak bandwidth, at four it is down to 48% and
+waiting on integer dot products instead. Two ways out were measured and both
+lost. Handing the batch to the tensor-core quantized path is 15% slower, so
+llama.cpp's crossover is already right; doubling the warps per block changes
+nothing, which is what an arithmetic-bound kernel does. What is left is
+decoding each weight block once per batch instead of once per column, and that
+is a rewrite of the dot product for every quantized format, not a setting.
 
 ## Draft models
 
