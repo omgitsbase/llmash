@@ -69,7 +69,7 @@ int main() {
     check(nail && nail->has_mtp, "an mtp head in the weights is seen");
     check(nail && nail->arch == "qwen35moe", "the architecture is read from the header");
 
-    const Model * qwen = reg.find("qwen3-8b-q8_0");
+    const Model * qwen = reg.find("qwen3-8b");
     check(qwen != nullptr, "a model at the top level is found");
     check(qwen && !qwen->has_mtp, "a model without an mtp head is not claimed to have one");
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");

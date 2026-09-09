@@ -183,7 +183,7 @@ std::string winhttp_error(const char * what) {
 }
 
 bool open_stream(const std::string & url, const std::string & method, const std::string & range,
-                 const std::vector<std::string> & headers, Stream & st, std::string & err) {
+                 const std::vector<std::string> & headers, Stream & st, std::string & err, int timeout_s = 0) {
     const std::wstring wurl = widen(url);
 
     URL_COMPONENTS uc{};
@@ -213,7 +213,12 @@ bool open_stream(const std::string & url, const std::string & method, const std:
         err = winhttp_error("WinHttpOpen");
         return false;
     }
-    WinHttpSetTimeouts(st.session.get(), 30000, 30000, 60000, 120000);
+    if (timeout_s > 0) {
+        const int ms = timeout_s * 1000;
+        WinHttpSetTimeouts(st.session.get(), ms, ms, ms, ms);
+    } else {
+        WinHttpSetTimeouts(st.session.get(), 30000, 30000, 60000, 120000);
+    }
 
     st.connect.reset(WinHttpConnect(st.session.get(), host_s.c_str(), uc.nPort, 0));
     if (!st.connect) {
@@ -546,10 +551,10 @@ bool write_alias(const Config & cfg, const std::string & file, const std::string
 // ============================================================== transport
 
 HttpResult http_request(const std::string & url, const std::string & method, const std::string & range,
-                        const std::vector<std::string> & headers) {
+                        const std::vector<std::string> & headers, int timeout_s) {
     HttpResult out;
     Stream     st;
-    if (!open_stream(url, method, range, headers, st, out.error)) {
+    if (!open_stream(url, method, range, headers, st, out.error, timeout_s)) {
         return out;
     }
     out.status         = st.status;

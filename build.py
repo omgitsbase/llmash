@@ -1,15 +1,15 @@
-"""Compile llmash and package it for a release.
+"""Build llmash and package it for a release.
 
     python build.py            build dist/llmash-win-x64.zip
     python build.py --here     ...and run this checkout on the build
 
-One Go program is built twice: llmash.exe is the command line and `llmash
-serve`; llmashw.exe is the same program without a console, for the tray and the
-background server. Both need MinGW's windres for the icon and version resource.
+Needs Visual Studio 2022 with the C++ workload. CMake comes with it. One
+program is built twice: llmash.exe is the command line and `llmash serve`;
+llmashw.exe is the same program without a console, for the tray and the
+background server.
 """
 import os
 import pathlib
-import re
 import shutil
 import subprocess
 import sys
@@ -17,38 +17,60 @@ import time
 import zipfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-PKG = HERE / "cmd" / "llmash"
+CPP = HERE / "cpp"
+BUILD = CPP / "build-release"
 ASSETS = HERE / "assets"
 OUT = HERE / "dist" / "llmash"
 ZIP = HERE / "dist" / "llmash-win-x64.zip"
 
 
 def version() -> str:
-    m = re.search(r'serverVersion\s*=\s*"([^"]+)"', (PKG / "config.go").read_text("utf-8"))
-    if not m:
-        raise SystemExit("serverVersion not found in config.go")
-    return m.group(1)
+    return (HERE / "VERSION").read_text("utf-8").strip()
 
 
-def go_build(name: str, windowed: bool) -> None:
-    ld = "-s -w" + (" -H windowsgui" if windowed else "")
-    env = dict(os.environ, CGO_ENABLED="0", GOOS="windows", GOARCH="amd64")
-    subprocess.run(["go", "build", "-trimpath", "-ldflags", ld, "-o", str(OUT / name), "./cmd/llmash"],
-                   cwd=HERE, env=env, check=True)
+def cmake() -> str:
+    if shutil.which("cmake"):
+        return "cmake"
+    vswhere = pathlib.Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+    if vswhere.exists():
+        vs = subprocess.run([str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+                            capture_output=True, text=True).stdout.strip()
+        candidate = pathlib.Path(vs) / "Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+        if candidate.exists():
+            return str(candidate)
+    raise SystemExit("cmake not found; install Visual Studio 2022 with the C++ workload")
+
+
+def crt_dlls() -> list:
+    """The C runtime DLLs the build needs beside it."""
+    vswhere = pathlib.Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+    vs = subprocess.run([str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+                        capture_output=True, text=True).stdout.strip()
+    redist = sorted((pathlib.Path(vs) / "VC/Redist/MSVC").glob("14.*"))
+    if not redist:
+        raise SystemExit("no Visual C++ redistributable found next to the compiler")
+    crt = redist[-1] / "x64/Microsoft.VC143.CRT"
+    names = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+    return [crt / n for n in names]
 
 
 def build() -> None:
+    cm = cmake()
+    if not (BUILD / "CMakeCache.txt").exists():
+        subprocess.run([cm, "-S", str(CPP), "-B", str(BUILD), "-G", "Visual Studio 17 2022", "-A", "x64"],
+                       check=True)
+    subprocess.run([cm, "--build", str(BUILD), "--config", "Release", "--target", "llmash", "llmashw"],
+                   check=True)
     OUT.mkdir(parents=True, exist_ok=True)
-    (HERE / "VERSION").write_text(version() + "\n", encoding="utf-8")
-    subprocess.run(["windres", "llmash.rc", "-O", "coff", "-o", str(PKG / "rsrc.syso")],
-                   cwd=ASSETS, check=True)
-    go_build("llmash.exe", windowed=False)
-    go_build("llmashw.exe", windowed=True)
+    for name in ("llmash.exe", "llmashw.exe"):
+        shutil.copy(BUILD / "Release" / name, OUT / name)
     shutil.copy(ASSETS / "icon.ico", OUT / "llmash.ico")
     shutil.copy(ASSETS / "icon.png", OUT / "llmash.png")
     shutil.copy(HERE / "install.ps1", OUT / "install.ps1")
     shutil.copy(HERE / "VERSION", OUT / "VERSION")
     shutil.copy(HERE / "LICENSE", OUT / "LICENSE")
+    for dll in crt_dlls():
+        shutil.copy(dll, OUT / dll.name)
 
 
 def stop_running(root: pathlib.Path) -> None:

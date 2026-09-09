@@ -163,6 +163,16 @@ GGUFInfo read_gguf(const std::string & path) {
             info.experts_used = static_cast<int>(r.num_any(type));
         } else if (ends_with(key, ".pooling_type")) {
             info.has_pooling = r.num_any(type) != 0;
+        } else if (key == "general.base_model.0.repo_url" && type == T_STRING) {
+            info.base_repo_url = r.str();
+        } else if (key == "general.base_model.0.organization" && type == T_STRING) {
+            info.base_org = r.str();
+        } else if (key == "general.base_model.0.name" && type == T_STRING) {
+            info.base_name = r.str();
+        } else if (key == "clip.has_vision_encoder" && type == T_BOOL) {
+            info.has_vision_encoder = r.num_any(type) != 0;
+        } else if (key == "clip.has_audio_encoder" && type == T_BOOL) {
+            info.has_audio_encoder = r.num_any(type) != 0;
         } else {
             r.skip_value(type);
         }

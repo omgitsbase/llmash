@@ -24,6 +24,8 @@ struct Model {
     std::string param_size;  // "8B", "35B-A3B"
     std::string tmpl;        // tokenizer.chat_template
     std::string projector;   // an mmproj sidecar, when there is one
+    std::string system;      // the store's system layer
+    std::string params_text; // the store's params layer, "key value" per line
     double      modified = 0;
     int         ctx_train = 0;
     int         experts = 0;

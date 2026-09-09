@@ -1,6 +1,8 @@
 #include "cli_win.h"
 #include "cmd_models.h"
 
+#include "api_logic.h"
+
 #include "cli_util.h"
 #include "config.h"
 #include "gguf.h"
@@ -212,12 +214,24 @@ void show_model_dirs(const Config & cfg, Registry & reg) {
     std::snprintf(note, sizeof(note), "%d models; pulls go here", count_manifests(cfg.models_root));
     rows.push_back({"store", cfg.models_root, note});
 
+    const std::string loose = loose_dir(cfg);
+    if (dir_exists(loose)) {
+        std::snprintf(note, sizeof(note), "%d models; HuggingFace pulls go here", count_library(loose).first);
+        rows.push_back({"loose", loose, note});
+    }
+
     for (const auto & e : cfg.extra_roots) {
         std::snprintf(note, sizeof(note), "%d models; an older store, still read", count_manifests(e));
         rows.push_back({"also", e, note});
     }
 
-    for (const auto & l : reg.library_dirs()) {
+    // models.go's libraryDirs(): the model store, and only when it is a
+    // folder of GGUFs rather than an Ollama store.
+    std::vector<std::string> folders;
+    if (!cfg.models_root.empty() && !reg.is_ollama_store(cfg.models_root) && !same_dir(cfg.models_root, loose)) {
+        folders.push_back(cfg.models_root);
+    }
+    for (const auto & l : folders) {
         if (!dir_exists(l)) {
             rows.push_back({"folder", l, "missing"});
             continue;

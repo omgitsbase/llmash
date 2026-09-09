@@ -1,5 +1,9 @@
 #include "cmd_doctor.h"
 
+#include "manager.h"
+
+#include "version.h"
+
 #include "cli_util.h"
 #include "cmd_models.h" // count_library, shared with `models`
 #include "config.h"
@@ -73,31 +77,6 @@ Install read_install_json(const std::string & root) {
         info.dev = j["dev"].get<bool>();
     }
     return info;
-}
-
-std::string version_string(const Config & cfg) {
-    std::ifstream in(fs::path(cfg.root) / "VERSION");
-    if (in) {
-        std::string v((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        while (!v.empty() && std::isspace(static_cast<unsigned char>(v.back()))) {
-            v.pop_back();
-        }
-        size_t start = 0;
-        while (start < v.size() && std::isspace(static_cast<unsigned char>(v[start]))) {
-            start++;
-        }
-        v = v.substr(start);
-        if (!v.empty()) {
-            return v;
-        }
-    }
-    json        out;
-    std::string err;
-    if (call_json("GET", "/api/version", nullptr, 2, out, err) && out.contains("version") &&
-        out["version"].is_string() && !out["version"].get<std::string>().empty()) {
-        return out["version"].get<std::string>();
-    }
-    return "0.3.5"; // main.go's fallbackVersion
 }
 
 bool is_dev_install(const Install & inst) { return inst.dev || inst.origin == "dev"; }
@@ -241,10 +220,9 @@ void cmd_doctor() {
             }
         }
     }
-    for (const auto & l : reg.library_dirs()) {
-        if (!dir_exists(l)) {
-            d.add(ST_WARN, "models folder", "%s is missing; `%s models set` picks another", l.c_str(), prog.c_str());
-        }
+    if (!cfg.models_root.empty() && !reg.is_ollama_store(cfg.models_root) && !dir_exists(cfg.models_root)) {
+        d.add(ST_WARN, "models folder", "%s is missing; `%s models set` picks another", cfg.models_root.c_str(),
+              prog.c_str());
     }
 
     // ---- the card ----------------------------------------------------
@@ -302,9 +280,9 @@ void cmd_doctor() {
         }
     }
 
-    // auto-tuning: doctor.go reports this via (&Instance{}).autoTune(), a
-    // method manager.h does not declare; skipped here rather than guessed
-    // at, see the job report for the gap this leaves.
+    if (const Tuning tuning = auto_tune(); !tuning.flags.empty()) {
+        d.add(ST_OK, "auto-tuning", "%s", tuning.why.c_str());
+    }
 
     // ---- speculation ---------------------------------------------------
     const std::string spec_fallback = env_str("LLMASH_SPEC_FALLBACK", "ngram-mod");

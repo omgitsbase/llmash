@@ -259,6 +259,14 @@ bool loadable(const Model & m) {
 
 int advertised_ctx(const Config & cfg) { return cfg.ctx > 0 ? cfg.ctx : 8192; }
 
+// config.go's advertisedCtx: the trained context, forced by ctx_override or
+// lifted by ctx_max.
+int advertised_ctx(const Model & m, const Config & cfg) {
+    const int native = m.ctx_train > 0 ? m.ctx_train : advertised_ctx(cfg);
+    const int forced = ctx_target(cfg, m.name);
+    return forced > 0 ? forced : ctx_ceiling(cfg, m.name, native);
+}
+
 std::string digest_of(const Model & m) {
     const std::string seed =
         m.name + "|" + std::to_string(m.size) + "|" + m.quant + "|" + m.arch;
@@ -299,7 +307,7 @@ json tag_entry_json(const Model & m, const Config & cfg) {
               {"families", families},
               {"parameter_size", m.param_size},
               {"quantization_level", m.quant},
-              {"context_length", advertised_ctx(cfg)},
+              {"context_length", advertised_ctx(m, cfg)},
               {"expert_count", m.experts},
               {"expert_used_count", m.experts_used}}},
         {"capabilities", caps_or_completion(m)},
@@ -318,7 +326,7 @@ json tags_json(const std::vector<Model> & models, const Config & cfg) {
 }
 
 json v1_entry_json(const Model & m, const Config & cfg) {
-    const int ctx = advertised_ctx(cfg);
+    const int ctx = advertised_ctx(m, cfg);
     return json{
         {"id", m.name},
         {"object", "model"},
@@ -343,15 +351,13 @@ json v1_models_json(const std::vector<Model> & models, const Config & cfg) {
 
 json show_json(const Model & m, const Config & cfg) {
     const std::string arch = m.family.empty() ? "llama" : m.family;
-    const int         ctx  = advertised_ctx(cfg);
+    const int         ctx  = advertised_ctx(m, cfg);
     return json{
         {"license", ""},
         {"modelfile", "FROM " + m.path},
-        // Model carries no per-model parameter map or system prompt, the two
-        // fields Go fills here from its own Model.
-        {"parameters", ""},
+        {"parameters", m.params_text},
         {"template", m.tmpl},
-        {"system", ""},
+        {"system", m.system},
         {"details", tag_entry_json(m, cfg)["details"]},
         {"model_info",
          json{{"general.architecture", arch},

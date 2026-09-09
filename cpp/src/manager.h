@@ -62,6 +62,7 @@ public:
     bool                    unload(const std::string & name);
     Instance *              find(const std::string & name);
     void                    shutdown();
+    void                    reap_idle(); // one keep_alive pass
 
 private:
     Config      cfg_;
@@ -73,6 +74,14 @@ private:
     void   drop_dead();
     int    fit_ctx(const Model & m, int ctx);
 };
+
+struct Tuning {
+    std::vector<std::string> flags;
+    std::string              why;
+};
+
+// tune.go's autoTune: the flags to add and a one-line account of why.
+Tuning auto_tune();
 
 int  free_port();
 bool can_offload();

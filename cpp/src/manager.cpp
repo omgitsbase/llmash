@@ -1,5 +1,7 @@
 #include "manager.h"
 
+#include "log.h"
+
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0A00
 #endif
@@ -66,11 +68,6 @@ bool file_exists(const std::string & p) {
     return fs::is_regular_file(p, ec);
 }
 
-std::mutex              g_log_mu;
-void log_line(const std::string & s) {
-    std::lock_guard<std::mutex> lock(g_log_mu);
-    fprintf(stderr, "[llmash] %s\n", s.c_str());
-}
 
 double env_float(const char * name, double def) {
     const std::string v = env_str(name);
@@ -583,6 +580,50 @@ double Instance::progress() const {
     return std::clamp(best / total, 0.0, 0.99);
 }
 
+bool tune_enabled(const std::string & name) {
+    static std::set<std::string> off;
+    static bool                  loaded = false;
+    if (!loaded) {
+        loaded = true;
+        std::stringstream ss(env_str("LLMASH_TUNE_OFF"));
+        std::string       tok;
+        while (std::getline(ss, tok, ',')) {
+            off.insert(lower(trim(tok)));
+        }
+    }
+    return off.count(name) == 0;
+}
+
+// Flags the caller set by hand win over the tuned ones.
+std::vector<std::string> drop_overridden(const std::vector<std::string> & tuned,
+                                         const std::vector<std::string> & extra) {
+    std::set<std::string> set;
+    for (const std::string & x : extra) {
+        if (!x.empty() && x[0] == '-') {
+            set.insert(x);
+        }
+    }
+    if (set.empty()) {
+        return tuned;
+    }
+    std::vector<std::string> out;
+    for (size_t i = 0; i < tuned.size(); i++) {
+        if (tuned[i].empty() || tuned[i][0] != '-') {
+            out.push_back(tuned[i]);
+            continue;
+        }
+        size_t n = 1;
+        while (i + n < tuned.size() && !tuned[i + n].empty() && tuned[i + n][0] != '-') {
+            n++;
+        }
+        if (set.count(tuned[i]) == 0) {
+            out.insert(out.end(), tuned.begin() + i, tuned.begin() + i + n);
+        }
+        i += n - 1;
+    }
+    return out;
+}
+
 std::vector<std::string> Instance::args() const {
     std::vector<std::string> a{cfg_->llama_bin, "-m", model.path, "--host", "127.0.0.1", "--port", std::to_string(port)};
 
@@ -610,10 +651,7 @@ std::vector<std::string> Instance::args() const {
         }
     }
 
-    // llama.cpp adjusts what it was not given (--fit, on by default), so on
-    // a machine with no GPU it places layers itself rather than being told
-    // to offload 999 of them to nothing
-    const int native = cfg_->ctx > 0 ? cfg_->ctx : 8192;
+    const int native = model.ctx_train > 0 ? model.ctx_train : (cfg_->ctx > 0 ? cfg_->ctx : 8192);
     if (ctx > native) {
         std::ostringstream scale;
         scale.setf(std::ios::fixed);
@@ -621,6 +659,22 @@ std::vector<std::string> Instance::args() const {
         scale << static_cast<double>(ctx) / static_cast<double>(native);
         a.insert(a.end(), {"--rope-scaling", "yarn", "--rope-scale", scale.str(), "--yarn-orig-ctx",
                            std::to_string(native)});
+    }
+
+    const std::vector<std::string> extra  = launch_extra_for(*cfg_, model.name);
+    const Tuning                   tuning = auto_tune();
+    if (!tuning.flags.empty()) {
+        const std::vector<std::string> tuned = drop_overridden(tuning.flags, extra);
+        a.insert(a.end(), tuned.begin(), tuned.end());
+    }
+    a.insert(a.end(), extra.begin(), extra.end());
+
+    // The projector is loaded up front only when this turn needs it, or when
+    // nothing has asked for it to be held back.
+    const bool on_demand = env_str("LLMASH_MMPROJ_ON_DEMAND", "1") == "1";
+    if (!model.projector.empty() && file_exists(model.projector) &&
+        (vision || !(mmproj_blocked(*cfg_, model.name) || on_demand))) {
+        a.insert(a.end(), {"--mmproj", model.projector});
     }
 
     // no GPU: speculation costs more than it saves.
@@ -929,13 +983,28 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         }
     }
 
-    const int native = cfg_.ctx > 0 ? cfg_.ctx : 8192;
-    if (ctx > native) {
-        ctx = native;
-    }
-    ctx = fit_ctx(*m, ctx);
+    // manager.go: the trained context is the ceiling unless local.json
+    // forces one (ctx_override) or lifts it (ctx_max).
+    const int    native  = m->ctx_train > 0 ? m->ctx_train : (cfg_.ctx > 0 ? cfg_.ctx : 8192);
+    const int    forced  = ctx_target(cfg_, m->name);
+    const int    ceiling = ctx_ceiling(cfg_, m->name, native);
     const double weights = static_cast<double>(m->size) / static_cast<double>(1ull << 30);
-    const double need    = weights * 1.05;
+    double       need    = weights * 1.05;
+    if (forced > 0) {
+        ctx  = forced;
+        need = weights * 1.05 + weights * 0.4 * (static_cast<double>(ctx) / kCtxTrainNative);
+    } else if (ceiling > native) {
+        if (ctx > ceiling) {
+            ctx = ceiling;
+        }
+        ctx  = fit_ctx(*m, ctx);
+        need = weights * 1.05 + weights * 0.4 * (static_cast<double>(ctx) / kCtxTrainNative);
+    } else {
+        if (ctx > native) {
+            ctx = native;
+        }
+        ctx = fit_ctx(*m, ctx);
+    }
 
     std::lock_guard<std::mutex> load_lock(g_load_mu);
     Instance *                  inst  = nullptr;
@@ -1028,6 +1097,73 @@ void Manager::shutdown() {
     for (auto & p : all) {
         p->stop();
     }
+}
+
+void Manager::reap_idle() {
+    const double             now = now_f();
+    std::vector<std::string> gone;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        for (auto & p : live_) {
+            if (is_pinned(p->model.name) || !p->ready() || now <= p->expires_at || now - p->last_used < 5) {
+                continue;
+            }
+            gone.push_back(p->model.name);
+        }
+    }
+    for (const std::string & name : gone) {
+        log_line(name + " idle past keep_alive");
+        unload(name);
+    }
+}
+
+Tuning auto_tune() {
+    Tuning     t;
+    const auto add = [&](const std::string & note, std::initializer_list<std::string> flags) {
+        t.flags.insert(t.flags.end(), flags);
+        t.why += (t.why.empty() ? "" : ", ") + note;
+    };
+
+    // A conversation that comes back should not pay for its prompt twice.
+    if (const int n = env_int("LLMASH_CACHE_REUSE", 256); n > 0 && tune_enabled("cache-reuse")) {
+        add("cache-reuse " + std::to_string(n), {"--cache-reuse", std::to_string(n)});
+    }
+
+    // Prompt caches for slots that are not resident live in host RAM.
+    if (tune_enabled("cache-ram")) {
+        int mib = env_int("LLMASH_CACHE_RAM_MB", 0);
+        if (mib == 0) {
+            mib = static_cast<int>(free_ram_gb() * 1024 / 4);
+            mib = std::max(8192, std::min(32768, mib));
+        }
+        if (mib > 0) {
+            add("cache-ram " + std::to_string(mib) + " MiB", {"-cram", std::to_string(mib)});
+        }
+    }
+
+    // Prompt processing runs in physical batches; the stock 512 leaves a big
+    // card idle.
+    if (tune_enabled("batch")) {
+        int        ub = env_int("LLMASH_UBATCH", 0);
+        int        b  = env_int("LLMASH_BATCH", 0);
+        const auto fv = free_vram_gb();
+        if (ub == 0 && fv.second && fv.first > 24) {
+            ub = 2048;
+            b  = 4096;
+        }
+        if (ub > 0) {
+            if (b < ub) {
+                b = ub * 2;
+            }
+            add("batch " + std::to_string(b) + "/" + std::to_string(ub),
+                {"-b", std::to_string(b), "-ub", std::to_string(ub)});
+        }
+    }
+
+    if (const int p = env_int("LLMASH_PRIO", 1); p > 0 && tune_enabled("prio")) {
+        add("prio " + std::to_string(p), {"--prio", std::to_string(p)});
+    }
+    return t;
 }
 
 } // namespace llmash

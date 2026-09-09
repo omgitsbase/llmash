@@ -24,6 +24,12 @@ struct GGUFInfo {
     int         experts      = 0;  // <arch>.expert_count
     int         experts_used = 0;  // <arch>.expert_used_count
     bool        has_pooling  = false; // an embedding model
+
+    bool        has_vision_encoder = false; // clip.has_vision_encoder, mmproj files
+    bool        has_audio_encoder  = false; // clip.has_audio_encoder
+    std::string base_repo_url;              // general.base_model.0.repo_url
+    std::string base_org;                   // general.base_model.0.organization
+    std::string base_name;                  // general.base_model.0.name
 };
 
 // ok=false for anything that is not a GGUF.

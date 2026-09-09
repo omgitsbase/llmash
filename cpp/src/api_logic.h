@@ -49,6 +49,7 @@ bool loadable(const Model & m);
 
 // A default context length.
 int advertised_ctx(const Config & cfg);
+int advertised_ctx(const Model & m, const Config & cfg);
 
 nlohmann::json tag_entry_json(const Model & m, const Config & cfg);
 nlohmann::json tags_json(const std::vector<Model> & models, const Config & cfg);

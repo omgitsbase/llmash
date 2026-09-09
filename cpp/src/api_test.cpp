@@ -45,7 +45,7 @@ std::string iso(double unix_seconds) { return "iso(" + std::to_string(unix_secon
 double      now_unix() { return 1000.0; }                                                    // STUB
 json tags_json(const std::vector<Model> & models, const Config &) {                     // STUB
     stub::tags_calls++;
-    return json{{"models", json::array({json{{"stub_models", models.size()}}})}};
+    return json{{"models", json::array({json{{"name", "stub_models"}, {"count", models.size()}}})}};
 }
 json v1_entry_json(const Model & m, const Config &) { return json{{"id", m.name}}; } // STUB
 json v1_models_json(const std::vector<Model> &, const Config &) {                    // STUB
@@ -58,7 +58,7 @@ json openai_error_json(const std::string & message, const std::string & type,   
 }
 json ps_json(const std::vector<InstanceView> & live, const Config &) {                              // STUB
     stub::ps_calls++;
-    return json{{"models", json::array({json{{"stub_live", live.size()}}})}};
+    return json{{"models", json::array({json{{"name", "stub_live"}, {"count", live.size()}}})}};
 }
 // STUB, implementing the contract api_logic.h documents so the gate wiring
 // around it means something: a Bearer token wins over X-API-Key, and an
@@ -112,8 +112,6 @@ std::string CliTextCache::get(const std::string & kind, double, const std::funct
 } // STUB
 void CliTextCache::invalidate() {} // STUB
 
-std::string render_list(const json & rows) { return "LIST " + rows.dump(); } // STUB
-std::string render_ps(const json & rows) { return "PS " + rows.dump(); }     // STUB
 
 void handle_chat(const httplib::Request &, httplib::Response &, Config &, Manager &, Registry &) {}     // STUB
 void handle_generate(const httplib::Request &, httplib::Response &, Config &, Manager &, Registry &) {} // STUB
@@ -122,9 +120,6 @@ void handle_v1_chat_completions(const httplib::Request &, httplib::Response &, C
                                  Registry &) {}
 void handle_v1_completions(const httplib::Request &, httplib::Response &, Config &, Manager &, Registry &) {} // STUB
 
-void handle_pull(const httplib::Request &, httplib::Response &, Config &, Registry &) {}    // STUB
-void handle_quants(const httplib::Request &, httplib::Response &, Config &, Registry &) {}  // STUB
-void handle_resolve(const httplib::Request &, httplib::Response &, Config &, Registry &) {} // STUB
 
 } // namespace llmash
 
@@ -221,7 +216,7 @@ int main() {
         check(res && res->status == 200, "GET /api/version answers 200");
         check(res && res->get_header_value("Content-Type") == "application/json",
               "/api/version is application/json");
-        check(b.is_object() && b.value("version", "") == "0.4.0" && b.value("build", "") == "llmash",
+        check(b.is_object() && b.value("version", "") == LLMASH_VERSION && b.value("build", "") == "llmash",
               "/api/version reports config.go's version and build");
     }
 
@@ -358,12 +353,12 @@ int main() {
         check(res && res->status == 200 &&
                   res->get_header_value("Content-Type") == "text/plain; charset=utf-8",
               "/cli/list serves rendered text");
-        check(res && res->body.rfind("LIST ", 0) == 0 && res->body.find("stub_models") != std::string::npos,
-              "and renders the rows of tags(), not the whole document");
+        check(res && res->body.rfind("NAME", 0) == 0 && res->body.find("stub_models") != std::string::npos,
+              "and renders the rows of tags() as the list table");
         auto ps = cli.Get("/cli/ps");
-        check(ps && ps->status == 200 && ps->body.rfind("PS ", 0) == 0 &&
+        check(ps && ps->status == 200 && ps->body.rfind("NAME", 0) == 0 &&
                   ps->body.find("stub_live") != std::string::npos,
-              "/cli/ps renders the rows of ps()");
+              "/cli/ps renders the rows of ps() as the ps table");
     }
 
     // ---------------------------------------------- the public-port gate

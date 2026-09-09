@@ -73,6 +73,7 @@ std::string repo_slug();
 struct Release {
     std::string tag;
     bool        draft = false;
+    std::vector<std::pair<std::string, std::string>> assets; // name, download url
 };
 
 // update.go's release.version(): the tag with a leading "v"/"." and any

@@ -23,9 +23,10 @@ using json = nlohmann::json;
 using httplib::Request;
 using httplib::Response;
 
-// config.go's serverVersion/serverBuild. Nothing in config.h carries these
-// yet; main.cpp prints the same literal for `llmash --version`.
-constexpr const char * kServerVersion = "0.4.0";
+#ifndef LLMASH_VERSION
+#define LLMASH_VERSION "0.0.0"
+#endif
+constexpr const char * kServerVersion = LLMASH_VERSION;
 constexpr const char * kServerBuild   = "llmash";
 
 // State the routes share for the life of the server. register_routes() owns
@@ -371,6 +372,13 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     mount(srv, "/v1/completions", [&cfg, &mgr, &reg](const Request & req, Response & res) {
         handle_v1_completions(req, res, cfg, mgr, reg);
     });
+}
+
+std::string cli_table(const std::string & kind, Config & cfg, Manager & mgr, Registry & reg) {
+    if (kind == "list") {
+        return render_list(tags_json(reg.all(), cfg).at("models"));
+    }
+    return render_ps(ps_json(live_views(mgr), cfg).at("models"));
 }
 
 } // namespace llmash

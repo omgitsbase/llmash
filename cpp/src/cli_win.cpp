@@ -152,7 +152,15 @@ std::string which_exe(const std::string & exe) {
     if (n == 0 || n >= MAX_PATH) {
         return "";
     }
-    return to_utf8(std::wstring(buf, n));
+    // Go's LookPath lowercases the extension it appended; match it, so the
+    // path reads the same way in `doctor`.
+    std::string out = to_utf8(std::wstring(buf, n));
+    const size_t dot = out.rfind('.');
+    if (dot != std::string::npos && out.find_first_of("\\/", dot) == std::string::npos) {
+        std::transform(out.begin() + dot, out.end(), out.begin() + dot,
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    }
+    return out;
 }
 
 #else // !_WIN32

@@ -1,8 +1,8 @@
-1 ICON "icon.ico"
+1 ICON "@LLMASH_ICON@"
 
 1 VERSIONINFO
-FILEVERSION     0,0,1,0
-PRODUCTVERSION  0,0,1,0
+FILEVERSION     @LLMASH_VERSION_COMMAS@
+PRODUCTVERSION  @LLMASH_VERSION_COMMAS@
 FILEOS          0x40004
 FILETYPE        0x1
 BEGIN
@@ -12,11 +12,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName",      "llmash"
       VALUE "FileDescription",  "llmash"
-      VALUE "FileVersion",      "0.0.1"
+      VALUE "FileVersion",      "@LLMASH_VERSION@"
       VALUE "InternalName",     "llmash"
-      VALUE "OriginalFilename", "llmash.exe"
+      VALUE "OriginalFilename", "@LLMASH_EXE@"
       VALUE "ProductName",      "llmash"
-      VALUE "ProductVersion",   "0.0.1"
+      VALUE "ProductVersion",   "@LLMASH_VERSION@"
     END
   END
   BLOCK "VarFileInfo"
