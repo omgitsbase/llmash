@@ -1,8 +1,7 @@
 #pragma once
 
-// Port of cmd/llmash/http.go's client side: cmds.go talks to the local
-// server purely over these three calls (call / callJSON / stream) plus a
-// two-try health check (up), all against OLLAMA_HOST or the configured port.
+// How the commands reach the local server: call, call_json and stream,
+// plus a two-try health check, against OLLAMA_HOST or the configured port.
 
 #include "config.h"
 

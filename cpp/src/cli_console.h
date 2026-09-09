@@ -1,8 +1,7 @@
 #pragma once
 
-// Port of the pieces of cmd/llmash/console.go that cmds.go itself calls
-// directly (isConsole, getch, the pick-menu key decoder, the ANSI colour
-// constants used by `link`'s output).
+// Console plumbing the commands call directly: is-a-console tests, raw key
+// reads, the pick-menu key decoder, and the colours `link` prints with.
 
 #include <functional>
 #include <string>

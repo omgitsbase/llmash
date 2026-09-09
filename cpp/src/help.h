@@ -1,7 +1,7 @@
 #pragma once
 
-// Port of cmd/llmash/help.go: the help text for every command, byte-for-byte
-// what the real ollama.exe prints, with llmash's own commands slotted in.
+// The help text for every command, byte-for-byte what the real ollama.exe
+// prints, with llmash's own commands slotted in.
 
 #include <string>
 

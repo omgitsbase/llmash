@@ -1,7 +1,6 @@
 #pragma once
 
-// Port of cmd/llmash/doctor.go: `llmash doctor`, a diagnostic report that
-// fixes nothing.
+// `llmash doctor`: a diagnostic report that fixes nothing.
 
 namespace llmash {
 

@@ -1,9 +1,8 @@
 #pragma once
 
-// Port of cmd/llmash/draft.go, draft_verify.go and draft_install.go: finding
-// a drafter published for a model already on disk, proving from its GGUF
-// header alone that it pairs with those exact weights, and installing it as
-// a sidecar beside them.
+// Finding a drafter published for a model already on disk, proving from its
+// GGUF header alone that it pairs with those exact weights, and installing
+// it as a sidecar beside them.
 
 #include "config.h"
 #include "pull.h"

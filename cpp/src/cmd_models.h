@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of cmd/llmash/models.go: `llmash models` and `llmash models set DIR`.
+// `llmash models` and `llmash models set DIR`.
 
 #include <string>
 #include <utility>

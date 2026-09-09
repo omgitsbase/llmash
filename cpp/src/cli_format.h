@@ -1,8 +1,7 @@
 #pragma once
 
-// Port of the pure, non-interactive parts of cmd/llmash/table.go and
-// cmd/llmash/render.go: the borderless table layout `list`/`ps`/`show`
-// print, and ollama's byte/time/count formatters.
+// The borderless table `list`, `ps` and `show` print, and ollama's own
+// byte, time and count formatters. Nothing here touches the terminal.
 
 #include <cstdint>
 #include <ctime>
