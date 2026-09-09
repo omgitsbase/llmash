@@ -4,6 +4,7 @@
 #define _CRT_RAND_S
 
 #include "cli_commands.h"
+#include "platform.h"
 
 #include "winproc.h"
 
@@ -753,7 +754,7 @@ int stop_server(const Config & cfg) {
     remove_pid_file(cfg.root);
     for (const RunningProcess & p : processes_under(cfg.root)) {
         if ((p.name == "llmashw.exe" || p.name == "llmash.exe" || p.name == "llama-server.exe") &&
-            p.pid != GetCurrentProcessId() && kill_pid(p.pid)) {
+            p.pid != current_pid() && kill_pid(p.pid)) {
             killed++;
         }
     }

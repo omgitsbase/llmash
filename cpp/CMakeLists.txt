@@ -26,19 +26,34 @@ if (WIN32)
     target_link_libraries(llmash_vendor PUBLIC ws2_32 crypt32)
 endif()
 
-set(LLMASH_SOURCES
+# Everything that is plain C++ and builds anywhere.
+set(LLMASH_PORTABLE
     src/config.cpp
     src/gguf.cpp
     src/registry.cpp
-    src/manager.cpp
     src/help.cpp
+    src/log.cpp
+    src/version.cpp
+    src/sha256.cpp
+    src/table.cpp
+    src/caps.cpp
+    src/api_logic.cpp
+    src/api.cpp
+    src/chat.cpp
+    src/cli_format.cpp
+)
+
+# Windows-only for now: the tray, the shell integration, WinHTTP, the console
+# modes and the process work. A macOS build gets the portable half and its
+# tests; the rest is what a mac port has left to do.
+set(LLMASH_WINDOWS
+    src/manager.cpp
     src/launch.cpp
     src/remote.cpp
     src/readline.cpp
     src/cmd_doctor.cpp
     src/cmd_models.cpp
     src/cli_console.cpp
-    src/cli_format.cpp
     src/cli_http.cpp
     src/cli_process.cpp
     src/cli_run.cpp
@@ -46,22 +61,19 @@ set(LLMASH_SOURCES
     src/cli_win.cpp
     src/tray.cpp
     src/tray_process.cpp
-    src/api_logic.cpp
-    src/api.cpp
-    src/chat.cpp
     src/cli_commands.cpp
     src/pull.cpp
     src/draft.cpp
-    src/log.cpp
-    src/version.cpp
     src/serve.cpp
     src/update.cpp
-    src/table.cpp
-    src/caps.cpp
-    src/sha256.cpp
     src/winproc.cpp
     src/shortcut.cpp
 )
+
+set(LLMASH_SOURCES ${LLMASH_PORTABLE})
+if (WIN32)
+    list(APPEND LLMASH_SOURCES ${LLMASH_WINDOWS})
+endif()
 
 add_library(llmash_core STATIC ${LLMASH_SOURCES})
 target_include_directories(llmash_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -90,6 +102,7 @@ if (WIN32)
     set(LLMASHW_RC ${CMAKE_CURRENT_BINARY_DIR}/llmashw.rc)
 endif()
 
+if (WIN32)
 add_executable(llmash src/main.cpp ${LLMASH_RC})
 target_link_libraries(llmash PRIVATE llmash_core)
 
@@ -115,9 +128,14 @@ if (MSVC)
     target_compile_options(llmash_vendor PRIVATE /guard:cf)
 endif()
 
+endif()
+
 enable_testing()
-foreach(t test_main cli_run_test test_cli_doctor_models tray_test
-              api_logic_test api_test chat_test cli_commands_test pull_test)
+set(LLMASH_TESTS test_main api_logic_test api_test chat_test)
+if (WIN32)
+    list(APPEND LLMASH_TESTS cli_run_test test_cli_doctor_models tray_test cli_commands_test pull_test)
+endif()
+foreach(t ${LLMASH_TESTS})
     add_executable(${t} src/${t}.cpp)
     target_link_libraries(${t} PRIVATE llmash_core)
     add_test(NAME ${t} COMMAND ${t})
