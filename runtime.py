@@ -1,11 +1,3 @@
-"""Package llmash's llama.cpp build as a release asset.
-
-    python runtime.py B:\\llama.cpp-src\\build-cuda\\bin
-
-The build is llama.cpp with llmash's changes on top (see RUNTIME.md). Only
-what llama-server needs at run time goes in: the server, its DLLs, and the
-CUDA runtime libraries it links, so the zip installs without a CUDA toolkit.
-"""
 import pathlib
 import subprocess
 import sys

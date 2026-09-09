@@ -98,6 +98,21 @@ if (MSVC)
     set_target_properties(llmashw PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 endif()
 
+# Control Flow Guard, and a manifest that says which Windows versions this was
+# built for. Both are what a normal desktop program carries and neither was
+# here: measured against notepad.exe, which has CFG, ours did not.
+if (MSVC)
+    foreach(exe llmash llmashw)
+        target_compile_options(${exe} PRIVATE /guard:cf)
+        target_link_options(${exe} PRIVATE
+            /GUARD:CF
+            /MANIFEST:EMBED
+            "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/../assets/llmash.manifest")
+    endforeach()
+    target_compile_options(llmash_core PRIVATE /guard:cf)
+    target_compile_options(llmash_vendor PRIVATE /guard:cf)
+endif()
+
 enable_testing()
 foreach(t test_main cli_run_test test_cli_doctor_models tray_test
               api_logic_test api_test chat_test cli_commands_test pull_test)
