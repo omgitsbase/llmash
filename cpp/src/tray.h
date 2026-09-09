@@ -23,7 +23,6 @@ std::string ps_quote(const std::string & s);
 // holding VRAM.
 std::string stop_script(const std::string & root);
 
-std::string process_exists_script(const std::string & root);
 
 std::string startup_shortcut_path();
 

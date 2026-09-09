@@ -104,23 +104,6 @@ int main() {
         std::printf("skip  no powershell here\n");
     }
 
-    // ---- process_exists_script: same quoting risk, same filter shape.
-    {
-        const std::string s = process_exists_script(R"(C:\Users\It's Mine\llmash)");
-        check(s.find("Name='llmashw.exe' OR Name='llmash.exe'") != std::string::npos,
-             "process_exists_script: looks for both exe names");
-        check(s.find("'* serve*'") != std::string::npos, "process_exists_script: only a running server");
-        check(s.find("''s Mine") != std::string::npos, "process_exists_script: an embedded quote is doubled");
-        size_t quotes = 0;
-        for (const char c : s) {
-            quotes += c == '"';
-        }
-        check(quotes % 2 == 0, "process_exists_script: balanced double quotes");
-        if (has_powershell()) {
-            check(script_parses(s), "process_exists_script parses");
-        }
-    }
-
     // ---- enable_startup_script: the Startup-folder shortcut, not a
     // registry Run key (ported from the actual Go implementation).
     {

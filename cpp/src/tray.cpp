@@ -27,6 +27,12 @@ using json   = nlohmann::json;
 
 namespace llmash {
 
+// Identifies llmash's notification icon to Windows, which then keeps its
+// position across restarts and rejects any other program claiming it.
+// {6f3a1c84-9d2b-4e57-a1d0-5c8e7b23f409}
+static constexpr GUID kTrayIconGuid = {
+    0x6f3a1c84, 0x9d2b, 0x4e57, {0xa1, 0xd0, 0x5c, 0x8e, 0x7b, 0x23, 0xf4, 0x09}};
+
 namespace {
 
 // Go's tray used WM_USER (its FFI had no WM_APP constant handy); kept as-is
@@ -258,9 +264,35 @@ std::string set_keep_alive(const std::string & model, int seconds) {
 
 // ------------------------------------------------------- server control
 
+// Is the pid the server wrote still ours and still alive? This runs every
+// five seconds, so it opens one handle and reads one path, rather than
+// starting a PowerShell to query WMI.
 bool server_process_exists(const Config & cfg) {
-    const PowerShellRun r = run_hidden_powershell(process_exists_script(cfg.root));
-    return std::atoi(trimmed(r.stdout_text).c_str()) > 0;
+    std::ifstream in(fs::path(cfg.root) / "cache" / "server.pid", std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    unsigned long pid = 0;
+    in >> pid;
+    if (pid == 0) {
+        return false;
+    }
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (h == nullptr) {
+        return false;
+    }
+    wchar_t path[MAX_PATH] = {};
+    DWORD   n              = MAX_PATH;
+    const bool named       = QueryFullProcessImageNameW(h, 0, path, &n) != FALSE;
+    DWORD      exit_code   = 0;
+    const bool running     = GetExitCodeProcess(h, &exit_code) && exit_code == STILL_ACTIVE;
+    CloseHandle(h);
+    if (!named || !running) {
+        return false;
+    }
+    // the pid could have been reused by something else since it was written
+    const std::string exe = lower(fs::path(std::wstring(path, n)).filename().string());
+    return exe == "llmashw.exe" || exe == "llmash.exe";
 }
 
 class ProcessHandles {
@@ -522,11 +554,23 @@ bool TrayApp::create() {
     nid_.cbSize           = sizeof(nid_);
     nid_.hWnd             = hwnd_;
     nid_.uID              = ICON_UID;
-    nid_.uFlags           = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid_.uFlags           = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID;
+    nid_.guidItem         = kTrayIconGuid;
     nid_.uCallbackMessage = WM_TRAY_CALLBACK;
     nid_.hIcon            = hicon_;
     copy_wide(nid_.szTip, L"llmash");
+
+    // A GUID lets Windows keep the icon's place and refuse it to anything
+    // else claiming to be us. It ties the icon to this exact path, though,
+    // so an install that moved falls back to the plain registration rather
+    // than showing no icon at all.
     icon_added_ = Shell_NotifyIconW(NIM_ADD, &nid_) != FALSE;
+    if (!icon_added_) {
+        Shell_NotifyIconW(NIM_DELETE, &nid_);
+        nid_.uFlags &= ~static_cast<UINT>(NIF_GUID);
+        nid_.guidItem = GUID{};
+        icon_added_   = Shell_NotifyIconW(NIM_ADD, &nid_) != FALSE;
+    }
     return icon_added_;
 }
 
@@ -797,15 +841,6 @@ std::string stop_script(const std::string & root) {
           "| Where-Object { $ids -contains $_.ParentProcessId } "
           "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }; "
           "$s | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }";
-}
-
-std::string process_exists_script(const std::string & root) {
-    const std::string r = ps_quote(root);
-    return "@(Get-CimInstance Win32_Process -Filter \"Name='llmashw.exe' OR Name='llmash.exe'\" "
-          "| Where-Object { ($_.CommandLine -like '*" +
-          r + "\\llmashw.exe*' -or $_.CommandLine -like '*" + r +
-          "\\llmash.exe*') "
-          "-and $_.CommandLine -like '* serve*' }).Count";
 }
 
 std::string startup_shortcut_path() {
