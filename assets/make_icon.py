@@ -1,10 +1,3 @@
-"""Rebuild llmash.png and llmash.ico from a source image.
-
-    python tools/make_icon.py C:\\Users\\reedk\\Downloads\\llmash.png
-
-The .ico carries every size Windows asks for: the notification area uses 16 and
-20, the taskbar 24 to 40, Explorer up to 256.
-"""
 import sys
 import pathlib
 

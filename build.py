@@ -1,13 +1,3 @@
-"""Build llmash and package it for a release.
-
-    python build.py            build dist/llmash-win-x64.zip
-    python build.py --here     ...and run this checkout on the build
-
-Needs Visual Studio 2022 with the C++ workload. CMake comes with it. One
-program is built twice: llmash.exe is the command line and `llmash serve`;
-llmashw.exe is the same program without a console, for the tray and the
-background server.
-"""
 import os
 import pathlib
 import shutil
@@ -42,7 +32,6 @@ def cmake() -> str:
 
 
 def crt_dlls() -> list:
-    """The C runtime DLLs the build needs beside it."""
     vswhere = pathlib.Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio/Installer/vswhere.exe"
     vs = subprocess.run([str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
                         capture_output=True, text=True).stdout.strip()
@@ -82,7 +71,6 @@ def stop_running(root: pathlib.Path) -> None:
 
 
 def install_here() -> None:
-    """Run this checkout on the build it just produced."""
     stop_running(HERE)
     for name in ("llmash.exe", "llmashw.exe", "VERSION", "llmash.ico", "llmash.png"):
         shutil.copy(OUT / name, HERE / name)

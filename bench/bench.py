@@ -1,18 +1,3 @@
-"""Measure decode speed on three workloads, against any OpenAI-compatible server.
-
-    python bench/bench.py --backend llmash --url http://127.0.0.1:11434/v1 \
-        --model gemma4:26b --label "gemma-4 26B-A4B"
-
-Every backend is asked the same questions with the same sampling and the same
-token budget, over the OpenAI route all three speak. Speed is the server's own
-completion_tokens divided by the time between the first and the last token, so
-neither the model load nor the prompt is counted. A run that generates fewer
-than --min-tokens is discarded rather than reported: a handful of tokens
-arriving in a few milliseconds produces a meaningless rate.
-
-Results append to bench/results.json. `--table` turns that file into the
-markdown block in the README.
-"""
 import argparse
 import json
 import pathlib
@@ -70,9 +55,6 @@ def post(url, body, timeout=900):
 
 
 def via_ollama(base, model, prompt, max_tokens, temperature):
-    """Ollama's own API, which both Ollama and llmash speak. eval_count and
-    eval_duration are the server's own decode figures, so thinking tokens count
-    and neither the load nor the prompt does."""
     body = {"model": model, "stream": False,
             "options": {"num_predict": max_tokens, "temperature": temperature},
             "messages": [{"role": "user", "content": prompt}]}
@@ -83,7 +65,6 @@ def via_ollama(base, model, prompt, max_tokens, temperature):
 
 
 def via_openai(base, model, prompt, max_tokens, temperature):
-    """Streamed OpenAI completion, timed between the first and last token."""
     body = {"model": model, "max_tokens": max_tokens, "temperature": temperature,
             "stream": True, "stream_options": {"include_usage": True},
             "messages": [{"role": "user", "content": prompt}]}
@@ -126,7 +107,6 @@ def run_one(base, api, model, prompt, max_tokens, temperature):
 
 
 def warm(base, api, model):
-    """One short request, so weights, graphs and caches are hot before timing."""
     try:
         run_one(base, api, model, "Say ok.", 16, 0.0)
     except (urllib.error.URLError, OSError) as e:
