@@ -1,5 +1,6 @@
 #include "cli_win.h"
 #include "cmd_models.h"
+#include "platform.h"
 
 #include "winproc.h"
 
@@ -298,7 +299,7 @@ void set_model_dir(Config & cfg, Registry & reg, const std::string & dir) {
         if (!write_local_json(cfg.root, local, err)) {
             dief("Error: %s", err.c_str());
         }
-        _putenv_s("OLLAMA_MODELS", dir.c_str());
+        set_env("OLLAMA_MODELS", dir);
         std::printf("model store is now %s (%d models; pulls go here)\n", dir.c_str(), count_manifests(dir));
         restart_for_paths(cfg);
         return;
