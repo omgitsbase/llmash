@@ -1,17 +1,18 @@
 #include "cli_console.h"
 #include "cli_process.h"
-#include "terminal.h"
 
+#include <conio.h>
+#include <io.h>
 
 #include <cstdio>
 #include <cstdlib>
 
 namespace llmash {
 
-bool is_console_stdin() { return stdin_is_terminal(); }
-bool is_console_stdout() { return stdout_is_terminal(); }
+bool is_console_stdin() { return _isatty(_fileno(stdin)) != 0; }
+bool is_console_stdout() { return _isatty(_fileno(stdout)) != 0; }
 
-int raw_getch() { return raw_key(); }
+int raw_getch() { return _getch(); }
 
 int read_pick(const ByteSource & next_byte) {
     const int ch = next_byte();

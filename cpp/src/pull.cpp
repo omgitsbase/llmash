@@ -2,10 +2,8 @@
 
 #include "gguf.h"
 
-#ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
-#endif
 
 #include <algorithm>
 #include <atomic>

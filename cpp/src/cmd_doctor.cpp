@@ -1,7 +1,6 @@
 #include "cmd_doctor.h"
 
 #include "manager.h"
-#include "platform.h"
 #include "winproc.h"
 
 #include "version.h"
@@ -138,7 +137,7 @@ void cmd_doctor() {
         bool                serve_up   = pid_alive(server_pid);
         {
             for (const RunningProcess & p : processes_under(cfg.root)) {
-                if (p.name == llmash_daemon_exe() && p.pid != server_pid) {
+                if (p.name == "llmashw.exe" && p.pid != server_pid) {
                     tray_up = true;
                 }
             }

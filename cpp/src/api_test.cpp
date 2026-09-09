@@ -5,7 +5,6 @@
 // api.cpp shapes on its own.
 
 #include "api.h"
-#include "platform.h"
 #include "api_logic.h"
 #include "chat.h"
 #include "pull.h"
@@ -70,7 +69,7 @@ bool check_api_key(const std::string & authorization_header, const std::string &
     stub::xkey_seen     = x_api_key_header;
     stub::expected_seen = expected_key;
     std::string key     = x_api_key_header;
-    if (authorization_header.size() > 7 && starts_with_ci(authorization_header, "bearer ")) {
+    if (authorization_header.size() > 7 && _strnicmp(authorization_header.c_str(), "bearer ", 7) == 0) {
         key = authorization_header.substr(7);
         while (!key.empty() && (key.front() == ' ' || key.front() == '\t')) {
             key.erase(key.begin());

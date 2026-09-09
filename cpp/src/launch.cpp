@@ -1,24 +1,17 @@
 #include "launch.h"
-#include "terminal.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <conio.h>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#ifdef _WIN32
 #include <io.h>
-#endif
-#ifdef _WIN32
 #include <windows.h>
-#else
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 namespace fs = std::filesystem;
 using json   = nlohmann::json;
@@ -53,7 +46,6 @@ std::vector<std::string> split(const std::string & s, char sep) {
     return out;
 }
 
-#ifdef _WIN32
 std::wstring utf8_to_wide(const std::string & s) {
     if (s.empty()) {
         return L"";
@@ -141,46 +133,11 @@ std::vector<std::string> current_environment() {
     return out;
 }
 
-#else
-
-extern "C" char ** environ;
-
-std::vector<std::string> current_environment() {
-    std::vector<std::string> out;
-    for (char ** e = environ; e != nullptr && *e != nullptr; ++e) {
-        out.emplace_back(*e);
-    }
-    return out;
-}
-
-#endif
-
 // Launches exe with args, giving the child our real console (stdin/stdout/
 // stderr are inherited, not piped) so an interactive CLI works exactly as if
 // the user typed it themselves; this is runInherit in the Go original.
 [[noreturn]] void run_inherit(const std::string & exe, const std::vector<std::string> & args,
                                const std::vector<std::string> * env) {
-#ifndef _WIN32
-    std::vector<char *> argv;
-    std::string         exe_copy = exe;
-    argv.push_back(exe_copy.data());
-    std::vector<std::string> arg_copies(args.begin(), args.end());
-    for (auto & a : arg_copies) {
-        argv.push_back(a.data());
-    }
-    argv.push_back(nullptr);
-    if (env != nullptr) {
-        for (const std::string & e : *env) {
-            const size_t eq = e.find('=');
-            if (eq != std::string::npos) {
-                setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1);
-            }
-        }
-    }
-    execvp(exe.c_str(), argv.data());
-    std::fprintf(stderr, "Error: could not run %s\n", exe.c_str());
-    std::exit(1);
-#else
     std::wstring cmdline = quote_arg(utf8_to_wide(exe));
     for (const auto & a : args) {
         cmdline += L' ';
@@ -216,7 +173,6 @@ std::vector<std::string> current_environment() {
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
     std::exit(static_cast<int>(code));
-#endif
 }
 
 // exec.LookPath's Windows rule: PATH combined with PATHEXT, current directory
@@ -269,14 +225,16 @@ std::vector<std::string> installed_models() {
     return out;
 }
 
-bool is_console() { return stdout_is_terminal() && stdin_is_terminal(); }
+bool is_console() {
+    return _isatty(_fileno(stdout)) != 0 && _isatty(_fileno(stdin)) != 0;
+}
 
 // One raw key, matching the Go menu's arrow/enter/escape vocabulary: 'U'/'D'
 // for up/down, '\r' enter, 0x1b escape, plain characters pass through as-is.
 int read_key() {
-    int ch = raw_key();
+    int ch = _getch();
     if (ch == 0xE0 || ch == 0x00) {
-        switch (raw_key()) {
+        switch (_getch()) {
             case 'H':
                 return 'U';
             case 'P':
@@ -332,7 +290,7 @@ void pick_model(const Config & cfg, nlohmann::json & prof, const std::string & k
         draw(drawn, {std::string(kBold) + "model for " + title_of(key) + kReset, "",
                      "  couldn't reach llmash at " + ollama_host() + ". Start it, then press the arrow again", "",
                      std::string(kDim) + "press any key to go back" + kReset});
-        raw_key();
+        _getch();
         return;
     }
     int sel = 0;
@@ -591,9 +549,9 @@ void launch_menu(const Config & cfg) {
                          kReset);
         draw(drawn, lines);
 
-        int ch = raw_key();
+        int ch = _getch();
         if (ch == 0xE0 || ch == 0x00) {
-            switch (raw_key()) {
+            switch (_getch()) {
                 case 'H':
                     sel = (sel - 1 + static_cast<int>(rows.size())) % static_cast<int>(rows.size());
                     break;

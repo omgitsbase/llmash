@@ -2,17 +2,9 @@
 
 #include "cli_util.h"
 #include "cli_run.h"
-#include "platform.h"
 #include "version.h"
 
-#ifdef _WIN32
 #include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/file.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 #include <cstdio>
 #include <filesystem>
@@ -27,7 +19,6 @@ namespace {
 class UpdateLock {
 public:
     UpdateLock() {
-#ifdef _WIN32
         h_ = CreateMutexW(nullptr, TRUE, L"Local\\llmash-update");
         if (h_ == nullptr) {
             held_ = true; // no mutex available: do not block the update
@@ -38,44 +29,22 @@ public:
         } else {
             held_ = true;
         }
-#else
-        fd_ = ::open("/tmp/llmash-update.lock", O_CREAT | O_RDWR, 0644);
-        if (fd_ < 0) {
-            held_ = true;
-            return;
-        }
-        held_ = ::flock(fd_, LOCK_EX | LOCK_NB) == 0;
-#endif
     }
     ~UpdateLock() {
-#ifdef _WIN32
         if (h_ != nullptr) {
             if (held_) {
                 ReleaseMutex(h_);
             }
             CloseHandle(h_);
         }
-#else
-        if (fd_ >= 0) {
-            if (held_) {
-                ::flock(fd_, LOCK_UN);
-            }
-            ::close(fd_);
-        }
-#endif
     }
     bool held() const { return held_; }
 
 private:
-#ifdef _WIN32
-    HANDLE h_ = nullptr;
-#else
-    int fd_ = -1;
-#endif
-    bool held_ = false;
+    HANDLE h_    = nullptr;
+    bool   held_ = false;
 };
 
-#ifdef _WIN32
 std::wstring widen(const std::string & s) {
     if (s.empty()) {
         return L"";
@@ -86,20 +55,10 @@ std::wstring widen(const std::string & s) {
     w.resize(static_cast<size_t>(n - 1));
     return w;
 }
-#endif
-
-const char * installer_name() {
-#ifdef _WIN32
-    return "install.ps1";
-#else
-    return "install.sh";
-#endif
-}
 
 // Runs the installer that ships beside the program, on our console, and
 // waits for it. The installer fetches the release itself.
 int run_installer(const std::string & script, const std::string & root) {
-#ifdef _WIN32
     std::wstring cmd = L"powershell -NoProfile -ExecutionPolicy RemoteSigned -File \"" + widen(script) +
                        L"\" -Dir \"" + widen(root) + L"\" -Yes";
     STARTUPINFOW        si{};
@@ -114,24 +73,6 @@ int run_installer(const std::string & script, const std::string & root) {
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return static_cast<int>(code);
-#else
-    const pid_t child = ::fork();
-    if (child < 0) {
-        return -1;
-    }
-    if (child == 0) {
-        std::string s = script, d = root;
-        char * argv[] = {const_cast<char *>("sh"), s.data(), const_cast<char *>("--dir"), d.data(),
-                         const_cast<char *>("--yes"), nullptr};
-        ::execvp("sh", argv);
-        ::_exit(127);
-    }
-    int status = 0;
-    if (::waitpid(child, &status, 0) < 0) {
-        return -1;
-    }
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-#endif
 }
 
 int die(const std::string & message) {
@@ -175,17 +116,11 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
         return 0;
     }
 
-    const std::string script = (fs::path(cfg.root) / installer_name()).string();
+    const std::string script = (fs::path(cfg.root) / "install.ps1").string();
     if (!fs::is_regular_file(script, ec)) {
-#ifdef _WIN32
         std::printf("the installer is not beside the program; run this instead:\n\n"
                     "  irm https://raw.githubusercontent.com/%s/main/install.ps1 | iex\n",
                     clidoc::repo_slug().c_str());
-#else
-        std::printf("the installer is not beside the program; run this instead:\n\n"
-                    "  curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sh\n",
-                    clidoc::repo_slug().c_str());
-#endif
         return 1;
     }
 
