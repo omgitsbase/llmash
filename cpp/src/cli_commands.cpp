@@ -761,13 +761,6 @@ int stop_server(const Config & cfg) {
     return killed;
 }
 
-unsigned long current_pid() {
-#ifdef _WIN32
-    return GetCurrentProcessId();
-#else
-    return 0;
-#endif
-}
 
 // ----------------------------------------------------------- flag shapes
 
