@@ -2,3 +2,7 @@
 *.ps1 text eol=crlf
 *.ico binary
 *.png binary
+
+# cpp-httplib and nlohmann/json are vendored verbatim; they are not this
+# project's code and should not count toward its language stats.
+cpp/vendor/** linguist-vendored
