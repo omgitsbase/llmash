@@ -1,6 +1,6 @@
 # build output
 /dist/
-cmd/llmash/rsrc.syso
+/cpp/build*/
 *.exe
 
 # a running install writes these next to the program

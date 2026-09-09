@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -19,10 +20,23 @@ struct Config {
     std::string kv_type      = "f16";
     std::string load_mode    = "dio";
     std::string keep_alive   = "15m";
+    std::map<std::string, int> ctx_override; // local.json ctx_override, keys lowercased
+    std::map<std::string, int> ctx_max;      // local.json ctx_max
+    std::map<std::string, std::vector<std::string>> launch_extra; // extra llama-server flags, by name fragment
+    std::vector<std::string> no_mmproj;      // names whose projector is not loaded up front
 };
 
 // Never throws: an unreadable file leaves the defaults.
 Config load_config();
+
+// A forced context for a model whose name contains a ctx_override key, else 0.
+int ctx_target(const Config & cfg, const std::string & name);
+// ctx_max lifts the trained context when its key matches and it is larger.
+int ctx_ceiling(const Config & cfg, const std::string & name, int native);
+
+// The launch_extra entries whose key appears in the model's name.
+std::vector<std::string> launch_extra_for(const Config & cfg, const std::string & name);
+bool mmproj_blocked(const Config & cfg, const std::string & name);
 
 std::string exe_dir();
 

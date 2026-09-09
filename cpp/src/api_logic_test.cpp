@@ -173,7 +173,7 @@ int main() {
     check(d["families"] == json::array({"qwen3"}), "tagEntry.details: families holds the family");
     eq(d.value("parameter_size", ""), "8B", "tagEntry.details: parameter_size");
     eq(d.value("quantization_level", ""), "Q4_K_M", "tagEntry.details: quantization_level");
-    check(d["context_length"] == 8192, "tagEntry.details: context_length");
+    check(d["context_length"] == 262144, "tagEntry.details: context_length is the trained one");
     check(d["expert_count"] == 128, "tagEntry.details: expert_count");
     check(d["expert_used_count"] == 8, "tagEntry.details: expert_used_count");
     check(d.size() == 9, "tagEntry.details: no extra fields");
@@ -220,8 +220,8 @@ int main() {
     eq(v1e.value("object", ""), "model", "v1Entry: object");
     check(v1e["created"] == 1700000000, "v1Entry: created is a unix second");
     eq(v1e.value("owned_by", ""), "llmash", "v1Entry: owned_by");
-    check(v1e["context_length"] == 8192 && v1e["max_model_len"] == 8192 &&
-              v1e["max_context_length"] == 8192 && v1e["context_window"] == 8192,
+    check(v1e["context_length"] == 262144 && v1e["max_model_len"] == 262144 &&
+              v1e["max_context_length"] == 262144 && v1e["context_window"] == 262144,
           "v1Entry: all four context aliases");
     check(v1e.size() == 8, "v1Entry: no extra fields");
 
@@ -237,8 +237,8 @@ int main() {
     eq(sh.value("parameters", "x"), "", "show: parameters");
     check(sh["details"] == d, "show: details are the tagEntry details");
     eq(sh["model_info"].value("general.architecture", ""), "qwen3", "show: model_info architecture");
-    check(sh["model_info"]["qwen3.context_length"] == 8192, "show: model_info arch-scoped context_length");
-    check(sh["model_info"]["context_length"] == 8192, "show: model_info context_length");
+    check(sh["model_info"]["qwen3.context_length"] == 262144, "show: model_info arch-scoped context_length");
+    check(sh["model_info"]["context_length"] == 262144, "show: model_info context_length");
     eq(sh["model_info"].value("general.parameter_count", ""), "8B", "show: model_info parameter_count");
     check(sh["capabilities"] == json::array({"completion", "tools"}), "show: capabilities");
     {
@@ -268,7 +268,7 @@ int main() {
     eq(pe.value("expires_at", ""), "2023-11-14T22:23:20+00:00", "ps: expires_at");
     check(pe["context_length"] == 16384, "ps: context_length is the instance's, not the default");
     eq(pe.value("name", ""), "qwen3:8b", "ps: the tagEntry fields are still there");
-    check(pe["details"]["context_length"] == 8192, "ps: details keep the advertised context");
+    check(pe["details"]["context_length"] == 262144, "ps: details keep the advertised context");
     {
         InstanceView cpu = v;
         cpu.on_gpu       = false;
@@ -371,7 +371,7 @@ int main() {
         check(ev.size() == 3, "create: three ndjson lines");
         eq(ev[0].value("status", ""),
            "importing Qwen3-8B-Q4_K_M.gguf -> " + dest.string() + " (15 B) ...", "create: the importing line");
-        eq(ev[1].value("status", ""), "created 'My Model:latest'  (llmash serves it as my-model)",
+        eq(ev[1].value("status", ""), "created 'My Model:latest'  (llmash serves it as my-model:gguf)",
            "create: the created line");
         eq(ev[2].value("status", ""), "success", "create: the final line");
 

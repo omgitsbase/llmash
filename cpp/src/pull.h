@@ -53,7 +53,8 @@ struct HttpResult {
 // ("bytes=0-99"), or empty for the whole body.
 HttpResult http_request(const std::string & url, const std::string & method = "GET",
                          const std::string & range = "",
-                         const std::vector<std::string> & headers = {});
+                         const std::vector<std::string> & headers = {},
+                         int timeout_s = 0);
 
 // GGUF value type ids, as the format itself defines them.
 enum GGUFValueType : uint32_t {

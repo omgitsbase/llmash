@@ -230,6 +230,8 @@ std::string which(const std::string & exe) {
             const size_t semi = pathext.find(';', start);
             std::string  e    = pathext.substr(start, semi == std::string::npos ? std::string::npos : semi - start);
             if (!e.empty()) {
+                std::transform(e.begin(), e.end(), e.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 exts.push_back(e);
             }
             if (semi == std::string::npos) {
@@ -538,6 +540,13 @@ bool latest_release(const std::string & slug, Release & out, std::string & err) 
     }
     out.tag   = j.value("tag_name", std::string());
     out.draft = j.value("draft", false);
+    out.assets.clear();
+    if (j.contains("assets") && j["assets"].is_array()) {
+        for (const auto & a : j["assets"]) {
+            out.assets.emplace_back(a.value("name", std::string()),
+                                    a.value("browser_download_url", std::string()));
+        }
+    }
     return true;
 }
 

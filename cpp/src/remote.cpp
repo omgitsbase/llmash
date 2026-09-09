@@ -1,6 +1,8 @@
 #include "cli_win.h"
 #include "remote.h"
 
+#include "log.h"
+
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <subprocess.h>
@@ -58,17 +60,6 @@ std::string trim_right_slash(std::string s) {
         s.pop_back();
     }
     return s;
-}
-
-// [llmash] logging: a placeholder for the shared log sink another module
-// owns; this keeps remote.cpp self-contained until that exists.
-void logf(const char * fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    std::fprintf(stderr, "[llmash] ");
-    std::vfprintf(stderr, fmt, ap);
-    std::fprintf(stderr, "\n");
-    va_end(ap);
 }
 
 double env_float(const char * name, double fallback) {

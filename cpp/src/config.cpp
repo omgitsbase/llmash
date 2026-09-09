@@ -102,6 +102,37 @@ static std::string j_str(const json & j, const char * key) {
     return it->get<std::string>();
 }
 
+// LLAMA_BIN, local.json, the install's runtime folder, PATH.
+std::string find_llama_bin(const std::string & root, const std::string & from_local) {
+    const std::string env = env_str("LLAMA_BIN");
+    if (!env.empty()) {
+        return env;
+    }
+    if (!from_local.empty()) {
+        return from_local;
+    }
+    std::vector<std::string> cands;
+    for (const char * v : {"ProgramData", "LOCALAPPDATA"}) {
+        const std::string base = env_str(v);
+        if (!base.empty()) {
+            cands.push_back((fs::path(base) / "llmash" / "runtime" / "llama-server.exe").string());
+        }
+    }
+    cands.push_back((fs::path(root) / "runtime" / "llama-server.exe").string());
+    cands.push_back((fs::path(root) / "llama.cpp" / "llama-server.exe").string());
+    for (const std::string & c : cands) {
+        std::error_code ec;
+        if (fs::is_regular_file(c, ec)) {
+            return c;
+        }
+    }
+    wchar_t buf[MAX_PATH];
+    if (SearchPathW(nullptr, L"llama-server.exe", nullptr, MAX_PATH, buf, nullptr) != 0) {
+        return fs::path(buf).string();
+    }
+    return "";
+}
+
 Config load_config() {
     Config c;
     c.root = exe_dir();
@@ -110,7 +141,7 @@ Config load_config() {
 
     c.models_root = env_str("OLLAMA_MODELS", j_str(local, "models_root"));
     c.gguf_dir    = env_str("LLMASH_GGUF", j_str(local, "gguf_dir"));
-    c.llama_bin   = env_str("LLAMA_BIN", j_str(local, "llama_bin"));
+    c.llama_bin   = find_llama_bin(c.root, j_str(local, "llama_bin"));
 
     const auto it = local.find("extra_roots");
     if (it != local.end() && it->is_array()) {
@@ -129,6 +160,47 @@ Config load_config() {
     c.load_mode   = env_str("LLMASH_LOAD_MODE", "dio");
     c.keep_alive  = env_str("OLLAMA_KEEP_ALIVE", "15m");
 
+    for (const char * key : {"ctx_override", "ctx_max"}) {
+        const auto it = local.find(key);
+        if (it == local.end() || !it->is_object()) {
+            continue;
+        }
+        auto & dest = std::string(key) == "ctx_max" ? c.ctx_max : c.ctx_override;
+        for (const auto & [k, v] : it->items()) {
+            if (v.is_number()) {
+                std::string low = k;
+                std::transform(low.begin(), low.end(), low.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                dest[low] = v.get<int>();
+            }
+        }
+    }
+
+    if (const auto it = local.find("launch_extra"); it != local.end() && it->is_object()) {
+        for (const auto & [k, v] : it->items()) {
+            std::vector<std::string> flags;
+            if (v.is_array()) {
+                for (const auto & e : v) {
+                    if (e.is_string()) {
+                        flags.push_back(e.get<std::string>());
+                    }
+                }
+            }
+            if (!flags.empty()) {
+                std::string low = k;
+                std::transform(low.begin(), low.end(), low.begin(),
+                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                c.launch_extra[low] = flags;
+            }
+        }
+    }
+    if (const auto it = local.find("no_mmproj"); it != local.end() && it->is_array()) {
+        for (const auto & e : *it) {
+            if (e.is_string()) {
+                c.no_mmproj.push_back(e.get<std::string>());
+            }
+        }
+    }
+
     if (c.models_root.empty()) {
         const std::string home = env_str("USERPROFILE", env_str("HOME"));
         if (!home.empty()) {
@@ -136,6 +208,55 @@ Config load_config() {
         }
     }
     return c;
+}
+
+
+namespace {
+int match_key(const std::map<std::string, int> & table, const std::string & name) {
+    std::string low = name;
+    std::transform(low.begin(), low.end(), low.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    for (const auto & [k, v] : table) {
+        if (low.find(k) != std::string::npos) {
+            return v;
+        }
+    }
+    return 0;
+}
+} // namespace
+
+int ctx_target(const Config & cfg, const std::string & name) { return match_key(cfg.ctx_override, name); }
+
+int ctx_ceiling(const Config & cfg, const std::string & name, int native) {
+    const int v = match_key(cfg.ctx_max, name);
+    return v > native ? v : native;
+}
+
+std::vector<std::string> launch_extra_for(const Config & cfg, const std::string & name) {
+    std::string low = name;
+    std::transform(low.begin(), low.end(), low.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    std::vector<std::string> out;
+    for (const auto & [k, flags] : cfg.launch_extra) {
+        if (low.find(k) != std::string::npos) {
+            out.insert(out.end(), flags.begin(), flags.end());
+        }
+    }
+    return out;
+}
+
+bool mmproj_blocked(const Config & cfg, const std::string & name) {
+    std::string low = name;
+    std::transform(low.begin(), low.end(), low.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    for (const std::string & k : cfg.no_mmproj) {
+        std::string lk = k;
+        std::transform(lk.begin(), lk.end(), lk.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (!lk.empty() && low.find(lk) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace llmash

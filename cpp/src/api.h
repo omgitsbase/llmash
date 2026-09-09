@@ -12,4 +12,7 @@ namespace llmash {
 // reg must outlive the server.
 void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registry & reg);
 
+// The tables `llmash list` and `llmash ps` print, as the server renders them.
+std::string cli_table(const std::string & kind, Config & cfg, Manager & mgr, Registry & reg);
+
 } // namespace llmash

@@ -3,7 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/omgitsbase/llmash?include_prereleases&label=release)](https://github.com/omgitsbase/llmash/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/omgitsbase/llmash/blob/main/LICENSE)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6.svg?logo=windows)](https://github.com/omgitsbase/llmash/releases/latest)
-[![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?logo=go)](https://go.dev)
+[![C++](https://img.shields.io/badge/C%2B%2B-17-00599C.svg?logo=cplusplus)](https://isocpp.org)
 [![CUDA](https://img.shields.io/badge/CUDA-13.3-76B900.svg?logo=nvidia)](https://developer.nvidia.com/cuda-toolkit)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/omgitsbase/llmash)
 
@@ -84,7 +84,7 @@ because that build cannot run its mixed head sizes.
 - **The tray** unloads a model, sets the keep-alive, restarts the server, and
   starts it at login.
 - **Routes** send a named model to another OpenAI-compatible server, and fall
-  back to llama.cpp when that server is not running.
+  back to llama.cpp when that server is not running. Not yet in the C++ build.
 
 Per model, at launch, it picks the ordinary llama.cpp settings and logs each:
 prompt-prefix reuse, a host-RAM prompt cache sized from free RAM, batch width
@@ -146,11 +146,12 @@ Optional. `local.json` next to the program, or environment variables.
 | `LLMASH_TUNE_OFF` | disable individual tuning: `cache-reuse,cache-ram,batch,prio` |
 
 `llmash serve --help` lists the rest. A `routes.json` beside the program
-configures fast routes; see `routes.example.json`.
+configures fast routes (see `routes.example.json`); the C++ build reads it but
+does not send requests to those backends yet.
 
 ## Building
 
-Go 1.26, and MinGW's `windres` for the icon.
+Visual Studio 2022 with the C++ workload; CMake comes with it.
 
 ```powershell
 python build.py           # dist/llmash-win-x64.zip
