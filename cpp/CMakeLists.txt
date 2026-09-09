@@ -86,7 +86,11 @@ target_compile_definitions(llmash_core PUBLIC LLMASH_VERSION="${LLMASH_VERSION}"
 
 if (NOT WIN32)
     find_package(CURL REQUIRED)
-    target_link_libraries(llmash_core PUBLIC CURL::libcurl)
+    # glibc 2.34 folded the pthread symbols into libc; older ones still need
+    # the separate library, so a build there fails to link without this.
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+    target_link_libraries(llmash_core PUBLIC CURL::libcurl Threads::Threads)
 endif()
 
 if (WIN32)
