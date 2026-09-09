@@ -20,7 +20,7 @@ jobs:
 
       - name: build, and keep going so every error is listed
         continue-on-error: true
-        run: cmake --build build -j 3 2>&1 | tee build.log
+        run: cmake --build build -j 3 -- -k 2>&1 | tee build.log
 
       - name: what is not portable
         if: always()
