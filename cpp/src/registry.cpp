@@ -289,8 +289,6 @@ bool Registry::is_ollama_store(const std::string & dir) const {
 bool Registry::in_library(const std::string & path) const {
     std::error_code ec;
     const fs::path abs = fs::weakly_canonical(fs::path(path), ec);
-    // generic_string spells every separator '/', so the prefix test means the
-    // same thing on a platform that does not use backslashes.
     const std::string a = lower((ec ? fs::path(path) : abs).generic_string());
     for (const auto & d : library_dirs()) {
         ec.clear();

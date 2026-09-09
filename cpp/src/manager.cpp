@@ -93,9 +93,7 @@ double env_float(const char * name, double def) {
 }
 
 #ifdef _WIN32
-// Ensures WSAStartup has run before any socket call in this translation unit.
-// httplib.h does not call it itself on Windows. Sockets elsewhere need no
-// such start.
+// httplib.h does not call WSAStartup itself.
 struct WinsockInit {
     WinsockInit() {
         WSADATA d;
@@ -204,8 +202,7 @@ double free_ram_gb() {
     }
     return static_cast<double>(ms.ullAvailPhys) / static_cast<double>(1ull << 30);
 #else
-    // MemAvailable is the kernel's own estimate of what a new job could get,
-    // which counts reclaimable cache; sysinfo's freeram does not.
+    // MemAvailable counts reclaimable cache; sysinfo's freeram does not
     std::ifstream mi("/proc/meminfo");
     std::string   line;
     while (std::getline(mi, line)) {
@@ -509,11 +506,8 @@ static std::pair<int, uint64_t> perf_cores_and_mask() {
     return {n, mask};
 }
 #else
-// One logical processor per physical core, from the topology the kernel
-// publishes. A hybrid chip lists its efficient cores with a lower
-// cpu_capacity; where that file exists the cores below the top rating are
-// left out, which is the same rule the Windows side applies to
-// EfficiencyClass.
+// One thread per physical core, efficient cores dropped by cpu_capacity the
+// way the Windows side drops them by EfficiencyClass.
 static std::pair<int, uint64_t> perf_cores_and_mask() {
     const fs::path base("/sys/devices/system/cpu");
     std::error_code ec;
@@ -558,9 +552,8 @@ static std::pair<int, uint64_t> perf_cores_and_mask() {
     uint64_t mask = 0;
     for (const Cpu & c : cpus) {
         if (best > 0 && c.capacity != best) {
-            continue;  // an efficient core on a hybrid chip
+            continue;
         }
-        // one bit per physical core, not per hyperthread
         const std::string key = c.siblings.empty() ? std::to_string(c.id) : c.siblings;
         if (!seen.insert(key).second) {
             continue;
@@ -646,8 +639,6 @@ bool Instance::alive() const {
     CloseHandle(h);
     return ok && code == STILL_ACTIVE;
 #else
-    // signal 0 asks whether it could be signalled, which answers whether it
-    // is there. A zombie the drain thread has not reaped yet still counts.
     return kill(static_cast<pid_t>(pid_), 0) == 0;
 #endif
 }
@@ -988,7 +979,6 @@ void Instance::stop() {
             CloseHandle(h);
         }
 #else
-        // ask, then insist; the drain thread's join reaps it either way
         ::kill(static_cast<pid_t>(pid), SIGTERM);
         for (int waited = 0; waited < 10000; waited += 50) {
             if (::kill(static_cast<pid_t>(pid), 0) != 0) {

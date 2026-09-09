@@ -152,7 +152,7 @@ bool tray_server_up() {
 void stop_server_process(const std::string & root) {
     const unsigned long pid = read_pid_file(root);
     if (pid_alive(pid)) {
-        kill_tree(pid, "llama-server.exe");
+        kill_tree(pid, llama_server_exe());
     }
     remove_pid_file(root);
     for (int waited = 0; waited < 15000; waited += 500) {
@@ -167,7 +167,7 @@ bool start_server_process(const std::string & root) {
     if (tray_server_up()) {
         return true;
     }
-    const fs::path exe = fs::path(root) / "llmashw.exe";
+    const fs::path exe = fs::path(root) / llmash_daemon_exe();
     if (!file_exists(exe.string())) {
         return false;
     }

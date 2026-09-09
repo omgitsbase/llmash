@@ -49,12 +49,27 @@ inline bool starts_with_ci(const std::string & s, const std::string & prefix) {
     return true;
 }
 
-// The name the engine goes by: only Windows puts .exe on it.
 inline const char * llama_server_exe() {
 #ifdef _WIN32
     return "llama-server.exe";
 #else
     return "llama-server";
+#endif
+}
+
+inline const char * llmash_exe() {
+#ifdef _WIN32
+    return "llmash.exe";
+#else
+    return "llmash";
+#endif
+}
+
+inline const char * llmash_daemon_exe() {
+#ifdef _WIN32
+    return "llmashw.exe";
+#else
+    return "llmash";
 #endif
 }
 
