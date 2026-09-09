@@ -248,6 +248,18 @@ int cmd_serve(const std::vector<std::string> & args) {
     g_servers[0] = &main_srv;
     SetConsoleCtrlHandler(on_console_ctrl, TRUE);
 
+    // The tray checks this instead of enumerating processes. Spawning a
+    // PowerShell every five seconds to ask whether we are running cost a few
+    // percent of a laptop's CPU for as long as the tray was up.
+    const fs::path pid_file = fs::path(cfg.root) / "cache" / "server.pid";
+    fs::create_directories(pid_file.parent_path(), ec);
+    {
+        std::ofstream pf(pid_file, std::ios::binary | std::ios::trunc);
+        if (pf) {
+            pf << GetCurrentProcessId();
+        }
+    }
+
     std::thread reaper([&mgr] { manager_reaper(mgr); });
     std::thread remote_reaper([&router] { router.reaper_loop(g_stop); });
     std::thread cache([&cfg, &mgr, &reg] { cli_cache_tick(cfg, mgr, reg); });
@@ -264,6 +276,7 @@ int cmd_serve(const std::vector<std::string> & args) {
     reaper.join();
     remote_reaper.join();
     cache.join();
+    fs::remove(pid_file, ec);
     mgr.shutdown();
     return 0;
 }
