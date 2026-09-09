@@ -98,6 +98,15 @@ $SUDO mkdir -p "$BIN" "$LIB" "$ROOT"
 $SUDO tar -xzf "$TMP/$ASSET" -C "$LIB"
 $SUDO ln -sf "$LIB/llmash" "$BIN/llmash"
 say "unpacked into $LIB"
+
+miss=$(ldd "$LIB/llmash" 2>/dev/null | awk '/not found/{print $1}')
+if [ -n "$miss" ]; then
+    warn "llmash needs shared libraries this machine does not have:"
+    for m in $miss; do say "    $m"; done
+    say 'try one of:  apt install libcurl4   |   dnf install libcurl   |   pacman -S curl'
+    die 'install stopped'
+fi
+"$LIB/llmash" --version >/dev/null 2>&1 || die "the downloaded llmash does not run here"
 fi
 
 if [ "$SHADOW_OLLAMA" = 1 ]; then
