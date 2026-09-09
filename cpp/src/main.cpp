@@ -6,7 +6,6 @@
 #include "cmd_models.h"
 #include "config.h"
 #include "help.h"
-#include "platform.h"
 #include "launch.h"
 #include "registry.h"
 #include "serve.h"
@@ -14,11 +13,7 @@
 #include "update.h"
 #include "version.h"
 
-#ifdef _WIN32
 #include <windows.h>
-#else
-#include <unistd.h>
-#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -49,9 +44,6 @@ std::string prog_name(const char * argv0) {
 
 // llmashw.exe is the same program without a console.
 bool windowed_exe() {
-#ifndef _WIN32
-    return false;
-#else
     wchar_t buf[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (n == 0 || n == MAX_PATH) {
@@ -67,15 +59,11 @@ bool windowed_exe() {
         s = s.substr(0, dot);
     }
     return !s.empty() && (s.back() == L'w' || s.back() == L'W');
-#endif
 }
 
-#ifdef _WIN32
 UINT g_saved_cp = 0;
-#endif
 
 void console_setup() {
-#ifdef _WIN32
     for (DWORD h : {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
         DWORD mode = 0;
         if (GetConsoleMode(GetStdHandle(h), &mode)) {
@@ -86,15 +74,12 @@ void console_setup() {
         g_saved_cp = GetConsoleOutputCP();
         SetConsoleOutputCP(CP_UTF8);
     }
-#endif
 }
 
 void console_restore() {
-#ifdef _WIN32
     if (g_saved_cp != 0) {
         SetConsoleOutputCP(g_saved_cp);
     }
-#endif
 }
 
 int print_help(const std::string & prog, const std::string & topic) {
@@ -199,8 +184,8 @@ int main(int argc, char ** argv) {
 
     console_setup();
     const std::string prog = prog_name(argc > 0 ? argv[0] : nullptr);
-    if (std::getenv("LLMASH_PROG") == nullptr) {
-        set_env("LLMASH_PROG", prog);
+    if (GetEnvironmentVariableA("LLMASH_PROG", nullptr, 0) == 0) {
+        SetEnvironmentVariableA("LLMASH_PROG", prog.c_str());
     }
 
     // cobra accepts the global flags before the subcommand; peel them off.

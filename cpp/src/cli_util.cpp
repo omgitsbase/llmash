@@ -1,13 +1,10 @@
 #include "cli_util.h"
-#include "http.h"
 
 #include <httplib.h>
 #include <subprocess.h>
 
-#ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
-#endif
 
 #include <algorithm>
 #include <chrono>
@@ -40,7 +37,6 @@ std::string trim(std::string s) {
     return s;
 }
 
-#ifdef _WIN32
 std::wstring widen(const std::string & s) {
     if (s.empty()) {
         return L"";
@@ -50,10 +46,34 @@ std::wstring widen(const std::string & s) {
     MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
     return w;
 }
-#endif
 
 // A HANDLE-shaped resource wrapper for the handful of Win32 APIs used here
 // that don't already come with one (WinHTTP's HINTERNET, in particular).
+template <typename Closer> class WinHandle {
+public:
+    WinHandle() = default;
+    WinHandle(HINTERNET h, Closer closer) : h_(h), closer_(closer) {}
+    ~WinHandle() {
+        if (h_ != nullptr) {
+            closer_(h_);
+        }
+    }
+    WinHandle(const WinHandle &)             = delete;
+    WinHandle & operator=(const WinHandle &) = delete;
+    WinHandle(WinHandle && o) noexcept : h_(o.h_), closer_(o.closer_) { o.h_ = nullptr; }
+
+    operator HINTERNET() const { return h_; }
+    bool ok() const { return h_ != nullptr; }
+
+private:
+    HINTERNET h_ = nullptr;
+    Closer    closer_{};
+};
+
+WinHandle<decltype(&WinHttpCloseHandle)> wrap(HINTERNET h) {
+    return WinHandle<decltype(&WinHttpCloseHandle)>(h, &WinHttpCloseHandle);
+}
+
 } // namespace
 
 // ------------------------------------------------------------- formatting
@@ -159,11 +179,7 @@ double parse_rfc3339(const std::string & s) {
             offset_min = sign * (oh * 60 + om);
         }
     }
-#ifdef _WIN32
     const time_t utc = _mkgmtime(&tm);
-#else
-    const time_t utc = timegm(&tm);
-#endif
     if (utc == static_cast<time_t>(-1)) {
         return -1;
     }
@@ -261,44 +277,20 @@ std::string which(const std::string & exe) {
 }
 
 double free_disk_gb(const std::string & path) {
-#ifdef _WIN32
     ULARGE_INTEGER free{}, total{}, totalFree{};
     if (!GetDiskFreeSpaceExW(widen(path).c_str(), &free, &total, &totalFree)) {
         return 0;
     }
     return static_cast<double>(free.QuadPart) / static_cast<double>(1ull << 30);
-#else
-    std::error_code ec;
-    const auto      si = std::filesystem::space(path, ec);
-    if (ec) {
-        return 0;
-    }
-    return static_cast<double>(si.available) / static_cast<double>(1ull << 30);
-#endif
 }
 
 double free_ram_gb() {
-#ifdef _WIN32
     MEMORYSTATUSEX ms{};
     ms.dwLength = sizeof(ms);
     if (!GlobalMemoryStatusEx(&ms)) {
         return 999;
     }
     return static_cast<double>(ms.ullAvailPhys) / static_cast<double>(1ull << 30);
-#else
-    std::ifstream mi("/proc/meminfo");
-    std::string   line;
-    while (std::getline(mi, line)) {
-        if (line.rfind("MemAvailable:", 0) == 0) {
-            try {
-                return std::stod(line.substr(13)) / (1024.0 * 1024.0);
-            } catch (const std::exception &) {
-                break;
-            }
-        }
-    }
-    return 999;
-#endif
 }
 
 // -------------------------------------------------------------- the server
@@ -477,19 +469,71 @@ std::string release_version(const std::string & tag) {
 }
 
 bool latest_release(const std::string & slug, Release & out, std::string & err) {
-    const HttpReply r = http_get("https://api.github.com/repos/" + slug + "/releases/latest",
-                                 {"Accept: application/vnd.github+json", "User-Agent: llmash"}, 15);
-    if (!r.error.empty()) {
-        err = r.error;
+    auto session = wrap(WinHttpOpen(L"llmash", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                                    WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session.ok()) {
+        err = "WinHttpOpen failed";
         return false;
     }
-    switch (r.status) {
-        case 200: break;
-        case 404: err = slug + " has no releases yet"; return false;
-        case 403: err = "GitHub is rate limiting this address; try again later"; return false;
-        default:  err = "GitHub answered " + std::to_string(r.status); return false;
+    WinHttpSetTimeouts(session, 5000, 5000, 15000, 15000);
+
+    auto connect = wrap(WinHttpConnect(session, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0));
+    if (!connect.ok()) {
+        err = "could not reach api.github.com";
+        return false;
     }
-    const json j = json::parse(r.body, nullptr, false);
+
+    const std::wstring path = widen("/repos/" + slug + "/releases/latest");
+    auto request = wrap(WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                           WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
+    if (!request.ok()) {
+        err = "could not build the request";
+        return false;
+    }
+
+    const std::wstring headers = L"Accept: application/vnd.github+json\r\nUser-Agent: llmash\r\n";
+    if (!WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request, nullptr)) {
+        err = "GitHub did not answer";
+        return false;
+    }
+
+    DWORD status = 0, status_size = sizeof(status);
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                       &status, &status_size, WINHTTP_NO_HEADER_INDEX);
+
+    std::string body;
+    for (;;) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0) {
+            break;
+        }
+        std::vector<char> buf(avail);
+        DWORD             got = 0;
+        if (!WinHttpReadData(request, buf.data(), avail, &got)) {
+            break;
+        }
+        body.append(buf.data(), got);
+        if (body.size() > (1u << 20)) {
+            break;
+        }
+    }
+
+    switch (status) {
+        case 200:
+            break;
+        case 404:
+            err = slug + " has no releases yet";
+            return false;
+        case 403:
+            err = "GitHub is rate limiting this address; try again later";
+            return false;
+        default:
+            err = "GitHub answered " + std::to_string(status);
+            return false;
+    }
+
+    const json j = json::parse(body, nullptr, false);
     if (j.is_discarded()) {
         err = "GitHub's reply was not JSON";
         return false;
@@ -511,21 +555,12 @@ std::string prog_name() {
     if (!env_prog.empty()) {
         return env_prog;
     }
-#ifdef _WIN32
     wchar_t buf[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (n == 0 || n == MAX_PATH) {
         return "llmash";
     }
     std::string stem = fs::path(std::wstring(buf, n)).stem().string();
-#else
-    std::error_code ec;
-    const fs::path  self = fs::read_symlink("/proc/self/exe", ec);
-    if (ec) {
-        return "llmash";
-    }
-    std::string stem = self.stem().string();
-#endif
     std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return stem.empty() ? "llmash" : stem;
 }

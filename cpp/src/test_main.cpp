@@ -75,13 +75,9 @@ int main() {
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");
 
     check(reg.in_library((dir / "Qwen3-8B-Q8_0.gguf").string()), "a file in the folder is library");
-#ifdef _WIN32
     check(!reg.in_library("C:/somewhere/else/x.gguf"), "a file outside it is not");
+
     check(same_dir("C:/A/B", "c:\\a\\b\\"), "paths compare the way Windows means it");
-#else
-    check(!reg.in_library("/somewhere/else/x.gguf"), "a file outside it is not");
-    check(same_dir("/A/B", "/A/B/"), "a trailing separator is the same folder");
-#endif
 
     fs::remove_all(dir);
     std::printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");

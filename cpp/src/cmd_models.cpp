@@ -1,6 +1,5 @@
 #include "cli_win.h"
 #include "cmd_models.h"
-#include "platform.h"
 
 #include "winproc.h"
 
@@ -152,7 +151,7 @@ bool tray_server_up() {
 void stop_server_process(const std::string & root) {
     const unsigned long pid = read_pid_file(root);
     if (pid_alive(pid)) {
-        kill_tree(pid, llama_server_exe());
+        kill_tree(pid, "llama-server.exe");
     }
     remove_pid_file(root);
     for (int waited = 0; waited < 15000; waited += 500) {
@@ -167,7 +166,7 @@ bool start_server_process(const std::string & root) {
     if (tray_server_up()) {
         return true;
     }
-    const fs::path exe = fs::path(root) / llmash_daemon_exe();
+    const fs::path exe = fs::path(root) / "llmashw.exe";
     if (!file_exists(exe.string())) {
         return false;
     }
@@ -299,7 +298,7 @@ void set_model_dir(Config & cfg, Registry & reg, const std::string & dir) {
         if (!write_local_json(cfg.root, local, err)) {
             dief("Error: %s", err.c_str());
         }
-        set_env("OLLAMA_MODELS", dir);
+        _putenv_s("OLLAMA_MODELS", dir.c_str());
         std::printf("model store is now %s (%d models; pulls go here)\n", dir.c_str(), count_manifests(dir));
         restart_for_paths(cfg);
         return;

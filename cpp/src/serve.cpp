@@ -3,9 +3,9 @@
 #include "api.h"
 #include "api_logic.h"
 #include "cli_util.h"
+#include "cli_win.h"
 #include "config.h"
 #include "log.h"
-#include "platform.h"
 #include "manager.h"
 #include "registry.h"
 #include "remote.h"
@@ -13,13 +13,7 @@
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
-
-#ifdef _WIN32
 #include <windows.h>
-#else
-#include <csignal>
-#include <unistd.h>
-#endif
 
 #include <atomic>
 #include <chrono>
@@ -39,32 +33,14 @@ namespace {
 std::atomic<bool> g_stop{false};
 httplib::Server * g_servers[2] = {nullptr, nullptr};
 
-void stop_serving() {
+BOOL WINAPI on_console_ctrl(DWORD) {
     g_stop = true;
     for (httplib::Server * s : g_servers) {
         if (s != nullptr) {
             s->stop();
         }
     }
-}
-
-#ifdef _WIN32
-BOOL WINAPI on_console_ctrl(DWORD) {
-    stop_serving();
     return TRUE;
-}
-#else
-extern "C" void on_signal(int) { stop_serving(); }
-#endif
-
-void catch_shutdown() {
-#ifdef _WIN32
-    SetConsoleCtrlHandler(on_console_ctrl, TRUE);
-#else
-    std::signal(SIGINT, on_signal);
-    std::signal(SIGTERM, on_signal);
-    std::signal(SIGHUP, SIG_IGN);
-#endif
 }
 
 // LLMASH_LOGFILE, else llmash.log beside the program when there is no
@@ -74,13 +50,11 @@ void setup_logging(const Config & cfg) {
     if (!lf.empty() && set_log_file(lf)) {
         return;
     }
-#ifdef _WIN32
-    // no console means the tray started it, and there is nowhere to print
-    if (GetConsoleWindow() == nullptr && set_log_file((fs::path(cfg.root) / "llmash.log").string())) {
-        return;
+    if (GetConsoleWindow() == nullptr) {
+        if (set_log_file((fs::path(cfg.root) / "llmash.log").string())) {
+            return;
+        }
     }
-#endif
-    // On Linux a service manager collects stdout, so that is where it goes.
     set_log_stream(stdout);
 }
 
@@ -89,7 +63,7 @@ int reap_orphans(const Config & cfg) {
     int killed = 0;
     const std::string runtime = fs::path(cfg.llama_bin).parent_path().string();
     for (const RunningProcess & p : processes_under(runtime)) {
-        if (p.name == llama_server_exe() && kill_pid(p.pid)) {
+        if (p.name == "llama-server.exe" && kill_pid(p.pid)) {
             killed++;
         }
     }
@@ -212,7 +186,7 @@ int cmd_serve(const std::vector<std::string> & args) {
             }
         }
         if (!pins.empty()) {
-            set_env("LLMASH_PIN", pins);
+            SetEnvironmentVariableA("LLMASH_PIN", pins.c_str());
         }
     }
 
@@ -260,12 +234,12 @@ int cmd_serve(const std::vector<std::string> & args) {
         }
     }
     g_servers[0] = &main_srv;
-    catch_shutdown();
+    SetConsoleCtrlHandler(on_console_ctrl, TRUE);
 
     // The tray checks this instead of enumerating processes. Spawning a
     // PowerShell every five seconds to ask whether we are running cost a few
     // percent of a laptop's CPU for as long as the tray was up.
-    write_pid_file(cfg.root, current_pid());
+    write_pid_file(cfg.root, GetCurrentProcessId());
 
     std::thread reaper([&mgr] { manager_reaper(mgr); });
     std::thread remote_reaper([&router] { router.reaper_loop(g_stop); });
