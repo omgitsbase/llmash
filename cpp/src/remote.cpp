@@ -2,6 +2,7 @@
 #include "remote.h"
 
 #include "log.h"
+#include "winproc.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -283,11 +284,11 @@ void kill_by_exe(const std::string & exe) {
     if (ec) {
         abs = exe;
     }
-    const std::string script = "Get-CimInstance Win32_Process -Filter \"Name='" + abs.filename().string() +
-                                "'\" | Where-Object { $_.ExecutablePath -eq '" + ps_quote(abs.string()) +
-                                "' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }";
-    std::string out;
-    run_capture({"powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script}, out);
+    for (const RunningProcess & p : processes_under(abs.parent_path().string())) {
+        if (p.name == lower(abs.filename().string())) {
+            kill_pid(p.pid);
+        }
+    }
 }
 
 } // namespace

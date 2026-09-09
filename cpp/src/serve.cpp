@@ -9,6 +9,7 @@
 #include "manager.h"
 #include "registry.h"
 #include "remote.h"
+#include "winproc.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -57,27 +58,14 @@ void setup_logging(const Config & cfg) {
     set_log_stream(stdout);
 }
 
-// Every llama-server on the machine is ours.
-int reap_orphans() {
-    const std::string out = hidden_powershell(
-        "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | ForEach-Object { $_.ProcessId }", true);
-    int                killed = 0;
-    std::istringstream ss(out);
-    std::string        tok;
-    while (ss >> tok) {
-        char *     end = nullptr;
-        const long pid = std::strtol(tok.c_str(), &end, 10);
-        if (*end != '\0' || pid <= 0) {
-            continue;
-        }
-        HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
-        if (h == nullptr) {
-            continue;
-        }
-        if (TerminateProcess(h, 1)) {
+// Orphans from a previous run: a llama-server whose parent is gone.
+int reap_orphans(const Config & cfg) {
+    int killed = 0;
+    const std::string runtime = fs::path(cfg.llama_bin).parent_path().string();
+    for (const RunningProcess & p : processes_under(runtime)) {
+        if (p.name == "llama-server.exe" && kill_pid(p.pid)) {
             killed++;
         }
-        CloseHandle(h);
     }
     if (killed > 0) {
         logf("reaped %d orphaned llama-server process(es) from a previous run", killed);
@@ -208,7 +196,7 @@ int cmd_serve(const std::vector<std::string> & args) {
     router.load_routes();
 
     if (env_str("LLMASH_NO_REAP").empty()) {
-        reap_orphans();
+        reap_orphans(cfg);
         router.reap_orphans();
     }
 
@@ -251,14 +239,7 @@ int cmd_serve(const std::vector<std::string> & args) {
     // The tray checks this instead of enumerating processes. Spawning a
     // PowerShell every five seconds to ask whether we are running cost a few
     // percent of a laptop's CPU for as long as the tray was up.
-    const fs::path pid_file = fs::path(cfg.root) / "cache" / "server.pid";
-    fs::create_directories(pid_file.parent_path(), ec);
-    {
-        std::ofstream pf(pid_file, std::ios::binary | std::ios::trunc);
-        if (pf) {
-            pf << GetCurrentProcessId();
-        }
-    }
+    write_pid_file(cfg.root, GetCurrentProcessId());
 
     std::thread reaper([&mgr] { manager_reaper(mgr); });
     std::thread remote_reaper([&router] { router.reaper_loop(g_stop); });
@@ -276,7 +257,7 @@ int cmd_serve(const std::vector<std::string> & args) {
     reaper.join();
     remote_reaper.join();
     cache.join();
-    fs::remove(pid_file, ec);
+    remove_pid_file(cfg.root);
     mgr.shutdown();
     return 0;
 }

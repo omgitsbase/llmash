@@ -1,6 +1,7 @@
 #include "cmd_doctor.h"
 
 #include "manager.h"
+#include "winproc.h"
 
 #include "version.h"
 
@@ -131,15 +132,15 @@ void cmd_doctor() {
 
     // ---- processes -------------------------------------------------------
     {
-        const auto [out, ok] = run_with_timeout(
-            "powershell",
-            {"-NoProfile", "-Command",
-             "(Get-CimInstance Win32_Process -Filter \"Name='llmashw.exe'\" | ForEach-Object { $_.CommandLine }) -join ';'"},
-            6000);
-        bool tray_up = false, serve_up = false;
-        if (ok) {
-            tray_up  = out.find(" tray") != std::string::npos;
-            serve_up = out.find(" serve") != std::string::npos;
+        const unsigned long server_pid = read_pid_file(cfg.root);
+        bool                tray_up    = false;
+        bool                serve_up   = pid_alive(server_pid);
+        {
+            for (const RunningProcess & p : processes_under(cfg.root)) {
+                if (p.name == "llmashw.exe" && p.pid != server_pid) {
+                    tray_up = true;
+                }
+            }
         }
         if (tray_up && serve_up) {
             d.add(ST_OK, "processes", "tray and server are running");

@@ -1,5 +1,8 @@
 #include "cli_win.h"
 #include "tray.h"
+
+#include "shortcut.h"
+#include "winproc.h"
 #include "tray_internal.h"
 
 #include <httplib.h>
@@ -268,31 +271,8 @@ std::string set_keep_alive(const std::string & model, int seconds) {
 // five seconds, so it opens one handle and reads one path, rather than
 // starting a PowerShell to query WMI.
 bool server_process_exists(const Config & cfg) {
-    std::ifstream in(fs::path(cfg.root) / "cache" / "server.pid", std::ios::binary);
-    if (!in) {
-        return false;
-    }
-    unsigned long pid = 0;
-    in >> pid;
-    if (pid == 0) {
-        return false;
-    }
-    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (h == nullptr) {
-        return false;
-    }
-    wchar_t path[MAX_PATH] = {};
-    DWORD   n              = MAX_PATH;
-    const bool named       = QueryFullProcessImageNameW(h, 0, path, &n) != FALSE;
-    DWORD      exit_code   = 0;
-    const bool running     = GetExitCodeProcess(h, &exit_code) && exit_code == STILL_ACTIVE;
-    CloseHandle(h);
-    if (!named || !running) {
-        return false;
-    }
-    // the pid could have been reused by something else since it was written
-    const std::string exe = lower(fs::path(std::wstring(path, n)).filename().string());
-    return exe == "llmashw.exe" || exe == "llmash.exe";
+    const unsigned long pid = read_pid_file(cfg.root);
+    return pid_alive(pid, "llmashw.exe") || pid_alive(pid, "llmash.exe");
 }
 
 class ProcessHandles {
@@ -383,7 +363,11 @@ bool start_server_process(const Config & cfg) {
 // alone leaves any llama-server.exe it started holding their VRAM, and
 // returning before it is really gone lets the next start race it.
 void stop_server_process(const Config & cfg) {
-    run_hidden_powershell(stop_script(cfg.root));
+    const unsigned long pid = read_pid_file(cfg.root);
+    if (pid_alive(pid)) {
+        kill_tree(pid, "llama-server.exe");
+    }
+    remove_pid_file(cfg.root);
     using clock   = std::chrono::steady_clock;
     const auto t0 = clock::now();
     while (clock::now() - t0 < std::chrono::seconds(15)) {
@@ -420,9 +404,9 @@ void save_tray_state(const Config & cfg, const std::string & key, const json & v
 bool startup_enabled() { return file_exists(startup_shortcut_path()); }
 
 void enable_startup(const Config & cfg) {
-    const std::string icon   = (fs::path(cfg.root) / "llmash.ico").string();
-    const std::string script = enable_startup_script(cfg.root, startup_shortcut_path(), file_exists(icon) ? icon : "");
-    run_hidden_powershell(script);
+    const std::string icon = (fs::path(cfg.root) / "llmash.ico").string();
+    write_shortcut(startup_shortcut_path(), (fs::path(cfg.root) / "llmashw.exe").string(), "tray", cfg.root,
+                   file_exists(icon) ? icon : "", "llmash");
     save_tray_state(cfg, "startup", true);
 }
 
@@ -828,20 +812,7 @@ int TrayApp::run() {
 // ---------------------------------------------------------- public API
 
 
-std::string stop_script(const std::string & root) {
-    const std::string r    = ps_quote(root);
-    const std::string mine = "($_.CommandLine -like '*" + r + "\\llmashw.exe*' -or $_.CommandLine -like '*" + r +
-                             "\\llmash.exe*') -and $_.CommandLine -like '* serve*'";
-    return "$s = @(Get-CimInstance Win32_Process -Filter \"Name='llmashw.exe' OR Name='llmash.exe'\" "
-          "| Where-Object { " +
-          mine +
-          " }); "
-          "$ids = @($s | ForEach-Object { $_.ProcessId }); "
-          "if ($ids.Count) { Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" "
-          "| Where-Object { $ids -contains $_.ParentProcessId } "
-          "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }; "
-          "$s | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }";
-}
+
 
 std::string startup_shortcut_path() {
     return (fs::path(env_str("APPDATA")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" /
@@ -849,19 +820,7 @@ std::string startup_shortcut_path() {
         .string();
 }
 
-std::string enable_startup_script(const std::string & root, const std::string & shortcut_path,
-                                  const std::string & icon_path) {
-    std::string script = "$w = New-Object -ComObject WScript.Shell; $s = $w.CreateShortcut('" +
-                         ps_quote(shortcut_path) + "'); $s.TargetPath = '" +
-                         ps_quote((fs::path(root) / "llmashw.exe").string()) +
-                         "'; $s.Arguments = 'tray'; $s.WorkingDirectory = '" + ps_quote(root) +
-                         "'; $s.WindowStyle = 7; $s.Description = 'llmash'; ";
-    if (!icon_path.empty()) {
-        script += "$s.IconLocation = '" + ps_quote(icon_path) + "'; ";
-    }
-    script += "$s.Save()";
-    return script;
-}
+
 
 std::string expires_text(const nlohmann::json & model) {
     const std::string raw = j_str(model, "expires_at");

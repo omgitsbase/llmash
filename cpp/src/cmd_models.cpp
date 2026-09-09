@@ -1,6 +1,8 @@
 #include "cli_win.h"
 #include "cmd_models.h"
 
+#include "winproc.h"
+
 #include "api_logic.h"
 
 #include "cli_util.h"
@@ -147,18 +149,11 @@ bool tray_server_up() {
 }
 
 void stop_server_process(const std::string & root) {
-    const std::string r    = ps_quote(root);
-    const std::string mine = "($_.CommandLine -like '*" + r + "\\llmashw.exe*' -or $_.CommandLine -like '*" + r +
-                            "\\llmash.exe*') -and $_.CommandLine -like '* serve*'";
-    const std::string script =
-        "$s = @(Get-CimInstance Win32_Process -Filter \"Name='llmashw.exe' OR Name='llmash.exe'\" "
-        "| Where-Object { " + mine + " }); "
-        "$ids = @($s | ForEach-Object { $_.ProcessId }); "
-        "if ($ids.Count) { Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" "
-        "| Where-Object { $ids -contains $_.ParentProcessId } "
-        "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }; "
-        "$s | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }";
-    run_with_timeout("powershell", {"-NoProfile", "-Command", script}, 15000);
+    const unsigned long pid = read_pid_file(root);
+    if (pid_alive(pid)) {
+        kill_tree(pid, "llama-server.exe");
+    }
+    remove_pid_file(root);
     for (int waited = 0; waited < 15000; waited += 500) {
         if (!tray_server_up()) {
             return;

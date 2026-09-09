@@ -1,4 +1,6 @@
 #include "cli_win.h"
+
+#include "shortcut.h"
 #include "cli_process.h"
 
 #include <algorithm>
@@ -172,17 +174,7 @@ std::string which_exe(const std::string &) { return ""; }
 #endif
 
 std::string shortcut_target(const std::string & lnk_path) {
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(lnk_path, ec)) {
-        return "";
-    }
-    int         code = 0;
-    std::string out  = hidden_powershell(
-        "(New-Object -ComObject WScript.Shell).CreateShortcut('" + ps_quote(lnk_path) + "').TargetPath", true, &code);
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) {
-        out.pop_back();
-    }
-    return out;
+    return read_shortcut_target(lnk_path);
 }
 
 } // namespace llmash
