@@ -73,6 +73,8 @@ set(LLMASH_WINDOWS
 set(LLMASH_SOURCES ${LLMASH_PORTABLE})
 if (WIN32)
     list(APPEND LLMASH_SOURCES ${LLMASH_WINDOWS})
+else()
+    list(APPEND LLMASH_SOURCES src/posix_todo.cpp)
 endif()
 
 add_library(llmash_core STATIC ${LLMASH_SOURCES})
