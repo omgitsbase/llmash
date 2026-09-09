@@ -19,12 +19,11 @@
 #include <psapi.h>
 #else
 #include <arpa/inet.h>
-#include <libproc.h>
-#include <mach/mach.h>
 #include <netinet/in.h>
+#include <sched.h>
 #include <signal.h>
 #include <sys/socket.h>
-#include <sys/sysctl.h>
+#include <sys/sysinfo.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -93,8 +92,10 @@ double env_float(const char * name, double def) {
     }
 }
 
+#ifdef _WIN32
 // Ensures WSAStartup has run before any socket call in this translation unit.
-// httplib.h does not call it itself on Windows.
+// httplib.h does not call it itself on Windows. Sockets elsewhere need no
+// such start.
 struct WinsockInit {
     WinsockInit() {
         WSADATA d;
@@ -102,6 +103,7 @@ struct WinsockInit {
     }
     ~WinsockInit() { WSACleanup(); }
 } g_winsock_init;
+#endif
 
 // Releases a subprocess_s (pipes, handles) exactly once, however the
 // function that owns it returns.
@@ -202,17 +204,24 @@ double free_ram_gb() {
     }
     return static_cast<double>(ms.ullAvailPhys) / static_cast<double>(1ull << 30);
 #else
-    // free plus inactive: the pages the kernel would hand over on demand
-    vm_size_t              page = 0;
-    vm_statistics64_data_t vm{};
-    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS ||
-        host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm), &count) !=
-            KERN_SUCCESS) {
+    // MemAvailable is the kernel's own estimate of what a new job could get,
+    // which counts reclaimable cache; sysinfo's freeram does not.
+    std::ifstream mi("/proc/meminfo");
+    std::string   line;
+    while (std::getline(mi, line)) {
+        if (line.rfind("MemAvailable:", 0) == 0) {
+            try {
+                return std::stod(line.substr(13)) / (1024.0 * 1024.0);
+            } catch (const std::exception &) {
+                break;
+            }
+        }
+    }
+    struct sysinfo si{};
+    if (sysinfo(&si) != 0) {
         return 999.0;
     }
-    const double bytes = static_cast<double>(vm.free_count + vm.inactive_count) * static_cast<double>(page);
-    return bytes / static_cast<double>(1ull << 30);
+    return static_cast<double>(si.freeram) * static_cast<double>(si.mem_unit) / static_cast<double>(1ull << 30);
 #endif
 }
 
@@ -424,7 +433,11 @@ int free_port() {
     int port             = 0;
     if (bind(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
         sockaddr_in got{};
-        int         len = sizeof(got);
+#ifdef _WIN32
+        int len = sizeof(got);
+#else
+        socklen_t len = sizeof(got);
+#endif
         if (getsockname(s, reinterpret_cast<sockaddr *>(&got), &len) == 0) {
             port = ntohs(got.sin_port);
         }
@@ -496,19 +509,66 @@ static std::pair<int, uint64_t> perf_cores_and_mask() {
     return {n, mask};
 }
 #else
-// macOS reports its performance cores directly, and gives no way to pin a
-// thread to one, so there is no mask to hand llama.cpp.
+// One logical processor per physical core, from the topology the kernel
+// publishes. A hybrid chip lists its efficient cores with a lower
+// cpu_capacity; where that file exists the cores below the top rating are
+// left out, which is the same rule the Windows side applies to
+// EfficiencyClass.
 static std::pair<int, uint64_t> perf_cores_and_mask() {
-    int    n   = 0;
-    size_t len = sizeof(n);
-    if (sysctlbyname("hw.perflevel0.physicalcpu", &n, &len, nullptr, 0) == 0 && n > 0) {
-        return {n, 0};
+    const fs::path base("/sys/devices/system/cpu");
+    std::error_code ec;
+    if (!fs::is_directory(base, ec)) {
+        return {0, 0};
     }
-    len = sizeof(n);
-    if (sysctlbyname("hw.physicalcpu", &n, &len, nullptr, 0) == 0 && n > 0) {
-        return {n, 0};
+
+    struct Cpu {
+        int      id       = 0;
+        long     capacity = -1;
+        std::string siblings;
+    };
+    std::vector<Cpu> cpus;
+    for (int i = 0; i < 64; i++) {
+        const fs::path dir = base / ("cpu" + std::to_string(i));
+        if (!fs::is_directory(dir, ec)) {
+            continue;
+        }
+        Cpu c;
+        c.id = i;
+        std::ifstream cap(dir / "cpu_capacity");
+        if (cap) {
+            cap >> c.capacity;
+        }
+        std::ifstream sib(dir / "topology" / "thread_siblings_list");
+        if (sib) {
+            std::getline(sib, c.siblings);
+        }
+        cpus.push_back(std::move(c));
     }
-    return {0, 0};
+    if (cpus.empty()) {
+        return {0, 0};
+    }
+
+    long best = -1;
+    for (const Cpu & c : cpus) {
+        best = std::max(best, c.capacity);
+    }
+
+    std::set<std::string> seen;
+    int      n    = 0;
+    uint64_t mask = 0;
+    for (const Cpu & c : cpus) {
+        if (best > 0 && c.capacity != best) {
+            continue;  // an efficient core on a hybrid chip
+        }
+        // one bit per physical core, not per hyperthread
+        const std::string key = c.siblings.empty() ? std::to_string(c.id) : c.siblings;
+        if (!seen.insert(key).second) {
+            continue;
+        }
+        n++;
+        mask |= (1ull << c.id);
+    }
+    return {n, mask};
 }
 #endif
 
@@ -638,11 +698,29 @@ double Instance::progress() const {
         return 0.0;
     }
 #else
-    struct proc_taskinfo ti{};
-    rusage_info_current  ru{};
-    const bool haveMem = proc_pidinfo(static_cast<int>(pid), PROC_PIDTASKINFO, 0, &ti, sizeof(ti)) == sizeof(ti);
-    const bool haveIo  = proc_pid_rusage(static_cast<int>(pid), RUSAGE_INFO_CURRENT,
-                                         reinterpret_cast<rusage_info_t *>(&ru)) == 0;
+    double resident = 0, read_bytes = 0;
+    {
+        std::ifstream st("/proc/" + std::to_string(pid) + "/statm");
+        double        total = 0, res = 0;
+        if (st && (st >> total >> res)) {
+            resident = res * static_cast<double>(sysconf(_SC_PAGESIZE));
+        }
+    }
+    {
+        std::ifstream io("/proc/" + std::to_string(pid) + "/io");
+        std::string   line;
+        while (std::getline(io, line)) {
+            if (line.rfind("read_bytes:", 0) == 0) {
+                try {
+                    read_bytes = std::stod(line.substr(11));
+                } catch (const std::exception &) {
+                }
+                break;
+            }
+        }
+    }
+    const bool haveMem = resident > 0;
+    const bool haveIo  = read_bytes > 0;
     if (!haveMem && !haveIo) {
         return 0.0;
     }
@@ -657,9 +735,9 @@ double Instance::progress() const {
         best = std::max(best, static_cast<double>(io.ReadTransferCount));
     }
 #else
-    double best = haveMem ? static_cast<double>(ti.pti_resident_size) : 0.0;
+    double best = resident;
     if (haveIo) {
-        best = std::max(best, static_cast<double>(ru.ri_diskio_bytesread));
+        best = std::max(best, read_bytes);
     }
 #endif
     return std::clamp(best / total, 0.0, 0.99);

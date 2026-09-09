@@ -1,0 +1,9 @@
+# The Linux build and its tests. Nothing here needs a GPU: it compiles the
+# program and runs the suites, which is what a Linux port has to pass first.
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ca-certificates libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
