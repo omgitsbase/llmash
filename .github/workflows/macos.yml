@@ -1,0 +1,35 @@
+name: macos
+
+on:
+  push:
+    branches: [main, mac]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: versions
+        run: cmake --version && clang++ --version
+
+      - name: configure
+        continue-on-error: true
+        run: cmake -S cpp -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: build, and keep going so every error is listed
+        continue-on-error: true
+        run: cmake --build build -j 3 2>&1 | tee build.log
+
+      - name: what is not portable
+        if: always()
+        run: |
+          echo "### errors by file" >> $GITHUB_STEP_SUMMARY
+          grep -oE "[A-Za-z0-9_]+\.(cpp|h):[0-9]+:[0-9]+: error" build.log 2>/dev/null \
+            | cut -d: -f1 | sort | uniq -c | sort -rn >> $GITHUB_STEP_SUMMARY || echo "no build.log" >> $GITHUB_STEP_SUMMARY
+          echo "### missing headers" >> $GITHUB_STEP_SUMMARY
+          grep -ohE "'[a-z0-9_./]+\.h' file not found" build.log 2>/dev/null \
+            | sort -u >> $GITHUB_STEP_SUMMARY || true
+          echo "### first 40 errors" >> $GITHUB_STEP_SUMMARY
+          grep -E "error:" build.log 2>/dev/null | head -40 >> $GITHUB_STEP_SUMMARY || true
