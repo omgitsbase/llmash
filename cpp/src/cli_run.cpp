@@ -1,10 +1,18 @@
 #include "cli_format.h"
 #include "cli_run.h"
 
+#include <csignal>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+#include "terminal.h"
+
 #include <httplib.h>
 
+#ifdef _WIN32
 #include <windows.h>
 #include <io.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -319,21 +327,17 @@ int codepoint_width(uint32_t r) {
     return 1;
 }
 
-bool is_console(HANDLE h) {
-    DWORD mode;
-    return h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode) != 0;
-}
-
 bool is_console(FILE * f) {
-    return is_console(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(f))));
+#ifdef _WIN32
+    const HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(f)));
+    DWORD        mode;
+    return h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode) != 0;
+#else
+    return isatty(fileno(f)) != 0;
+#endif
 }
 
-int term_width() {
-    CONSOLE_SCREEN_BUFFER_INFO info;
-    if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) return 100;
-    const int w = info.srWindow.Right - info.srWindow.Left + 1;
-    return w > 0 ? w : 100;
-}
+int term_width() { return terminal_columns(); }
 
 } // namespace
 
@@ -628,6 +632,7 @@ namespace {
 
 std::atomic<bool> g_interrupted{false};
 
+#ifdef _WIN32
 BOOL WINAPI console_ctrl_handler(DWORD ctrl_type) {
     if (ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT) {
         g_interrupted.store(true);
@@ -635,6 +640,9 @@ BOOL WINAPI console_ctrl_handler(DWORD ctrl_type) {
     }
     return FALSE;
 }
+#else
+extern "C" void on_interrupt(int) { g_interrupted.store(true); }
+#endif
 
 // interruptible()'s C++ shape: SetConsoleCtrlHandler in place of Go's
 // signal.Notify, registered and torn down around one request the same way
@@ -643,13 +651,28 @@ class InterruptGuard {
 public:
     InterruptGuard() {
         g_interrupted.store(false);
+#ifdef _WIN32
         installed_ = ::SetConsoleCtrlHandler(console_ctrl_handler, TRUE) != 0;
+#else
+        previous_  = std::signal(SIGINT, on_interrupt);
+        installed_ = previous_ != SIG_ERR;
+#endif
     }
     ~InterruptGuard() {
+#ifdef _WIN32
         if (installed_) ::SetConsoleCtrlHandler(console_ctrl_handler, FALSE);
+#else
+        if (installed_) std::signal(SIGINT, previous_);
+#endif
     }
     InterruptGuard(const InterruptGuard &)             = delete;
     InterruptGuard & operator=(const InterruptGuard &) = delete;
+
+#ifndef _WIN32
+private:
+    void (*previous_)(int) = nullptr;
+public:
+#endif
 
     bool interrupted() const { return g_interrupted.load(); }
     bool is_installed() const { return installed_; }

@@ -749,11 +749,11 @@ int stop_server(const Config & cfg) {
     int killed = 0;
     const unsigned long pid = read_pid_file(cfg.root);
     if (pid_alive(pid)) {
-        killed += kill_tree(pid, "llama-server.exe");
+        killed += kill_tree(pid, llama_server_exe());
     }
     remove_pid_file(cfg.root);
     for (const RunningProcess & p : processes_under(cfg.root)) {
-        if ((p.name == "llmashw.exe" || p.name == "llmash.exe" || p.name == "llama-server.exe") &&
+        if ((p.name == llmash_daemon_exe() || p.name == llmash_exe() || p.name == llama_server_exe()) &&
             p.pid != current_pid() && kill_pid(p.pid)) {
             killed++;
         }
