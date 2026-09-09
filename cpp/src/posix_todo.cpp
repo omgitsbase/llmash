@@ -1,12 +1,11 @@
 // What the portable half calls but has not been ported yet: the process
-// supervisor, the downloader and the CLI table renderer. Building these for
-// real on macOS is the rest of the job; until then they stand in so the
+// supervisor and the downloader. Building these for real on macOS is the rest
+// of the job; until then they stand in so the
 // portable code compiles and its tests run on a mac.
 #ifndef _WIN32
 
 #include "manager.h"
 #include "pull.h"
-#include "table.h"
 
 #include <limits>
 #include <stdexcept>
@@ -75,9 +74,6 @@ void handle_resolve(const httplib::Request &, httplib::Response & res, Config &,
     res.status = 501;
     res.set_content("{\"error\":\"resolve is not ported to macOS yet\"}", "application/json");
 }
-
-std::string render_list(const std::vector<nlohmann::json> &) { return ""; }
-std::string render_ps(const std::vector<nlohmann::json> &) { return ""; }
 
 } // namespace llmash
 
