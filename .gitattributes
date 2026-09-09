@@ -6,3 +6,7 @@
 # cpp-httplib and nlohmann/json are vendored verbatim; they are not this
 # project's code and should not count toward its language stats.
 cpp/vendor/** linguist-vendored
+
+# shell scripts must stay LF or /bin/sh chokes on the CR
+*.sh text eol=lf
+install.sh text eol=lf

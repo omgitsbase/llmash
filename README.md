@@ -8,6 +8,7 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/omgitsbase/llmash)
 
 An Ollama-compatible server and command line for Windows, built on llama.cpp.
+There is an alpha Linux build too.
 
 It serves your GGUF files through `llama-server` and keeps Ollama's commands,
 API and model store, so anything already pointed at Ollama keeps working. What
@@ -21,6 +22,19 @@ Nothing needs to be installed first: the installer fetches the llama.cpp build
 for your GPU, puts `llmash` on your PATH, and starts the server. With no
 NVIDIA card it takes the Vulkan or CPU build instead, and models load into
 system RAM, which works but is slower.
+
+On Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/omgitsbase/llmash/main/install.sh | sh
+```
+
+That one installs the binary, finds the models an existing Ollama already has,
+and runs llmash under systemd. It is earlier than the Windows build: it does
+not fetch llama.cpp for you, so `llama-server` has to be on your PATH, and
+`pull` is not implemented yet. Models already on disk are served normally.
+Pass `--dry-run` to see what it would do, `--user` to keep it inside your home
+directory, or `--uninstall` to take it back off.
 
 ## Models you already have
 
