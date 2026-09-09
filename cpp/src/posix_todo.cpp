@@ -79,8 +79,6 @@ void handle_resolve(const httplib::Request &, httplib::Response & res, Config &,
 std::string render_list(const std::vector<nlohmann::json> &) { return ""; }
 std::string render_ps(const std::vector<nlohmann::json> &) { return ""; }
 
-std::string loose_dir(const Config & cfg) { return cfg.gguf_dir; }
-
 } // namespace llmash
 
 #endif // !_WIN32
