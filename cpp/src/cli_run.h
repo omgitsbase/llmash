@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of cmd/llmash/run.go: `llmash run`, the interactive chat client.
+// `llmash run`: the interactive chat client.
 
 #include <nlohmann/json.hpp>
 

@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-// Port of cmd/llmash/pull.go: /api/pull for both the Ollama registry (into
+// Port of pull.go: /api/pull for both the Ollama registry (into
 // the blob store) and Hugging Face (hf:owner/repo[@QUANT], into the loose
 // GGUF folder), and the parallel resumable download engine both use.
 

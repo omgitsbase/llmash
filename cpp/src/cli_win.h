@@ -1,10 +1,7 @@
 #pragma once
 
-// Port of the Windows-integration half of cmd/llmash/win.go: the bits
-// `uninstall` and `link`/`unlink` need (registry, PATH, a hidden PowerShell,
-// a .lnk's target) and nothing else -- win.go's fileExists/dirExists/which
-// are plain std::filesystem/PATH lookups here instead, folded into
-// cli_commands.cpp where they're used.
+// The Windows integration `uninstall` and `link`/`unlink` need: the
+// registry, the user's PATH, a hidden PowerShell, and a shortcut's target.
 
 #include <string>
 

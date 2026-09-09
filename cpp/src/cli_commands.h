@@ -1,8 +1,7 @@
 #pragma once
 
-// Port of cmd/llmash/cmds.go: the CLI-side implementation of list, ps, show,
-// pull, rm, cp, stop, pulldraft, create, push, link, unlink, uninstall,
-// signin and signout.
+// The CLI side of list, ps, show, pull, rm, cp, stop, pulldraft, create,
+// push, link, unlink, uninstall, signin and signout.
 
 #include "cli_http.h"
 #include "cli_run.h"

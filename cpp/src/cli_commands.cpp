@@ -1,4 +1,4 @@
-// Port of cmd/llmash/cmds.go. See cli_commands.h for what is deliberately
+// See cli_commands.h for what is deliberately
 // not a pixel-for-pixel port and why.
 
 #define _CRT_RAND_S
