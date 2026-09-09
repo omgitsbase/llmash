@@ -12,10 +12,22 @@
 #define NOMINMAX
 #endif
 
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <psapi.h>
+#else
+#include <arpa/inet.h>
+#include <libproc.h>
+#include <mach/mach.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/sysctl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include <subprocess.h>
 #include <httplib.h>
@@ -182,12 +194,26 @@ std::pair<double, bool> free_vram_gb() {
 }
 
 double free_ram_gb() {
+#ifdef _WIN32
     MEMORYSTATUSEX ms{};
     ms.dwLength = sizeof(ms);
     if (!GlobalMemoryStatusEx(&ms)) {
         return 999.0;
     }
     return static_cast<double>(ms.ullAvailPhys) / static_cast<double>(1ull << 30);
+#else
+    // free plus inactive: the pages the kernel would hand over on demand
+    vm_size_t              page = 0;
+    vm_statistics64_data_t vm{};
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS ||
+        host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm), &count) !=
+            KERN_SUCCESS) {
+        return 999.0;
+    }
+    const double bytes = static_cast<double>(vm.free_count + vm.inactive_count) * static_cast<double>(page);
+    return bytes / static_cast<double>(1ull << 30);
+#endif
 }
 
 std::mutex               g_dev_mu;
@@ -380,10 +406,17 @@ void drain_to_file(subprocess_s proc, std::string logfile) {
 // ------------------------------------------------------------- free port
 
 int free_port() {
+#ifdef _WIN32
     const SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) {
         return 0;
     }
+#else
+    const int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s < 0) {
+        return 0;
+    }
+#endif
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -396,7 +429,11 @@ int free_port() {
             port = ntohs(got.sin_port);
         }
     }
+#ifdef _WIN32
     closesocket(s);
+#else
+    close(s);
+#endif
     return port;
 }
 
@@ -404,6 +441,7 @@ bool can_offload() { return can_offload_with(guess_llama_bin()); }
 
 // The cores worth giving inference threads, and a mask with one bit per
 // core.
+#ifdef _WIN32
 static std::pair<int, uint64_t> perf_cores_and_mask() {
     DWORD len = 0;
     GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
@@ -457,6 +495,22 @@ static std::pair<int, uint64_t> perf_cores_and_mask() {
     }
     return {n, mask};
 }
+#else
+// macOS reports its performance cores directly, and gives no way to pin a
+// thread to one, so there is no mask to hand llama.cpp.
+static std::pair<int, uint64_t> perf_cores_and_mask() {
+    int    n   = 0;
+    size_t len = sizeof(n);
+    if (sysctlbyname("hw.perflevel0.physicalcpu", &n, &len, nullptr, 0) == 0 && n > 0) {
+        return {n, 0};
+    }
+    len = sizeof(n);
+    if (sysctlbyname("hw.physicalcpu", &n, &len, nullptr, 0) == 0 && n > 0) {
+        return {n, 0};
+    }
+    return {0, 0};
+}
+#endif
 
 std::pair<int, uint64_t> cpu_threads_and_mask() {
     if (const int v = env_int("LLMASH_THREADS", 0); v > 0) {
@@ -522,6 +576,7 @@ bool Instance::alive() const {
     if (pid_ == 0) {
         return true;
     }
+#ifdef _WIN32
     HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid_);
     if (!h) {
         return false;
@@ -530,6 +585,11 @@ bool Instance::alive() const {
     const BOOL ok = GetExitCodeProcess(h, &code);
     CloseHandle(h);
     return ok && code == STILL_ACTIVE;
+#else
+    // signal 0 asks whether it could be signalled, which answers whether it
+    // is there. A zombie the drain thread has not reaped yet still counts.
+    return kill(static_cast<pid_t>(pid_), 0) == 0;
+#endif
 }
 
 std::string Instance::tail_log(size_t n) const {
@@ -563,6 +623,7 @@ double Instance::progress() const {
     if (pid == 0) {
         return 0.0;
     }
+#ifdef _WIN32
     HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
     if (!h) {
         return 0.0;
@@ -576,14 +637,31 @@ double Instance::progress() const {
     if (!haveMem && !haveIo) {
         return 0.0;
     }
+#else
+    struct proc_taskinfo ti{};
+    rusage_info_current  ru{};
+    const bool haveMem = proc_pidinfo(static_cast<int>(pid), PROC_PIDTASKINFO, 0, &ti, sizeof(ti)) == sizeof(ti);
+    const bool haveIo  = proc_pid_rusage(static_cast<int>(pid), RUSAGE_INFO_CURRENT,
+                                         reinterpret_cast<rusage_info_t *>(&ru)) == 0;
+    if (!haveMem && !haveIo) {
+        return 0.0;
+    }
+#endif
     double total = static_cast<double>(model.size);
     if (total < 1) {
         total = 1;
     }
+#ifdef _WIN32
     double best = haveMem ? static_cast<double>(pmc.WorkingSetSize) : 0.0;
     if (haveIo) {
         best = std::max(best, static_cast<double>(io.ReadTransferCount));
     }
+#else
+    double best = haveMem ? static_cast<double>(ti.pti_resident_size) : 0.0;
+    if (haveIo) {
+        best = std::max(best, static_cast<double>(ru.ri_diskio_bytesread));
+    }
+#endif
     return std::clamp(best / total, 0.0, 0.99);
 }
 
@@ -736,7 +814,11 @@ std::string Instance::start() {
 
     {
         std::lock_guard<std::mutex> lock(mu_);
+#ifdef _WIN32
         pid_ = GetProcessId(reinterpret_cast<HANDLE>(proc.hProcess));
+#else
+        pid_ = static_cast<unsigned long>(proc.child);
+#endif
     }
     std::thread(drain_to_file, proc, logfile).detach();
 
@@ -821,11 +903,23 @@ void Instance::stop() {
         pid = pid_;
     }
     if (pid != 0) {
+#ifdef _WIN32
         if (HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid)) {
             TerminateProcess(h, 1);
             WaitForSingleObject(h, 10000);
             CloseHandle(h);
         }
+#else
+        // ask, then insist; the drain thread's join reaps it either way
+        ::kill(static_cast<pid_t>(pid), SIGTERM);
+        for (int waited = 0; waited < 10000; waited += 50) {
+            if (::kill(static_cast<pid_t>(pid), 0) != 0) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        ::kill(static_cast<pid_t>(pid), SIGKILL);
+#endif
     }
     std::lock_guard<std::mutex> lock(mu_);
     ready_ = false;

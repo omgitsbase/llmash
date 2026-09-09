@@ -37,6 +37,7 @@ set(LLMASH_PORTABLE
     src/sha256.cpp
     src/table.cpp
     src/caps.cpp
+    src/manager.cpp
     src/api_logic.cpp
     src/api.cpp
     src/chat.cpp
@@ -47,7 +48,6 @@ set(LLMASH_PORTABLE
 # modes and the process work. A macOS build gets the portable half and its
 # tests; the rest is what a mac port has left to do.
 set(LLMASH_WINDOWS
-    src/manager.cpp
     src/launch.cpp
     src/remote.cpp
     src/readline.cpp
