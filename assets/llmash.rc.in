@@ -11,7 +11,8 @@ BEGIN
     BLOCK "040904B0"
     BEGIN
       VALUE "CompanyName",      "llmash"
-      VALUE "FileDescription",  "llmash"
+      VALUE "LegalCopyright",   "Copyright (C) 2026 llmash"
+      VALUE "FileDescription",  "llmash local model server"
       VALUE "FileVersion",      "@LLMASH_VERSION@"
       VALUE "InternalName",     "llmash"
       VALUE "OriginalFilename", "@LLMASH_EXE@"

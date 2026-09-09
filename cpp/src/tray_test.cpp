@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "tray.h"
+#include "shortcut.h"
 
 #include <nlohmann/json.hpp>
 
@@ -69,59 +70,21 @@ int leading_int(const std::string & s) {
 } // namespace
 
 int main() {
-    // ---- ps_quote / stop_script: the quoting that kills real processes,
-    // so a stray quote here would kill nothing or kill somebody else's
-    // server. Mirrors tray_test.go's TestStopScript exactly.
+    // ---- the Startup shortcut, written and read back through the shell
     {
-        const std::string s = stop_script(R"(C:\Program Files\llmash)");
-        check(s.find(R"('*C:\Program Files\llmash\llmashw.exe*')") != std::string::npos,
-             "stop_script: this install's llmashw.exe only");
-        check(s.find(R"('*C:\Program Files\llmash\llmash.exe*')") != std::string::npos,
-             "stop_script: this install's llmash.exe too");
-        check(s.find("'* serve*'") != std::string::npos, "stop_script: the server, not a tray or a client");
-        check(s.find("Name='llama-server.exe'") != std::string::npos, "stop_script: the engines it started");
-        check(s.find("ParentProcessId") != std::string::npos, "stop_script: and only its own");
+        const fs::path dir = fs::temp_directory_path() / "llmash-lnk-test";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        const std::string lnk    = (dir / "llmash.lnk").string();
+        const std::string target = (dir / "llmashw.exe").string();
+        { std::ofstream f(target, std::ios::binary); f << "stub"; }
 
-        size_t quotes = 0;
-        for (const char c : s) {
-            quotes += c == '"';
-        }
-        check(quotes % 2 == 0, "stop_script: balanced double quotes");
-
-        // the engines have to go before their parent, or they are orphaned
-        check(s.find("llama-server.exe") < s.rfind("$s | ForEach-Object"),
-             "stop_script: engines are stopped before the server that owns them");
-    }
-
-    // A single quote in the install path is what would break the quoting;
-    // check PowerShell itself accepts what comes out (TestStopScriptParses).
-    if (has_powershell()) {
-        for (const std::string & root : {R"(C:\Program Files\llmash)", "C:\\Users\\someone\\It's Mine\\llmash",
-                                         R"(B:\llmash)"}) {
-            check(script_parses(stop_script(root)), ("stop_script parses for root: " + root).c_str());
-        }
-    } else {
-        std::printf("skip  no powershell here\n");
-    }
-
-    // ---- enable_startup_script: the Startup-folder shortcut, not a
-    // registry Run key (ported from the actual Go implementation).
-    {
-        const std::string s = enable_startup_script(R"(C:\llmash)", R"(C:\Startup\llmash.lnk)", "");
-        check(s.find("New-Object -ComObject WScript.Shell") != std::string::npos,
-             "enable_startup_script: uses the Startup-folder shortcut COM object");
-        check(s.find(R"('C:\llmash\llmashw.exe')") != std::string::npos,
-             "enable_startup_script: targets llmashw.exe, not the console build");
-        check(s.find("$s.Arguments = 'tray'") != std::string::npos, "enable_startup_script: launches into tray mode");
-        check(s.find("$s.WindowStyle = 7") != std::string::npos, "enable_startup_script: minimized window style");
-        check(s.find("IconLocation") == std::string::npos, "enable_startup_script: no icon line when none is given");
-        if (has_powershell()) {
-            check(script_parses(s), "enable_startup_script parses");
-        }
-        const std::string with_icon = enable_startup_script(R"(C:\llmash)", R"(C:\Startup\llmash.lnk)",
-                                                            R"(C:\llmash\llmash.ico)");
-        check(with_icon.find(R"($s.IconLocation = 'C:\llmash\llmash.ico')") != std::string::npos,
-             "enable_startup_script: sets the icon when one is given");
+        check(write_shortcut(lnk, target, "tray", dir.string(), "", "llmash"), "write_shortcut: writes a .lnk");
+        check(fs::is_regular_file(lnk, ec), "write_shortcut: the file is there");
+        check(read_shortcut_target(lnk) == target, "read_shortcut_target: reads its own target back");
+        check(read_shortcut_target((dir / "absent.lnk").string()).empty(),
+             "read_shortcut_target: a missing shortcut is empty, not a crash");
+        fs::remove_all(dir, ec);
     }
 
     // ---- expires_text: the countdown shown on each model's submenu.

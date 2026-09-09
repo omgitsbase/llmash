@@ -5,6 +5,8 @@
 
 #include "cli_commands.h"
 
+#include "winproc.h"
+
 #include "cli_console.h"
 #include "cli_format.h"
 #include "cli_process.h"
@@ -741,33 +743,21 @@ void report_copy(bool ok, const std::string & what) {
 const char * const kShimNames[] = {"llmash", "ollama", "llamash"};
 
 int stop_server(const Config & cfg) {
-    const std::string r = ps_quote(cfg.root);
-    const std::string script =
-        "Get-CimInstance Win32_Process -Filter \"Name='llmashw.exe' OR Name='llmash.exe' OR "
-        "Name='llmash-server.exe' OR Name='pythonw.exe'\" | Where-Object { $_.CommandLine -like '*" +
-        r + "\\llmashw.exe*' -or $_.CommandLine -like '*" + r + "\\llmash-server.exe*' -or $_.CommandLine -like '*" +
-        r + "\\server.py*' -or $_.CommandLine -like '*" + r + "\\tray.py*' -or ($_.CommandLine -like '*" + r +
-        "\\llmash.exe*' -and $_.CommandLine -like '* serve*') } | ForEach-Object { Stop-Process -Id $_.ProcessId "
-        "-Force; $_.ProcessId }";
-    const std::string out = hidden_powershell(script, true);
-    int               n   = 0;
-    for (const auto & f : split_fields(out)) {
-        size_t i = (f[0] == '-' || f[0] == '+') ? 1 : 0;
-        if (i >= f.size()) {
-            continue;
-        }
-        bool digits = true;
-        for (; i < f.size(); i++) {
-            if (std::isdigit(static_cast<unsigned char>(f[i])) == 0) {
-                digits = false;
-                break;
-            }
-        }
-        if (digits) {
-            n++;
+    // The server records its own id; llama-server children go with it, and
+    // anything of ours still running out of the install root follows.
+    int killed = 0;
+    const unsigned long pid = read_pid_file(cfg.root);
+    if (pid_alive(pid)) {
+        killed += kill_tree(pid, "llama-server.exe");
+    }
+    remove_pid_file(cfg.root);
+    for (const RunningProcess & p : processes_under(cfg.root)) {
+        if ((p.name == "llmashw.exe" || p.name == "llmash.exe" || p.name == "llama-server.exe") &&
+            p.pid != GetCurrentProcessId() && kill_pid(p.pid)) {
+            killed++;
         }
     }
-    return n;
+    return killed;
 }
 
 unsigned long current_pid() {

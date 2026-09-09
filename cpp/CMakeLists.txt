@@ -59,6 +59,8 @@ set(LLMASH_SOURCES
     src/table.cpp
     src/caps.cpp
     src/sha256.cpp
+    src/winproc.cpp
+    src/shortcut.cpp
 )
 
 add_library(llmash_core STATIC ${LLMASH_SOURCES})
