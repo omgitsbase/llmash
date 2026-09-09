@@ -467,6 +467,13 @@ std::pair<int, uint64_t> cpu_threads_and_mask() {
     if (nm.first <= 0 || (hw != 0 && static_cast<unsigned>(nm.first) > hw)) {
         return {0, 0};
     }
+    // Dropping the efficient cores only pays when enough performance cores
+    // are left to carry the work. A laptop with two of them, pinned, is far
+    // slower than letting llama.cpp spread over everything it can see, so
+    // below four this leaves the default alone. LLMASH_THREADS overrides.
+    if (nm.first < 4) {
+        return {0, 0};
+    }
     return nm;
 }
 
