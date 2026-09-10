@@ -17,6 +17,10 @@
 #include <regex>
 #include <set>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
@@ -65,17 +69,26 @@ std::map<std::string, std::string> read_aliases(const std::string & dir) {
     return out;
 }
 
-// MSVC's file clock counts from 1601; Unix time is what the API reports.
+// Unix time is what the API reports, and the two platforms count from
+// different epochs.
 double mtime_unix(const fs::path & p) {
+#ifdef _WIN32
     std::error_code ec;
     const auto      t = fs::last_write_time(p, ec);
     if (ec) {
         return 0;
     }
-    // Seconds, not nanoseconds: this clock counts from 1601, and 400-odd
-    // years of nanoseconds overflows the count.
+    // Seconds, not nanoseconds: MSVC's file clock counts from 1601, and
+    // 400-odd years of nanoseconds overflows the count.
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
     return static_cast<double>(secs) - 11644473600.0;
+#else
+    struct stat st{};
+    if (::stat(p.string().c_str(), &st) != 0) {
+        return 0;
+    }
+    return static_cast<double>(st.st_mtime);
+#endif
 }
 
 std::string read_text_file(const fs::path & p) {
