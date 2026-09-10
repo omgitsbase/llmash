@@ -1,6 +1,7 @@
 #include "manager.h"
 
 #include "log.h"
+#include "platform.h"
 
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0A00
@@ -273,8 +274,8 @@ std::string guess_llama_bin() {
         return v;
     }
     const std::string exe = exe_dir();
-    for (const auto & rel : {"runtime\\llama-server.exe", "llama.cpp\\llama-server.exe"}) {
-        std::string cand = (fs::path(exe) / rel).string();
+    for (const auto & rel : {"runtime", "llama.cpp"}) {
+        std::string cand = (fs::path(exe) / rel / llama_server_exe()).string();
         if (file_exists(cand)) {
             return cand;
         }
