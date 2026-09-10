@@ -28,7 +28,7 @@ echo "$out" | sed 's/^/    | /'
 echo "$out" | grep -q "1 model(s) already in $HOME/.ollama/models" \
     && ok "the existing Ollama store was found" || bad "ollama store not found"
 
-cfg=/var/lib/llmash/local.json
+cfg=/usr/local/lib/llmash/local.json
 if [ -f "$cfg" ]; then
     cat "$cfg" | sed 's/^/    | /'
     grep -q "\"models_root\": \"$HOME/.ollama/models\"" "$cfg" \
