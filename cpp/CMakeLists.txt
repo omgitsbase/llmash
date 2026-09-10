@@ -26,47 +26,68 @@ if (WIN32)
     target_link_libraries(llmash_vendor PUBLIC ws2_32 crypt32)
 endif()
 
-set(LLMASH_SOURCES
+# Everything that is plain C++ and builds anywhere.
+set(LLMASH_PORTABLE
+    src/http.cpp
+    src/terminal.cpp
+    src/update.cpp
+    src/draft.cpp
+    src/cli_run.cpp
+    src/launch.cpp
+    src/cli_commands.cpp
+    src/cli_console.cpp
+    src/cmd_models.cpp
+    src/cmd_doctor.cpp
+    src/cli_process.cpp
+    src/cli_http.cpp
+    src/cli_util.cpp
+    src/winproc.cpp
+    src/remote.cpp
+    src/serve.cpp
     src/config.cpp
     src/gguf.cpp
     src/registry.cpp
-    src/manager.cpp
     src/help.cpp
-    src/launch.cpp
-    src/remote.cpp
-    src/readline.cpp
-    src/cmd_doctor.cpp
-    src/cmd_models.cpp
-    src/cli_console.cpp
-    src/cli_format.cpp
-    src/cli_http.cpp
-    src/cli_process.cpp
-    src/cli_run.cpp
-    src/cli_util.cpp
-    src/cli_win.cpp
-    src/tray.cpp
-    src/tray_process.cpp
+    src/log.cpp
+    src/version.cpp
+    src/sha256.cpp
+    src/table.cpp
+    src/caps.cpp
+    src/manager.cpp
     src/api_logic.cpp
     src/api.cpp
     src/chat.cpp
-    src/cli_commands.cpp
+    src/cli_format.cpp
+)
+
+# Windows-only for now: the tray, the shell integration, WinHTTP, the console
+# modes and the process work. A macOS build gets the portable half and its
+# tests; the rest is what a mac port has left to do.
+set(LLMASH_WINDOWS
+    src/readline.cpp
     src/pull.cpp
-    src/draft.cpp
-    src/log.cpp
-    src/version.cpp
-    src/serve.cpp
-    src/update.cpp
-    src/table.cpp
-    src/caps.cpp
-    src/sha256.cpp
-    src/winproc.cpp
+    src/cli_win.cpp
+    src/tray.cpp
+    src/tray_process.cpp
     src/shortcut.cpp
 )
+
+set(LLMASH_SOURCES ${LLMASH_PORTABLE})
+if (WIN32)
+    list(APPEND LLMASH_SOURCES ${LLMASH_WINDOWS})
+else()
+    list(APPEND LLMASH_SOURCES src/posix_todo.cpp)
+endif()
 
 add_library(llmash_core STATIC ${LLMASH_SOURCES})
 target_include_directories(llmash_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(llmash_core PUBLIC llmash_vendor)
 target_compile_definitions(llmash_core PUBLIC LLMASH_VERSION="${LLMASH_VERSION}")
+
+if (NOT WIN32)
+    find_package(CURL REQUIRED)
+    target_link_libraries(llmash_core PUBLIC CURL::libcurl)
+endif()
 
 if (WIN32)
     target_compile_definitions(llmash_core PUBLIC
@@ -93,6 +114,7 @@ endif()
 add_executable(llmash src/main.cpp ${LLMASH_RC})
 target_link_libraries(llmash PRIVATE llmash_core)
 
+if (WIN32)
 # the same program without a console, for the tray and the background server
 add_executable(llmashw src/main.cpp ${LLMASHW_RC})
 target_link_libraries(llmashw PRIVATE llmash_core)
@@ -115,9 +137,14 @@ if (MSVC)
     target_compile_options(llmash_vendor PRIVATE /guard:cf)
 endif()
 
+endif()
+
 enable_testing()
-foreach(t test_main cli_run_test test_cli_doctor_models tray_test
-              api_logic_test api_test chat_test cli_commands_test pull_test)
+set(LLMASH_TESTS test_main api_logic_test api_test chat_test)
+if (WIN32)
+    list(APPEND LLMASH_TESTS cli_run_test test_cli_doctor_models tray_test cli_commands_test pull_test)
+endif()
+foreach(t ${LLMASH_TESTS})
     add_executable(${t} src/${t}.cpp)
     target_link_libraries(${t} PRIVATE llmash_core)
     add_test(NAME ${t} COMMAND ${t})
