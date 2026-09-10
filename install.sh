@@ -7,6 +7,7 @@
 #   --user          install for this user only, into ~/.local, no service
 #   --no-service    skip the systemd unit
 #   --no-ollama     do not take over the `ollama` command
+#   --runtime <k>   llama.cpp build to fetch: auto, vulkan, rocm, cpu, none
 #   --dry-run       say what it would do, download nothing
 #   --uninstall     remove what this installed (models are kept)
 #   --yes           answer yes to every prompt
@@ -18,6 +19,7 @@ PREFIX=/usr/local
 SERVICE=1
 SYSTEM=1
 SHADOW_OLLAMA=1
+RUNTIME=auto
 UNINSTALL=0
 DOWNLOAD=1
 
@@ -27,6 +29,7 @@ while [ $# -gt 0 ]; do
         --user) SYSTEM=0; PREFIX=$HOME/.local; shift ;;
         --no-service) SERVICE=0; shift ;;
         --no-ollama) SHADOW_OLLAMA=0; shift ;;
+        --runtime) RUNTIME=$2; shift 2 ;;
         --dry-run) DOWNLOAD=0; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
         --yes|-y) shift ;;
@@ -82,6 +85,9 @@ say "linux $ARCH"
 command -v curl >/dev/null 2>&1 || die 'curl is needed to download llmash'
 command -v tar  >/dev/null 2>&1 || die 'tar is needed to unpack llmash'
 
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
 step 'Fetching llmash'
 ASSET=llmash-linux-$ARCH.tar.gz
 if [ "$DOWNLOAD" = 0 ]; then
@@ -91,8 +97,6 @@ URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
       | sed -n 's/.*"browser_download_url": *"\([^"]*'"$ASSET"'\)".*/\1/p' | head -1)
 [ -n "$URL" ] || die "the latest release of $REPO has no $ASSET"
 
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
 curl -fsSL --progress-bar "$URL" -o "$TMP/$ASSET" || die 'download failed'
 $SUDO mkdir -p "$BIN" "$LIB" "$ROOT"
 $SUDO tar -xzf "$TMP/$ASSET" -C "$LIB"
@@ -179,15 +183,73 @@ else
 fi
 [ -n "$EXTRAS" ] && say "also reading $(printf '%s' "$EXTRAS" | tr -d '\"')"
 
+# --------------------------------------------------------------- llama.cpp
+# llmash runs models through llama-server, so the installer fetches a build the
+# way the Windows one does. There is no Linux CUDA release upstream; Vulkan is
+# what covers an NVIDIA or AMD card, and everything else gets the CPU build.
+has_gpu() {
+    [ -e /proc/driver/nvidia/version ] && return 0
+    [ -d /sys/module/amdgpu ] && return 0
+    { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; } && return 0
+    return 1
+}
+has_vulkan() { ldconfig -p 2>/dev/null | grep -q 'libvulkan\.so\.1'; }
+
+runtime_asset() {
+    if [ "$ARCH" = arm64 ]; then cpu=ubuntu-arm64; vk=ubuntu-vulkan-arm64
+    else                         cpu=ubuntu-x64;   vk=ubuntu-vulkan-x64; fi
+    case $RUNTIME in
+        cpu)    printf '%s' "$cpu" ;;
+        vulkan) printf '%s' "$vk" ;;
+        rocm)   printf '%s' 'ubuntu-rocm-10.0-x64' ;;
+        auto)
+            if has_gpu && has_vulkan; then printf '%s' "$vk"
+            else printf '%s' "$cpu"; fi ;;
+        *) die "--runtime takes auto, vulkan, rocm, cpu or none" ;;
+    esac
+}
+
 step 'llama.cpp'
-if [ -x "$LIB/runtime/llama-server" ]; then
-    say "using $LIB/runtime/llama-server"
-elif command -v llama-server >/dev/null 2>&1; then
-    say "found $(command -v llama-server)"
+if [ "$RUNTIME" = none ]; then
+    say 'skipped; point LLAMA_BIN at your own build'
+elif [ "$DOWNLOAD" = 0 ]; then
+    say "would fetch the $(runtime_asset) build"
 else
-    warn 'llama-server was not found, and llmash needs it to run a model.'
-    say  "Build llama.cpp for your GPU and put llama-server on PATH, or in $LIB/runtime,"
-    say  'or set LLAMA_BIN.   https://github.com/ggml-org/llama.cpp'
+    asset=$(runtime_asset)
+    case $asset in
+        *vulkan*) say 'a GPU is present, taking the Vulkan build' ;;
+        *rocm*)   say 'taking the ROCm build' ;;
+        *) has_gpu && say 'a GPU is present but libvulkan is not installed, taking the CPU build'                    || say 'no GPU found, taking the CPU build' ;;
+    esac
+    url=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10"           | grep -o "https://[^\"]*bin-${asset}\.tar\.gz" | head -1)
+    if [ -z "$url" ]; then
+        warn "llama.cpp publishes no $asset build; llmash cannot run a model until"
+        say  "you put llama-server in $LIB/runtime or set LLAMA_BIN"
+    else
+        curl -fsSL --progress-bar "$url" -o "$TMP/llama.tar.gz" || die 'llama.cpp download failed'
+        mkdir -p "$TMP/lc"
+        tar -xzf "$TMP/llama.tar.gz" -C "$TMP/lc"
+        src=$(find "$TMP/lc" -name llama-server -type f | head -1)
+        [ -n "$src" ] || die 'that llama.cpp build has no llama-server in it'
+        $SUDO rm -rf "$LIB/runtime"
+        $SUDO mkdir -p "$LIB/runtime"
+        $SUDO cp -a "$(dirname "$src")/." "$LIB/runtime/"
+        $SUDO chmod +x "$LIB/runtime/llama-server"
+        say "$(basename "$url")"
+
+        lmiss=$(ldd "$LIB/runtime/llama-server" 2>/dev/null | awk '/not found/{print $1}')
+        if [ -n "$lmiss" ]; then
+            warn 'llama-server needs shared libraries this machine does not have:'
+            for m in $lmiss; do say "    $m"; done
+            case $lmiss in
+                *libgomp*) say 'try one of:  apt install libgomp1  |  dnf install libgomp  |  pacman -S gcc-libs' ;;
+                *libvulkan*) say 'try one of:  apt install libvulkan1  |  dnf install vulkan-loader  |  pacman -S vulkan-icd-loader' ;;
+            esac
+            say 'llmash will install, but cannot run a model until those are there'
+        elif "$LIB/runtime/llama-server" --version >/dev/null 2>&1; then
+            say 'it runs'
+        fi
+    fi
 fi
 
 if [ "$SERVICE" = 1 ] && [ "$DOWNLOAD" = 1 ] && command -v systemctl >/dev/null 2>&1; then

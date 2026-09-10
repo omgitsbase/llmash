@@ -29,12 +29,14 @@ On Linux:
 curl -fsSL https://raw.githubusercontent.com/omgitsbase/llmash/main/install.sh | sh
 ```
 
-That one installs the binary, finds the models an existing Ollama already has,
-and runs llmash under systemd. It is earlier than the Windows build: it does
-not fetch llama.cpp for you, so `llama-server` has to be on your PATH, and
-`pull` is not implemented yet. Models already on disk are served normally.
-Pass `--dry-run` to see what it would do, `--user` to keep it inside your home
-directory, or `--uninstall` to take it back off.
+That one installs the binary, fetches a llama.cpp build, finds the models an
+existing Ollama already has, and runs llmash under systemd. llama.cpp has no
+Linux CUDA release, so a machine with an NVIDIA or AMD card gets the Vulkan
+build and everything else gets the CPU one; `--runtime` overrides the choice.
+It is earlier than the Windows build in one way that matters: `pull` is not
+implemented yet, so models have to already be on disk. Pass `--dry-run` to see
+what it would do, `--user` to keep it inside your home directory, or
+`--uninstall` to take it back off.
 
 ## Models you already have
 

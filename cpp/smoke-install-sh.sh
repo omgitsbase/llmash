@@ -46,7 +46,25 @@ echo "$out" | grep -q 'no service installed' \
 v=$(llmash --version 2>&1 || llmash version 2>&1)
 echo "$v" | grep -qi 'version' && ok "runs: $v" || bad "the installed binary does not run" "$v"
 
-llmash list >/dev/null 2>&1 && ok "\`llmash list\` works" || bad "llmash list"
+# list and ps talk to the server, the way Ollama's do, so it has to be up
+llmash serve >/tmp/serve.log 2>&1 &
+srv=$!
+i=0
+while [ $i -lt 50 ]; do
+    curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break
+    i=$((i + 1)); sleep 0.2
+done
+
+if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    ok "the server starts and answers /api/tags"
+    llmash list >/dev/null 2>&1 && ok "\`llmash list\` works" || bad "llmash list"
+    llmash ps   >/dev/null 2>&1 && ok "\`llmash ps\` works"   || bad "llmash ps"
+    curl -fsS http://127.0.0.1:11434/api/tags | head -c 200 | sed 's/^/    | /'; echo
+else
+    bad "the server never came up" "$(tail -3 /tmp/serve.log)"
+fi
+kill "$srv" 2>/dev/null
+wait "$srv" 2>/dev/null
 
 out=$(sh /tmp/install.sh --uninstall 2>&1)
 { [ ! -e /usr/local/bin/llmash ] && [ ! -e /usr/local/lib/llmash ]; } \
