@@ -52,7 +52,7 @@ BIN=$PREFIX/bin
 LIB=$PREFIX/lib/llmash
 UNIT=/etc/systemd/system/llmash.service
 USER_UNIT=$HOME/.config/systemd/user/llmash.service
-[ "$SYSTEM" = 1 ] && ROOT=/var/lib/llmash || ROOT=$HOME/.local/share/llmash
+ROOT=$LIB
 
 if [ "$UNINSTALL" = 1 ]; then
     step 'Removing llmash'
@@ -67,7 +67,7 @@ if [ "$UNINSTALL" = 1 ]; then
     $SUDO rm -f "$BIN/llmash"
     [ -L "$BIN/ollama" ] && $SUDO rm -f "$BIN/ollama"
     $SUDO rm -rf "$LIB"
-    say "removed; your models and $ROOT were left alone"
+    say 'removed; your models were left alone'
     exit 0
 fi
 
