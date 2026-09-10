@@ -47,6 +47,13 @@ std::string exe_dir() {
     }
     return fs::path(std::wstring(buf, n)).parent_path().string();
 #else
+    // /proc/self/exe resolves the symlink an install puts on PATH, so this is
+    // the real install directory and not wherever the caller happened to be.
+    std::error_code ec;
+    const fs::path self = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec && !self.empty()) {
+        return self.parent_path().string();
+    }
     return fs::current_path().string();
 #endif
 }
