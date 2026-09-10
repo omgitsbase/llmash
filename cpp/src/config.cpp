@@ -1,4 +1,5 @@
 #include "config.h"
+#include "platform.h"
 
 #include <nlohmann/json.hpp>
 
@@ -115,20 +116,40 @@ std::string find_llama_bin(const std::string & root, const std::string & from_lo
     for (const char * v : {"ProgramData", "LOCALAPPDATA"}) {
         const std::string base = env_str(v);
         if (!base.empty()) {
-            cands.push_back((fs::path(base) / "llmash" / "runtime" / "llama-server.exe").string());
+            cands.push_back((fs::path(base) / "llmash" / "runtime" / llama_server_exe()).string());
         }
     }
-    cands.push_back((fs::path(root) / "runtime" / "llama-server.exe").string());
-    cands.push_back((fs::path(root) / "llama.cpp" / "llama-server.exe").string());
+    cands.push_back((fs::path(root) / "runtime" / llama_server_exe()).string());
+    cands.push_back((fs::path(root) / "llama.cpp" / llama_server_exe()).string());
     for (const std::string & c : cands) {
         std::error_code ec;
         if (fs::is_regular_file(c, ec)) {
             return c;
         }
     }
-    wchar_t buf[MAX_PATH];
-    if (SearchPathW(nullptr, L"llama-server.exe", nullptr, MAX_PATH, buf, nullptr) != 0) {
-        return fs::path(buf).string();
+    // and finally whatever is on PATH
+    const std::string exe  = llama_server_exe();
+    const std::string path = env_str("PATH");
+#ifdef _WIN32
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+    size_t start = 0;
+    while (start <= path.size()) {
+        const size_t at  = path.find(sep, start);
+        const std::string dir = path.substr(start, at == std::string::npos ? std::string::npos : at - start);
+        if (!dir.empty()) {
+            std::error_code ec;
+            const fs::path cand = fs::path(dir) / exe;
+            if (fs::is_regular_file(cand, ec)) {
+                return cand.string();
+            }
+        }
+        if (at == std::string::npos) {
+            break;
+        }
+        start = at + 1;
     }
     return "";
 }

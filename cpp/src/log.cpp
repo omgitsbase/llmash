@@ -1,4 +1,5 @@
 #include "log.h"
+#include "platform.h"
 
 #include <cstdarg>
 #include <ctime>
@@ -39,7 +40,7 @@ void log_line(const std::string & s) {
     char   stamp[32];
     const std::time_t t = std::time(nullptr);
     std::tm           tm{};
-    localtime_s(&tm, &t);
+    local_time(t, tm);
     std::strftime(stamp, sizeof(stamp), "%Y/%m/%d %H:%M:%S", &tm);
     std::fprintf(out, "%s [llmash] %s\n", stamp, s.c_str());
     std::fflush(out);

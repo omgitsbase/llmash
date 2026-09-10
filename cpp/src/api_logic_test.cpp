@@ -506,10 +506,15 @@ int main() {
         check(!proc.start({}), "subprocess: an empty argv does not start");
         check(proc.join() == -1, "subprocess: joining an unstarted process is -1");
         Subprocess run;
-        if (run.start({"cmd.exe", "/c", "exit 7"})) {
+#ifdef _WIN32
+        const std::vector<std::string> exit7 = {"cmd.exe", "/c", "exit 7"};
+#else
+        const std::vector<std::string> exit7 = {"/bin/sh", "-c", "exit 7"};
+#endif
+        if (run.start(exit7)) {
             check(run.join() == 7, "subprocess: the child's exit code comes back");
         } else {
-            check(false, "subprocess: cmd.exe started");
+            check(false, "subprocess: the shell started");
         }
     }
 
