@@ -412,6 +412,42 @@ int64_t write_chunk_header(const std::string & path, const Layout & l, const Chu
     return static_cast<int64_t>(h.size());
 }
 
+int64_t write_header(const std::string & path, const Layout & l, std::string & err) {
+    const Chunk       all{0, l.tensors.size() - 1, 0};
+    const std::string h = chunk_header(l, all);
+    std::ofstream     out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        err = "could not create " + path;
+        return -1;
+    }
+    out.write(h.data(), static_cast<std::streamsize>(h.size()));
+    if (!out) {
+        err = "could not write " + path;
+        return -1;
+    }
+    return static_cast<int64_t>(h.size());
+}
+
+bool patch_entry(std::ostream & out, const Layout & l, size_t tensor, uint32_t type, int64_t offset) {
+    // Walk to the entry: the header is fixed-width per tensor apart from the
+    // names, so its position is what came before it.
+    int64_t at = 4 + 4 + 8 + 8;
+    for (const KvEntry & e : l.kv) {
+        at += static_cast<int64_t>(e.raw.size());
+    }
+    for (size_t i = 0; i < tensor && i < l.tensors.size(); i++) {
+        at += 8 + static_cast<int64_t>(l.tensors[i].name.size()) + 4 +
+              8 * static_cast<int64_t>(l.tensors[i].dims.size()) + 4 + 8;
+    }
+    at += 8 + static_cast<int64_t>(l.tensors[tensor].name.size()) + 4 +
+          8 * static_cast<int64_t>(l.tensors[tensor].dims.size());
+    out.seekp(at, std::ios::beg);
+    out.write(reinterpret_cast<const char *>(&type), 4);
+    const uint64_t off = static_cast<uint64_t>(offset);
+    out.write(reinterpret_cast<const char *>(&off), 8);
+    return out.good();
+}
+
 std::vector<Piece> chunk_pieces(const Layout & l, const Chunk & c, int64_t header_bytes) {
     std::vector<Piece> out;
     int64_t            into = header_bytes;

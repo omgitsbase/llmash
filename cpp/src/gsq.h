@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <iosfwd>
 #include <map>
 #include <string>
 #include <vector>
@@ -93,6 +94,12 @@ std::vector<Chunk> plan_chunks(const Layout & l, int64_t target_bytes);
 
 // The chunk's GGUF header; returns its length, where the data begins.
 int64_t write_chunk_header(const std::string & path, const Layout & l, const Chunk & c, std::string & err);
+
+// A header for the whole model with room for every tensor entry, written
+// before the types are known. Entry sizes do not depend on the type, so the
+// types and offsets are filled in afterwards by patch_entry.
+int64_t write_header(const std::string & path, const Layout & l, std::string & err);
+bool    patch_entry(std::ostream & out, const Layout & l, size_t tensor, uint32_t type, int64_t offset);
 
 // Where tensor `i` of the chunk sits in the source, and how many bytes.
 struct Piece {

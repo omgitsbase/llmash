@@ -235,6 +235,12 @@ void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, 
 // httplib types.
 void           run_pull(const nlohmann::json & body, const Config & cfg, Registry & reg, const Emit & emit);
 nlohmann::json api_resolve(const std::string & ref, const Config & cfg);
+// A quality llmash assembles rather than downloads.
+std::string rco_quant_name(double bpw, bool published);
+double      rco_bpw_of_quant(const std::string & quant);
+std::string rco_pull(const std::string & repo, double bpw, const std::string & as, const Config & cfg,
+                     Registry & reg, const Emit & emit);
+
 nlohmann::json api_quants(const std::string & repo_arg);
 
 std::string human_bytes(int64_t b);
