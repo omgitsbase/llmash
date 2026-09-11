@@ -167,7 +167,7 @@ void test_tiers_of() {
         eq_num(t.large, 2, "tiers large falls back to the last build");
     }
     {
-        // a GSQ build has a row of its own above the three sizes, so the
+        // a custom build has a row of its own above the three sizes, so the
         // picker hands tiers_of the ordinary quants only
         const std::vector<QuantInfo> qs{Q("Q3_K_M", 4), Q("Q4_K_M", 6), Q("Q8_0", 9)};
         const Tiers                  t = tiers_of(qs);
