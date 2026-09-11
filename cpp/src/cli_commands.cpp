@@ -468,7 +468,7 @@ std::string pad_to(const std::string & s, int width, bool left_align) {
 std::string build_row(const std::string & label, const QuantInfo & q) {
     std::string row = pad_to(label, 8, true) + " " + pad_to(q.name, 12, true) + " " +
                       pad_to(human_bytes(q.fetch > 0 ? q.fetch : q.size), 8, false);
-    return row + (q.fetch > 0 ? " down, " + pad_to(human_bytes(q.size), 8, false) + " kept" : "");
+    return row + (q.fetch > 0 ? " bandwidth, " + pad_to(human_bytes(q.size), 8, false) + " finalized" : "");
 }
 
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
