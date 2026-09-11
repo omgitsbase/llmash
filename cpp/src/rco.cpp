@@ -1,6 +1,6 @@
 #include "rco.h"
 
-#include "gsq.h"
+#include "gguf_io.h"
 #include "platform.h"
 
 #ifdef _WIN32
@@ -164,12 +164,23 @@ void Ggml::dequantize(int type, const void * src, float * dst, int64_t n) const 
 }
 
 const std::vector<int> & candidates() {
-    // Every type IST-DASLab's own allocation uses, plus q8_0 and q5_K above
-    // them: the point of a budget is to spend it unevenly, so the tensors
-    // that need the source's own precision have to be able to keep it.
-    static const std::vector<int> all = {GT_Q8_0,  GT_Q6_K,   GT_Q5_K,    GT_Q4_K,  GT_IQ4_XS,  GT_IQ3_S,
+    // Q8_0 at the top so a tensor that needs the source's own precision can
+    // keep it: the point of a budget is to spend it unevenly.
+    static const std::vector<int> all = {GT_Q8_0,  GT_Q6_K,   GT_Q5_K,    GT_Q4_K,   GT_IQ4_XS,  GT_IQ3_S,
                                          GT_Q2_K,  GT_IQ2_S,  GT_IQ3_XXS, GT_IQ2_XS, GT_IQ2_XXS, GT_IQ1_M};
     return all;
+}
+
+double env_float(const char * name, double def) {
+    const std::string v = env_str(name);
+    if (v.empty()) {
+        return def;
+    }
+    try {
+        return std::stod(v);
+    } catch (const std::exception &) {
+        return def;
+    }
 }
 
 double bits_of_type(const Ggml & g, int type) {
@@ -177,14 +188,33 @@ double bits_of_type(const Ggml & g, int type) {
     return b > 0 ? static_cast<double>(g.type_size(type)) * 8.0 / static_cast<double>(b) : 32.0;
 }
 
+double floor_bits(const std::string & tensor) {
+    // Every other tensor's error is passed through a residual add and a norm,
+    // which contract it. These two are not: the head's output IS the logits,
+    // so an error there moves which token wins, and the embedding feeds the
+    // residual stream before any norm. The search cannot see that, because
+    // squared error does not predict whether an argmax flips: measured on
+    // Qwen3-1.7B it gave both of them two bits, being the largest tensors and
+    // so the cheapest to raid, and the model answered "| | | |".
+    if (tensor == "output.weight" || tensor == "lm_head.weight") {
+        return 6.0;
+    }
+    if (tensor == "token_embd.weight") {
+        return 3.0;
+    }
+    return 0.0;
+}
+
 std::vector<int> candidates_for(const Ggml & g, double bpw) {
-    // A tensor more than a bit and a half under the average does more damage
-    // than the bytes it frees are worth: measured on Qwen3.6-35B-A3B, an
-    // unwindowed search funded itself with a hundred iq1_m tensors and the
-    // model came back repeating one word.
+    // Squared error is a poor guide at the bottom of the ladder: it grows
+    // gently from three bits to two while the bytes halve, so an unwindowed
+    // search raids the cheap end and the model stops answering. Measured on
+    // Qwen3-1.7B, allowing anything down to two bits scored 1 of 6 against
+    // llama.cpp's own uniform build at the same size, which scored 4.
+    const double low = env_float("LLMASH_RCO_WINDOW", 1.0);
     std::vector<int> out;
     for (const int t : candidates()) {
-        if (bits_of_type(g, t) >= bpw - 1.5) {
+        if (bits_of_type(g, t) >= bpw - low) {
             out.push_back(t);
         }
     }
@@ -209,10 +239,11 @@ std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int
                     static_cast<size_t>(n_per_row) * sizeof(float));
     }
 
-    // Weighted by the imatrix: an error on a channel the model barely
-    // activates is not the same as one on a channel it leans on, and
-    // without that every tensor scores alike and the allocation comes out
-    // uniform.
+    // What a layer passes on is its output error relative to its output, so
+    // the sample's error is divided by the sample's own weighted energy.
+    // Absolute error instead made the objective bimodal: a tensor of large
+    // weights was held at q8_0 and one of small weights dropped to two bits,
+    // and the model stopped answering.
     double norm = 0;
     for (int64_t i = 0; i < take * n_per_row; i++) {
         const double w = imatrix != nullptr ? imatrix[i % n_per_row] : 1.0;
@@ -239,12 +270,18 @@ std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int
                 q.assign(g.row_size(type, n_per_row) * static_cast<size_t>(take) + 64, 0);
                 g.quantize(type, sample.data(), q.data(), take, n_per_row, imatrix);
                 g.dequantize(type, q.data(), back.data(), take * n_per_row);
+                // Weighted by the imatrix: an error on a channel the model
+                // barely activates is not the same as one on a channel it
+                // leans on. Absolute, not relative to the tensor's own
+                // energy, since what the next layer sees is the absolute
+                // difference.
                 double e = 0;
                 for (int64_t i = 0; i < take * n_per_row; i++) {
                     const double d = static_cast<double>(sample[i]) - back[i];
                     e += (imatrix != nullptr ? imatrix[i % n_per_row] : 1.0) * d * d;
                 }
                 out[k].type  = type;
+                out[k].bits  = bits_of_type(g, type);
                 out[k].error = e / norm;
                 out[k].bytes = static_cast<int64_t>(g.row_size(type, n_per_row)) * nrows;
             }
@@ -260,17 +297,28 @@ std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int
 }
 
 int pick(const Measured & m, double lambda) {
-    int    best = 0;
-    double low  = 0;
-    for (size_t i = 0; i < m.costs.size(); i++) {
-        // The error is relative, so a tensor's say in the total is its share
-        // of the weights; without that every norm would argue as loudly as a
-        // projection a thousand times its size.
-        const double c = m.costs[i].error * static_cast<double>(m.elements) +
-                         lambda * static_cast<double>(m.costs[i].bytes);
-        if (i == 0 || c < low) {
-            low  = c;
-            best = m.costs[i].type;
+    int    best  = 0;
+    double low   = 0;
+    bool   found = false;
+    for (const Cost & c : m.costs) {
+        if (c.bits < m.floor_bits) {
+            continue;
+        }
+        const double v = c.error + lambda * static_cast<double>(c.bytes);
+        if (!found || v < low) {
+            low   = v;
+            best  = c.type;
+            found = true;
+        }
+    }
+    if (found) {
+        return best;
+    }
+    // Nothing clears the floor: the widest there is.
+    for (const Cost & c : m.costs) {
+        if (best == 0 || c.bits > 0) {
+            best = c.type;
+            break;
         }
     }
     return best;
@@ -308,11 +356,10 @@ std::map<std::string, int> allocate(const std::vector<Measured> & m, int64_t bud
                 }
             }
             for (const Cost & c : one.costs) {
-                if (c.bytes <= b_now || spent + (c.bytes - b_now) > budget_bytes) {
+                if (c.bytes <= b_now || spent + (c.bytes - b_now) > budget_bytes || c.bits < one.floor_bits) {
                     continue;
                 }
-                const double g = (e_now - c.error) * static_cast<double>(one.elements) /
-                                 static_cast<double>(c.bytes - b_now);
+                const double g = (e_now - c.error) / static_cast<double>(c.bytes - b_now);
                 if (g > gain) {
                     gain = g;
                     best = &one;
@@ -422,7 +469,7 @@ bool Imatrix::load(const std::string & path, std::string & err) {
             return false;
         }
     }
-    const gsq::Layout l = gsq::read_layout(path);
+    const ggufio::Layout l = ggufio::read_layout(path);
     if (!l.error.empty()) {
         err = l.error;
         return false;
@@ -433,7 +480,7 @@ bool Imatrix::load(const std::string & path, std::string & err) {
         return false;
     }
 
-    const auto read_floats = [&](const gsq::TensorEntry & t) {
+    const auto read_floats = [&](const ggufio::TensorEntry & t) {
         std::vector<float> v(static_cast<size_t>(t.bytes / 4));
         in.seekg(l.data_start.front() + t.offset);
         in.read(reinterpret_cast<char *>(v.data()), t.bytes);
@@ -441,12 +488,12 @@ bool Imatrix::load(const std::string & path, std::string & err) {
     };
 
     std::map<std::string, std::vector<float>> counts;
-    for (const gsq::TensorEntry & t : l.tensors) {
+    for (const ggufio::TensorEntry & t : l.tensors) {
         if (t.type == GT_F32 && t.name.size() > 7 && t.name.compare(t.name.size() - 7, 7, ".counts") == 0) {
             counts[t.name.substr(0, t.name.size() - 7)] = read_floats(t);
         }
     }
-    for (const gsq::TensorEntry & t : l.tensors) {
+    for (const ggufio::TensorEntry & t : l.tensors) {
         const std::string suffix = ".in_sum2";
         if (t.type != GT_F32 || t.name.size() <= suffix.size() ||
             t.name.compare(t.name.size() - suffix.size(), suffix.size(), suffix) != 0) {

@@ -1,7 +1,8 @@
 #include "pull.h"
 
 #include "gguf.h"
-#include "gsq.h"
+#include "gguf_io.h"
+#include "log.h"
 #include "rco.h"
 
 #ifdef _WIN32
@@ -1053,7 +1054,7 @@ double bits_of_quant(const std::string & quant) {
     if (up == "F16" || up == "BF16" || up == "FP16") {
         return 16;
     }
-    if (const double g = gsq::bpw_of_quant(quant); g > 0) {
+    if (const double g = rco_bpw_of_quant(quant); g > 0) {
         return g;
     }
     static const std::regex re(R"((?:^|[^0-9])([1-8])(?:_|$|[A-Za-z]))");
@@ -1539,11 +1540,17 @@ void set_alias(const Config & cfg, const std::string & file, const std::string &
 
 // ----------------------------------------------------------------- RCO
 //
-// A per-tensor allocation applied to the repository's Q8_0, streamed: each
-// span of the source is fetched, quantized and dropped, so the only thing
-// that lands on disk is the result.
+// One quantization type per tensor under a size budget, applied to the
+// repository's best build. Rows are fetched, quantized and dropped a block
+// at a time, so neither the source nor a whole tensor is ever held.
 
 namespace {
+
+// A block costs about six times its size in RAM: two of them in flight, the
+// float copy of one, and its quantized result. 48 MB keeps the whole
+// conversion inside 550 MB, and the largest tensor in a 35B is 2 GB as a
+// float, so whole-tensor buffers were never an option.
+constexpr int64_t BLOCK_BYTES = 48ll << 20;
 
 std::string mmss(double seconds) {
     const int s = static_cast<int>(seconds);
@@ -1556,10 +1563,17 @@ std::string pad_right(const std::string & s, size_t n) {
     return s.size() >= n ? s : s + std::string(n - s.size(), ' ');
 }
 
-// The highest-quality build in the repo, which is what the allocation is
-// written against.
+// What to requantize FROM, in order of preference. Q8_0 first: its rounding
+// error is far under what 4 bits introduces, and it is a third of the
+// download a 16-bit build would be.
+const std::vector<std::string> & source_preference() {
+    static const std::vector<std::string> pref = {"q8_0", "bf16", "f16", "q6_k", "q5_k_m"};
+    return pref;
+}
+
+// The highest-quality build in the repo, which is what gets requantized.
 std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files) {
-    for (const std::string & want : gsq::source_preference()) {
+    for (const std::string & want : source_preference()) {
         std::vector<HfFile> cand;
         for (const HfFile & f : files) {
             const std::string low = lower(f.name);
@@ -1596,10 +1610,10 @@ std::string find_imatrix(const std::vector<HfFile> & files) {
     return "";
 }
 
-// A stretch of a remote file, into memory, over several connections.
-bool fetch_span(const std::string & url, int64_t from, int64_t bytes, std::string & out,
-                const ProgressFn & progress, std::string & err) {
-    out.assign(static_cast<size_t>(bytes), '\0');
+// A stretch of a remote file, into a caller-owned buffer, over several
+// connections.
+bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out, const ProgressFn & progress,
+                std::string & err) {
     struct Block {
         int64_t from, bytes, into;
     };
@@ -1645,12 +1659,11 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, std::strin
                     } else if (stm.status != 200 && stm.status != 206) {
                         last = "HTTP " + std::to_string(stm.status);
                     } else {
-                        int64_t at   = 0;
-                        size_t  got  = 0;
-                        bool    ok   = true;
+                        int64_t at  = 0;
+                        size_t  got = 0;
+                        bool    ok  = true;
                         while (at < b.bytes) {
-                            if (!stm.read_chunk(&out[static_cast<size_t>(b.into + at)],
-                                                static_cast<size_t>(b.bytes - at), got)) {
+                            if (!stm.read_chunk(out + b.into + at, static_cast<size_t>(b.bytes - at), got)) {
                                 last = "the connection dropped";
                                 ok   = false;
                                 break;
@@ -1694,22 +1707,47 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, std::strin
     return true;
 }
 
-int64_t rows_of(const gsq::TensorEntry & t) {
-    int64_t n = 1;
-    for (size_t i = 1; i < t.dims.size(); i++) {
-        n *= t.dims[i];
-    }
-    return n;
-}
-
-// Only what the source itself quantized. llama.cpp holds the router, the
-// norms and the state-space tensors at full precision on purpose, and they
-// are 2-D and block-aligned like any other, so going by shape alone
+// Only what the source itself quantized. llama.cpp holds the expert router,
+// the norms and the state-space tensors at full precision on purpose, and
+// they are 2-D and block-aligned like any other, so going by shape alone
 // requantized the router and the model answered "the the the".
-bool quantizable(const gsq::TensorEntry & t, const rco::Ggml & g) {
-    return t.dims.size() > 1 && t.dims[0] % 256 == 0 && rows_of(t) > 0 && g.quantized(static_cast<int>(t.type));
+bool quantizable(const ggufio::TensorEntry & t, const rco::Ggml & g) {
+    return t.dims.size() > 1 && t.dims[0] % 256 == 0 && t.rows() > 0 && g.quantized(static_cast<int>(t.type));
 }
 
+// One run of rows out of one tensor: what is fetched, quantized and written
+// as a unit. Never crosses an expert, whose importance weights differ.
+struct RowBlock {
+    size_t  tensor = 0;
+    int64_t from   = 0; // first row
+    int64_t rows   = 0;
+    int64_t expert = 0;
+};
+
+std::vector<RowBlock> plan_blocks(const ggufio::Layout & l, const rco::Ggml & g,
+                                  const std::map<std::string, int> & chosen) {
+    std::vector<RowBlock> out;
+    for (size_t i = 0; i < l.tensors.size(); i++) {
+        const ggufio::TensorEntry & t    = l.tensors[i];
+        const int64_t               rows = t.dims.empty() ? 1 : t.rows();
+        if (chosen.find(t.name) == chosen.end()) {
+            out.push_back(RowBlock{i, 0, rows, 0}); // copied through whole
+            continue;
+        }
+        const int64_t per_expert = rows / (std::max<int64_t>)(t.experts(), 1);
+        const int64_t src_row    = static_cast<int64_t>(g.row_size(static_cast<int>(t.type), t.dims[0]));
+        int64_t       step       = src_row > 0 ? BLOCK_BYTES / src_row : per_expert;
+        step                     = (std::max<int64_t>)(1, (std::min)(step, per_expert));
+        for (int64_t e = 0; e < t.experts(); e++) {
+            for (int64_t at = 0; at < per_expert; at += step) {
+                out.push_back(RowBlock{i, e * per_expert + at, (std::min)(step, per_expert - at), e});
+            }
+        }
+    }
+    return out;
+}
+
+} // namespace
 
 // The repository's own file, fetched into the cache once.
 bool cache_file(const std::string & repo, const std::string & rel, const Config & cfg, std::string & path,
@@ -1748,11 +1786,7 @@ bool cache_file(const std::string & repo, const std::string & rel, const Config 
     return true;
 }
 
-} // namespace
-
-// A quality assembled here: GSQ-RCO when IST-DASLab has published the search
-// for this architecture, plain RCO when it is measured locally.
-std::string rco_quant_name(double bpw, bool published) {
+std::string rco_quant_name(double bpw) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.2f", bpw);
     std::string n = buf;
@@ -1763,20 +1797,20 @@ std::string rco_quant_name(double bpw, bool published) {
             break;
         }
     }
-    return (published ? "GSQ-RCO-" : "RCO-") + n;
+    return "RCO-" + n;
 }
 
 double rco_bpw_of_quant(const std::string & quant) {
-    static const std::regex re(R"((?:gsq[-_]rco|gsq|rco)[-_]?([0-9]+(?:\.[0-9]+)?)?)", std::regex::icase);
+    static const std::regex re(R"(rco[-_]?([0-9]+(?:\.[0-9]+)?)?)", std::regex::icase);
     std::smatch             m;
-    std::string s = quant;
+    std::string             s = quant;
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
     if (!std::regex_match(s, m, re)) {
         return 0.0;
     }
     if (!m[1].matched) {
-        return 3.5;
+        return rco::DEFAULT_BPW;
     }
     try {
         return std::stod(m[1].str());
@@ -1785,15 +1819,11 @@ double rco_bpw_of_quant(const std::string & quant) {
     }
 }
 
-namespace {
-
-} // namespace
-
 std::string rco_pull(const std::string & repo, double bpw, const std::string & as, const Config & cfg,
                      Registry & reg, const Emit & emit) {
-    const auto      t0 = std::chrono::steady_clock::now();
+    const auto        t0       = std::chrono::steady_clock::now();
     const std::string dest_dir = loose_dir(cfg);
-    std::error_code ec;
+    std::error_code   ec;
     fs::create_directories(dest_dir, ec);
 
     emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
@@ -1809,28 +1839,26 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         return "";
     }
 
-    // The header names the architecture, which is what decides whether a
-    // published allocation applies.
-    const HttpResult probe = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-50331647");
-    gsq::Layout      layout = gsq::layout_from(probe.body);
+    const HttpResult probe  = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-50331647");
+    ggufio::Layout   layout = ggufio::layout_from(probe.body);
     if (!layout.error.empty()) {
         emit(error_obj(base_name(src.front().name) + ": " + layout.error));
         return "";
     }
     for (size_t i = 1; i < src.size(); i++) {
         const HttpResult p = http_request(hf_download_url(repo, src[i].name), "GET", "bytes=0-50331647");
-        if (!gsq::append_part(layout, p.body)) {
+        if (!ggufio::append_part(layout, p.body)) {
             emit(error_obj(base_name(src[i].name) + ": " + layout.error));
             return "";
         }
     }
-    std::istringstream hin(probe.body, std::ios::binary);
-    const HeaderMeta   meta = read_header_meta(hin);
 
     rco::Ggml   ggml;
     std::string gerr;
     if (!ggml.load(cfg, gerr)) {
-        emit(error_obj(gerr));
+        emit(error_obj("a custom build is quantized by ggml, which is not in " +
+                       fs::path(cfg.llama_bin).parent_path().string() + " (" + gerr +
+                       "). Run `llmash update` to replace the runtime."));
         return "";
     }
 
@@ -1838,26 +1866,31 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     for (const HfFile & f : src) {
         src_bytes += f.size;
     }
-    const gsq::Allocation * published = gsq::for_model(meta.arch, meta.embd, bpw);
-
     emit(json{{"status", ""}});
     emit(json{{"status", "  " + pad_right("source", 12) + base_name(src.front().name) + "  " +
                              human_bytes(src_bytes) +
                              (src.size() > 1 ? ", " + std::to_string(src.size()) + " shards" : "")}});
 
     // The importance matrix: what the quantizer spends its bits on.
-    std::string imatrix_path, cerr;
-    if (published != nullptr) {
-        cache_file(published->repo, published->imatrix, cfg, imatrix_path, cerr);
-    }
-    if (imatrix_path.empty()) {
-        if (const std::string in_repo = find_imatrix(files); !in_repo.empty()) {
-            cache_file(repo, in_repo, cfg, imatrix_path, cerr);
+    std::string  imatrix_path, cerr;
+    rco::Imatrix imatrix;
+    if (const std::string in_repo = find_imatrix(files); !in_repo.empty()) {
+        if (cache_file(repo, in_repo, cfg, imatrix_path, cerr)) {
+            std::string ierr;
+            if (imatrix.load(imatrix_path, ierr)) {
+                emit(json{{"status", "  " + pad_right("imatrix", 12) + base_name(imatrix_path) + "  " +
+                                         std::to_string(imatrix.size()) + " tensors"}});
+            }
         }
     }
-    rco::Imatrix imatrix;
-    int64_t      widest = 0;
-    for (const gsq::TensorEntry & t : layout.tensors) {
+    if (imatrix.empty()) {
+        emit(json{{"status", "  " + pad_right("imatrix", 12) +
+                                 "none published for this model; the bits are placed unweighted"}});
+    }
+    // ggml aborts rather than returns when a low-bit type is handed a null
+    // imatrix, so "unweighted" is spelled as ones.
+    int64_t widest = 0;
+    for (const ggufio::TensorEntry & t : layout.tensors) {
         widest = (std::max)(widest, t.dims.empty() ? 0 : t.dims[0]);
     }
     const std::vector<float> ones(static_cast<size_t>(widest), 1.0f);
@@ -1865,74 +1898,33 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         const float * w = imatrix.of(name, n_per, expert);
         return w != nullptr ? w : ones.data();
     };
-    if (!imatrix_path.empty()) {
-        std::string ierr;
-        if (imatrix.load(imatrix_path, ierr)) {
-            emit(json{{"status", "  " + pad_right("imatrix", 12) + base_name(imatrix_path) + "  " +
-                                     std::to_string(imatrix.size()) + " tensors"}});
-        }
-    }
-    if (imatrix.empty()) {
-        emit(json{{"status", "  " + pad_right("imatrix", 12) +
-                                 "none published for this model; the bits are placed unweighted"}});
-    }
 
-    // Which type each tensor takes: IST-DASLab's own search when they have
-    // run it for this architecture, else one measured here.
-    std::map<std::string, int> chosen;
-    std::string                how;
-    std::vector<size_t>        work;
+    std::vector<size_t> work;
     for (size_t i = 0; i < layout.tensors.size(); i++) {
         if (quantizable(layout.tensors[i], ggml)) {
             work.push_back(i);
         }
     }
-
-    if (published != nullptr) {
-        bool              ok = false;
-        std::string       alloc_path;
-        if (cache_file(published->repo, published->alloc, cfg, alloc_path, cerr)) {
-            std::ifstream af(alloc_path, std::ios::binary);
-            const std::string text((std::istreambuf_iterator<char>(af)), std::istreambuf_iterator<char>());
-            const std::map<std::string, std::string> want = gsq::parse_allocation(text);
-            int                                      hit  = 0;
-            for (const size_t i : work) {
-                const auto it = want.find(layout.tensors[i].name);
-                if (it == want.end()) {
-                    continue;
-                }
-                for (const int t : rco::candidates()) {
-                    if (equal_fold(ggml.name(t), it->second)) {
-                        chosen[layout.tensors[i].name] = t;
-                        hit++;
-                        break;
-                    }
-                }
-            }
-            ok = !work.empty() && hit * 10 >= static_cast<int>(work.size()) * 9;
-            if (ok) {
-                how = published->name + ", from IST-DASLab's published search";
-            } else {
-                chosen.clear();
-            }
-        }
+    if (work.empty()) {
+        emit(error_obj("nothing in this build can be requantized"));
+        return "";
     }
 
-    if (chosen.empty()) {
-        // Measure every tensor on a fixed number of its rows, so what this
-        // costs does not grow with the model, then bisect the multiplier
-        // until the total lands on the budget.
-        const int64_t sample_rows = 128;
-        const std::vector<int> types = rco::candidates_for(ggml, bpw);
-        emit(json{{"status", "  " + pad_right("allocation", 12) + "measuring " + std::to_string(work.size()) +
-                                 " tensors against " + std::to_string(types.size()) + " types"}});
+    // Measure every tensor on a fixed number of its rows, so what this costs
+    // does not grow with the model, then bisect the multiplier until the
+    // total lands on the budget.
+    const int64_t          sample_rows = 128;
+    const std::vector<int> types       = rco::candidates_for(ggml, bpw);
+    emit(json{{"status", "  " + pad_right("allocation", 12) + "measuring " + std::to_string(work.size()) +
+                             " tensors against " + std::to_string(types.size()) + " types"}});
 
-        std::vector<rco::Measured> measured(work.size());
-        std::atomic<size_t>        next{0}, done{0};
-        std::string                merr;
-        std::mutex                 emu;
-        const int    nthread = (std::max)(1u, std::thread::hardware_concurrency());
-        const int    fetchers = (std::min)(nthread, 12);
+    std::vector<rco::Measured> measured(work.size());
+    std::atomic<size_t>        next{0}, done{0};
+    std::string                merr;
+    std::mutex                 emu;
+    const int                  nthread  = (std::max)(1u, std::thread::hardware_concurrency());
+    const int                  fetchers = (std::min)(nthread, 12);
+    {
         std::vector<std::thread> pool;
         for (int w = 0; w < fetchers; w++) {
             pool.emplace_back([&] {
@@ -1941,13 +1933,14 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     if (k >= work.size()) {
                         return;
                     }
-                    const gsq::TensorEntry & t = layout.tensors[work[k]];
-                    const int64_t rows  = rows_of(t);
-                    const int64_t take  = (std::min)(rows, sample_rows);
-                    const int64_t bytes = static_cast<int64_t>(ggml.row_size(t.type, t.dims[0])) * take;
-                    std::string   raw, ferr2;
-                    if (!fetch_span(hf_download_url(repo, src[t.part].name), layout.data_start[t.part] + t.offset,
-                                    bytes, raw, nullptr, ferr2)) {
+                    const ggufio::TensorEntry & t     = layout.tensors[work[k]];
+                    const int64_t               rows  = t.rows();
+                    const int64_t               take  = (std::min)(rows, sample_rows);
+                    const int64_t               bytes = static_cast<int64_t>(ggml.row_size(
+                                          static_cast<int>(t.type), t.dims[0])) * take;
+                    std::string raw(static_cast<size_t>(bytes), '\0'), ferr2;
+                    if (!fetch_span(hf_download_url(repo, src[t.part].name), layout.file_offset(t), bytes,
+                                    &raw[0], nullptr, ferr2)) {
                         std::lock_guard<std::mutex> lk(emu);
                         if (merr.empty()) {
                             merr = ferr2;
@@ -1955,10 +1948,11 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                         return;
                     }
                     std::vector<float> f(static_cast<size_t>(take * t.dims[0]));
-                    ggml.dequantize(t.type, raw.data(), f.data(), take * t.dims[0]);
+                    ggml.dequantize(static_cast<int>(t.type), raw.data(), f.data(), take * t.dims[0]);
                     rco::Measured m;
-                    m.name     = t.name;
-                    m.elements = t.dims[0] * rows;
+                    m.name       = t.name;
+                    m.elements   = t.dims[0] * rows;
+                    m.floor_bits = rco::floor_bits(t.name);
                     m.costs    = rco::measure(ggml, f.data(), take, t.dims[0], types,
                                               weights(t.name, t.dims[0], 0), take, 1);
                     for (rco::Cost & c : m.costs) {
@@ -1977,27 +1971,26 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         for (auto & t : pool) {
             t.join();
         }
-        if (!merr.empty()) {
-            emit(error_obj(merr));
-            return "";
-        }
-
-        // Everything not in the search keeps the bytes it already has.
-        int64_t fixed = 0;
-        for (const gsq::TensorEntry & t : layout.tensors) {
-            if (!quantizable(t, ggml)) {
-                fixed += t.bytes;
-            }
-        }
-        int64_t budget = 0;
-        for (const rco::Measured & m : measured) {
-            budget += static_cast<int64_t>(std::llround(static_cast<double>(m.elements) * bpw / 8.0));
-        }
-        chosen = rco::allocate(measured, budget);
-        (void) fixed;
-        how = "measured here against " + std::to_string(types.size()) + " types";
+    }
+    if (!merr.empty()) {
+        emit(error_obj(merr));
+        return "";
     }
 
+    int64_t budget = 0;
+    for (const rco::Measured & m : measured) {
+        budget += static_cast<int64_t>(std::llround(static_cast<double>(m.elements) * bpw / 8.0));
+    }
+    const std::map<std::string, int> chosen = rco::allocate(measured, budget);
+
+    if (!env_str("LLMASH_RCO_DUMP").empty()) {
+        for (const ggufio::TensorEntry & t : layout.tensors) {
+            const auto it = chosen.find(t.name);
+            if (it != chosen.end()) {
+                log_line(t.name + " -> " + ggml.name(it->second));
+            }
+        }
+    }
     {
         std::map<std::string, int> hist;
         for (const auto & [name, type] : chosen) {
@@ -2009,15 +2002,14 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         for (size_t i = 0; i < top.size() && i < 6; i++) {
             shown += (i ? "  " : "") + top[i].first + " x" + std::to_string(top[i].second);
         }
-        emit(json{{"status", "  " + pad_right("allocation", 12) + how}});
+        emit(json{{"status", "  " + pad_right("allocation", 12) + "measured against " +
+                                 std::to_string(types.size()) + " types"}});
         emit(json{{"status", "  " + pad_right("", 12) + shown}});
         emit(json{{"status", ""}});
     }
 
-    // Write the header first: an entry's size does not depend on its type, so
-    // the types and offsets are patched in as each tensor is finished.
     std::string stem = strip_shard(stem_of(src.front().name));
-    for (const std::string & q : gsq::source_preference()) {
+    for (const std::string & q : source_preference()) {
         const std::string up = upper(q);
         const size_t      at = lower(stem).find(lower("-" + up));
         if (at != std::string::npos) {
@@ -2025,168 +2017,148 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
             break;
         }
     }
-    const std::string dest = (fs::path(dest_dir) / (stem + "-" + rco_quant_name(bpw, published != nullptr) + ".gguf")).string();
+    const std::string dest = (fs::path(dest_dir) / (stem + "-" + rco_quant_name(bpw) + ".gguf")).string();
     const std::string tmp  = dest + ".part";
     std::string       herr;
-    const int64_t     head = gsq::write_header(tmp, layout, herr);
+    const int64_t     head = ggufio::write_header(tmp, layout, herr);
     if (head < 0) {
         emit(error_obj(herr));
         return "";
     }
-
     std::fstream out(tmp, std::ios::binary | std::ios::in | std::ios::out);
     if (!out) {
         emit(error_obj("could not open " + tmp));
         return "";
     }
 
-    int64_t       written  = head;
-    int64_t       expected = head;
-    for (const gsq::TensorEntry & t : layout.tensors) {
-        const auto it = chosen.find(t.name);
-        const int  ty = it == chosen.end() ? static_cast<int>(t.type) : it->second;
-        expected += ((static_cast<int64_t>(ggml.row_size(ty, t.dims.empty() ? 1 : t.dims[0])) *
-                      (t.dims.empty() ? 1 : rows_of(t))) + layout.align - 1) / layout.align * layout.align;
+    int64_t expected = head;
+    for (const ggufio::TensorEntry & t : layout.tensors) {
+        const auto    it = chosen.find(t.name);
+        const int     ty = it == chosen.end() ? static_cast<int>(t.type) : it->second;
+        const int64_t n  = static_cast<int64_t>(ggml.row_size(ty, t.dims.empty() ? 1 : t.dims[0])) *
+                          (t.dims.empty() ? 1 : t.rows());
+        expected += (n + layout.align - 1) / layout.align * layout.align;
     }
 
-    const int nthread = (std::max)(1u, std::thread::hardware_concurrency());
-    // Spans of consecutive tensors, sized so a download stays ahead of the
-    // quantizer without holding much.
-    const int64_t span_bytes = 512ll << 20;
-    std::vector<gsq::Chunk> spans = gsq::plan_chunks(layout, span_bytes);
+    // Two buffers, swapped: one being quantized, one being fetched into.
+    const std::vector<RowBlock> blocks = plan_blocks(layout, ggml, chosen);
+    std::string                 buf[2];
+    std::future<bool>           ahead;
+    std::string                 ahead_err;
 
-    std::string       ahead;      // the next span, fetched while this one runs
-    std::future<bool> ahead_job;
-    std::string       ahead_err;
-    size_t            ahead_at = 0;
-
-    const auto span_range = [&](const gsq::Chunk & c, size_t & part, int64_t & from, int64_t & bytes) {
-        part = layout.tensors[c.first].part;
-        from = layout.data_start[part] + layout.tensors[c.first].offset;
-        bytes = 0;
-        for (size_t i = c.first; i <= c.last && layout.tensors[i].part == part; i++) {
-            bytes = layout.data_start[part] + layout.tensors[i].offset + layout.tensors[i].bytes - from;
-        }
+    const auto block_bytes = [&](const RowBlock & b) {
+        const ggufio::TensorEntry & t = layout.tensors[b.tensor];
+        return t.dims.empty() ? t.bytes
+                              : static_cast<int64_t>(ggml.row_size(static_cast<int>(t.type), t.dims[0])) * b.rows;
+    };
+    const auto block_from = [&](const RowBlock & b) {
+        const ggufio::TensorEntry & t = layout.tensors[b.tensor];
+        return layout.file_offset(t) +
+               (t.dims.empty() ? 0
+                               : static_cast<int64_t>(ggml.row_size(static_cast<int>(t.type), t.dims[0])) * b.from);
+    };
+    const auto start_fetch = [&](size_t i, int slot) {
+        const RowBlock & b = blocks[i];
+        buf[slot].assign(static_cast<size_t>(block_bytes(b)), '\0');
+        return std::async(std::launch::async, [&, i, slot] {
+            return fetch_span(hf_download_url(repo, src[layout.tensors[blocks[i].tensor].part].name),
+                              block_from(blocks[i]), block_bytes(blocks[i]), &buf[slot][0], nullptr, ahead_err);
+        });
     };
 
-    std::vector<unsigned char> qbuf;
     std::vector<float>         fbuf;
-    for (size_t si = 0; si < spans.size(); si++) {
-        size_t  part = 0;
-        int64_t from = 0, bytes = 0;
-        span_range(spans[si], part, from, bytes);
+    std::vector<unsigned char> qbuf;
+    int64_t                    written = head;
+    int64_t                    fetched = 0;
+    std::map<size_t, int64_t>  tensor_at; // where each tensor's data begins
 
-        std::string data;
-        if (ahead_job.valid() && ahead_at == si) {
-            if (!ahead_job.get()) {
-                emit(error_obj(ahead_err));
-                return "";
-            }
-            data = std::move(ahead);
+    std::future<bool> job = start_fetch(0, 0);
+    for (size_t i = 0; i < blocks.size(); i++) {
+        const int        slot = static_cast<int>(i % 2);
+        const RowBlock & b    = blocks[i];
+        if (!job.get()) {
+            emit(error_obj(ahead_err));
+            return "";
+        }
+        std::string & data = buf[slot];
+        fetched += static_cast<int64_t>(data.size());
+        if (i + 1 < blocks.size()) {
+            job = start_fetch(i + 1, static_cast<int>((i + 1) % 2));
+        }
+
+        const ggufio::TensorEntry & t = layout.tensors[b.tensor];
+        if (tensor_at.find(b.tensor) == tensor_at.end()) {
+            tensor_at[b.tensor] = written;
+        }
+        const auto it = chosen.find(t.name);
+        out.seekp(written, std::ios::beg);
+        if (it == chosen.end() || it->second == static_cast<int>(t.type)) {
+            out.write(data.data(), static_cast<std::streamsize>(data.size()));
+            written += static_cast<int64_t>(data.size());
         } else {
-            std::atomic<int64_t> seen{0};
-            std::atomic<bool>    fin{false};
-            bool                 ok = false;
-            std::string          e;
-            std::thread          w([&] {
-                ok = fetch_span(hf_download_url(repo, src[part].name), from, bytes, data,
-                                [&](int64_t n) { seen.store(n); }, e);
-                fin.store(true);
-            });
-            while (!fin.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                emit(json{{"status", "fetching"},
-                          {"digest", "rco-fetch"},
-                          {"total", src_bytes},
-                          {"completed", (std::min)(written - head + seen.load(), src_bytes)}});
-            }
-            w.join();
-            if (!ok) {
-                emit(error_obj(e));
-                return "";
-            }
-        }
+            const int     ty    = it->second;
+            const int64_t n_per = t.dims[0];
+            fbuf.resize(static_cast<size_t>(b.rows * n_per));
+            ggml.dequantize(static_cast<int>(t.type), data.data(), fbuf.data(), b.rows * n_per);
+            qbuf.assign(ggml.row_size(ty, n_per) * static_cast<size_t>(b.rows) + 64, 0);
 
-        // Start the next span before quantizing this one.
-        if (si + 1 < spans.size()) {
-            size_t  npart = 0;
-            int64_t nfrom = 0, nbytes = 0;
-            span_range(spans[si + 1], npart, nfrom, nbytes);
-            ahead_at  = si + 1;
-            ahead_job = std::async(std::launch::async, [&, npart, nfrom, nbytes] {
-                return fetch_span(hf_download_url(repo, src[npart].name), nfrom, nbytes, ahead, nullptr, ahead_err);
-            });
-        }
-
-        for (size_t i = spans[si].first; i <= spans[si].last; i++) {
-            const gsq::TensorEntry & t   = layout.tensors[i];
-            const int64_t            off = layout.data_start[t.part] + t.offset - from;
-            const auto               it  = chosen.find(t.name);
-
-            out.seekp(written, std::ios::beg);
-            if (it == chosen.end() || it->second == static_cast<int>(t.type)) {
-                out.write(data.data() + off, t.bytes);
-                gsq::patch_entry(out, layout, i, t.type, written - head);
-                written += (t.bytes + layout.align - 1) / layout.align * layout.align;
-            } else {
-                const int     ty    = it->second;
-                const int64_t n_per = t.dims[0];
-                const int64_t rows  = rows_of(t);
-                const int64_t experts = t.dims.size() > 2 ? t.dims[2] : 1;
-                const int64_t per_expert = rows / (std::max<int64_t>)(experts, 1);
-
-                fbuf.resize(static_cast<size_t>(n_per * rows));
-                ggml.dequantize(t.type, data.data() + off, fbuf.data(), n_per * rows);
-                qbuf.assign(ggml.row_size(ty, n_per) * static_cast<size_t>(rows) + 64, 0);
-
-                // Split by rows, not by experts: a dense tensor has one
-                // expert, and quantizing it on one thread was most of the
-                // time this used to take.
-                const int64_t            block = (std::max<int64_t>)(1, (per_expert + nthread - 1) / nthread);
-                std::atomic<int64_t>     next_row{0};
-                std::vector<std::thread> pool;
-                for (int w = 0; w < nthread; w++) {
-                    pool.emplace_back([&] {
-                        for (;;) {
-                            const int64_t k    = next_row.fetch_add(1);
-                            const int64_t from = k * block;
-                            if (from >= rows) {
-                                return;
-                            }
-                            const int64_t e    = from / per_expert;
-                            const int64_t take = (std::min)(block, per_expert - from % per_expert);
-                            ggml.quantize(ty, fbuf.data() + from * n_per,
-                                          qbuf.data() + ggml.row_size(ty, n_per) * static_cast<size_t>(from),
-                                          take, n_per, weights(t.name, n_per, e));
+            const int64_t            step = (std::max<int64_t>)(1, (b.rows + nthread - 1) / nthread);
+            std::atomic<int64_t>     nr{0};
+            std::vector<std::thread> pool;
+            for (int w = 0; w < nthread; w++) {
+                pool.emplace_back([&] {
+                    for (;;) {
+                        const int64_t from = nr.fetch_add(1) * step;
+                        if (from >= b.rows) {
+                            return;
                         }
-                    });
-                }
-                for (auto & p : pool) {
-                    p.join();
-                }
-                const int64_t qbytes = static_cast<int64_t>(ggml.row_size(ty, n_per)) * rows;
-                out.write(reinterpret_cast<const char *>(qbuf.data()), qbytes);
-                gsq::patch_entry(out, layout, i, static_cast<uint32_t>(ty), written - head);
-                written += (qbytes + layout.align - 1) / layout.align * layout.align;
+                        ggml.quantize(ty, fbuf.data() + from * n_per,
+                                      qbuf.data() + ggml.row_size(ty, n_per) * static_cast<size_t>(from),
+                                      (std::min)(step, b.rows - from), n_per, weights(t.name, n_per, b.expert));
+                    }
+                });
             }
-            if (!out) {
-                emit(error_obj("could not write " + tmp));
-                return "";
+            for (auto & p : pool) {
+                p.join();
             }
-            emit(json{{"status", "quantizing"},
-                      {"digest", "rco-write"},
-                      {"total", expected},
-                      {"completed", (std::min)(written, expected)}});
+            const int64_t qbytes = static_cast<int64_t>(ggml.row_size(ty, n_per)) * b.rows;
+            out.write(reinterpret_cast<const char *>(qbuf.data()), qbytes);
+            written += qbytes;
         }
+        if (!out) {
+            emit(error_obj("could not write " + tmp));
+            return "";
+        }
+        data.clear();
+        data.shrink_to_fit();
+
+        // The last block of a tensor closes it: pad to alignment and record
+        // where it began.
+        const bool last = i + 1 == blocks.size() || blocks[i + 1].tensor != b.tensor;
+        if (last) {
+            const int64_t at  = tensor_at[b.tensor];
+            const int64_t pad = (written - at + layout.align - 1) / layout.align * layout.align - (written - at);
+            if (pad > 0) {
+                out.write(std::string(static_cast<size_t>(pad), '\0').data(), pad);
+                written += pad;
+            }
+            ggufio::patch_entry(out, layout, b.tensor,
+                                it == chosen.end() ? t.type : static_cast<uint32_t>(it->second), at - head);
+        }
+        emit(json{{"status", "quantizing"},
+                  {"digest", "rco-write"},
+                  {"total", expected},
+                  {"completed", (std::min)(written, expected)}});
     }
     out.close();
+    (void) fetched;
 
     fs::rename(tmp, dest, ec);
     const int64_t out_bytes = static_cast<int64_t>(fs::file_size(dest, ec));
     int64_t       params    = 0;
-    for (const gsq::TensorEntry & t : layout.tensors) {
+    for (const ggufio::TensorEntry & t : layout.tensors) {
         if (quantizable(t, ggml)) {
-            params += t.dims[0] * rows_of(t);
+            params += t.dims[0] * t.rows();
         }
     }
     char achieved[32];
@@ -2945,13 +2917,11 @@ json api_quants(const std::string & repo_arg) {
         for (const HfFile & f : src) {
             src_bytes += f.size;
         }
-        // Sized off the build it is made from, whose width is known. Any
-        // model can have one computed; a published search is named for it.
-        const double ref  = bits_of_quant(quant_tag(src.front().name));
-        const bool   pub  = !gsq::all_for_arch(meta.arch, meta.embd).empty();
-        for (const double b : {rco::DEFAULT_BPW, 3.5, 3.0}) {
+        // Sized off the build it is made from, whose width is known.
+        const double ref = bits_of_quant(quant_tag(src.front().name));
+        for (const double b : {rco::DEFAULT_BPW, 3.0, 2.75}) {
             const int64_t size = ref > 0 ? static_cast<int64_t>(static_cast<double>(src_bytes) * b / ref) : 0;
-            quants.push_back(QuantInfo{rco_quant_name(b, pub && gsq::for_model(meta.arch, meta.embd, b)), size, 1});
+            quants.push_back(QuantInfo{rco_quant_name(b), size, 1});
         }
     }
 

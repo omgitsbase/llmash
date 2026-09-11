@@ -45,9 +45,10 @@ int64_t total_bytes(const std::vector<Measured> & ms, double lambda) {
 
 int main() {
     // Two tensors, three types each: cheap ones cost more error.
+    // {type, bits, error, bytes}
     const std::vector<Measured> ms{
-        with_costs("a", 1000, {{GT_Q6_K, 0.001, 800}, {GT_IQ4_XS, 0.010, 530}, {GT_IQ2_S, 0.100, 300}}),
-        with_costs("b", 1000, {{GT_Q6_K, 0.002, 800}, {GT_IQ4_XS, 0.004, 530}, {GT_IQ2_S, 0.500, 300}}),
+        with_costs("a", 1000, {{GT_Q6_K, 6.5, 0.001, 800}, {GT_IQ4_XS, 4.25, 0.010, 530}, {GT_IQ2_S, 2.5, 0.100, 300}}),
+        with_costs("b", 1000, {{GT_Q6_K, 6.5, 0.002, 800}, {GT_IQ4_XS, 4.25, 0.004, 530}, {GT_IQ2_S, 2.5, 0.500, 300}}),
     };
 
     check(pick(ms[0], 0.0) == GT_Q6_K, "with bytes free, the best type wins");
@@ -66,6 +67,17 @@ int main() {
 
     check(total_bytes(ms, solve_lambda(ms, 600)) <= 600, "a tight budget is still met");
     check(total_bytes(ms, solve_lambda(ms, 1600)) <= 1600, "a loose one spends what it may");
+
+    // A floored tensor keeps its width however dear bytes become.
+    {
+        std::vector<Measured> floored = ms;
+        floored[0].floor_bits = 6.0;
+        check(pick(floored[0], 1e9) == GT_Q6_K, "a floor holds against any price");
+        check(pick(floored[1], 1e9) == GT_IQ2_S, "and applies only to the tensor that has one");
+        check(floor_bits("output.weight") >= 6.0, "the head is floored");
+        check(floor_bits("token_embd.weight") >= 3.0, "so is the embedding");
+        check(floor_bits("blk.0.ffn_gate.weight") == 0, "an ordinary tensor is not");
+    }
 
     // The ladder's steps are coarse, so the bisection alone leaves budget on
     // the table; what allocate() adds is handing that remainder out.
