@@ -213,6 +213,15 @@ if ($Uninstall) {
     }
     $disabled = Join-Path $Startup 'Ollama.lnk.disabled'
     if (Test-Path $disabled) { Move-Item $disabled (Join-Path $Startup 'Ollama.lnk') -Force; Say "restored Ollama's startup entry" }
+    $saved = Join-Path $Root 'ollama-startup.json'
+    if (Test-Path $saved) {
+        $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+        foreach ($e in @(Get-Content $saved -Raw | ConvertFrom-Json)) {
+            Set-ItemProperty $runKey -Name $e.name -Value $e.value
+        }
+        Remove-Item $saved -Force
+        Say "restored Ollama's startup entry"
+    }
     if (Test-Path $RegKey) { Remove-Item $RegKey -Recurse -Force; Say 'removed from Settings > Apps' }
     Good "done. $Root left in place; delete it by hand if you want it gone."
     return
@@ -495,9 +504,23 @@ if (-not $NoStartup) {
 
 # ---------------------------------------------------------------------- ollama
 # Both want port 11434, so only one of them can be the server.
-$ollamaLnk = Join-Path $Startup 'Ollama.lnk'
+#
+# Ollama starts itself from the Run key, not from a Startup shortcut, so
+# renaming a shortcut that is not there left it starting anyway. The Run
+# entry is saved into ollama-startup.json before it is deleted, because the
+# key is the only record of it and uninstall has to put it back.
+$ollamaLnk   = Join-Path $Startup 'Ollama.lnk'
 $ollamaProcs = @(Get-Process -Name 'ollama', 'ollama app', 'ollama_llama_server' -ErrorAction SilentlyContinue)
-$ollamaAtLogin = Test-Path $ollamaLnk
+$runKey      = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$ollamaRun   = @()
+if (Test-Path $runKey) {
+    $props = Get-ItemProperty $runKey
+    foreach ($p in $props.PSObject.Properties) {
+        if ($p.Name -like 'PS*') { continue }
+        if ("$($p.Value)" -match 'ollama') { $ollamaRun += @{ name = $p.Name; value = "$($p.Value)" } }
+    }
+}
+$ollamaAtLogin = (Test-Path $ollamaLnk) -or $ollamaRun.Count
 if (-not $NoOllama -and ($ollamaProcs.Count -or $ollamaAtLogin)) {
     Step 'Ollama'
     if ($ollamaProcs.Count) { Say 'Ollama is running' }
@@ -509,10 +532,15 @@ if (-not $NoOllama -and ($ollamaProcs.Count -or $ollamaAtLogin)) {
             Start-Sleep -Seconds 2
             Good 'closed Ollama'
         }
-        if ($ollamaAtLogin) {
+        if (Test-Path $ollamaLnk) {
             Move-Item $ollamaLnk "$ollamaLnk.disabled" -Force
-            Good 'took Ollama off startup (put back by llmash uninstall)'
         }
+        if ($ollamaRun.Count) {
+            $ollamaRun | ConvertTo-Json -Depth 3 |
+                Set-Content (Join-Path $Root 'ollama-startup.json') -Encoding UTF8
+            foreach ($e in $ollamaRun) { Remove-ItemProperty $runKey -Name $e.name -Force }
+        }
+        if ($ollamaAtLogin) { Good 'took Ollama off startup (put back by llmash uninstall)' }
     } else {
         Warn 'left Ollama alone; whichever starts first will hold port 11434'
     }

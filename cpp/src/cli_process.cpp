@@ -76,4 +76,40 @@ ProcessResult run_hidden(const std::vector<std::string> & argv, const std::strin
     return result;
 }
 
+int run_streaming(const std::vector<std::string> & argv, const std::function<void(const std::string &)> & on_line) {
+    ScopedProcess proc;
+    const int     options = subprocess_option_no_window | subprocess_option_inherit_environment |
+                        subprocess_option_combined_stdout_stderr;
+    if (!proc.create(argv, options)) {
+        return -1;
+    }
+    FILE * out = subprocess_stdout(proc.get());
+    if (out != nullptr) {
+        std::string line;
+        char        buf[4096];
+        size_t      n;
+        while ((n = std::fread(buf, 1, sizeof(buf), out)) > 0) {
+            for (size_t i = 0; i < n; i++) {
+                if (buf[i] == '\n') {
+                    while (!line.empty() && line.back() == '\r') {
+                        line.pop_back();
+                    }
+                    if (on_line) {
+                        on_line(line);
+                    }
+                    line.clear();
+                } else {
+                    line.push_back(buf[i]);
+                }
+            }
+        }
+        if (!line.empty() && on_line) {
+            on_line(line);
+        }
+    }
+    int code = -1;
+    subprocess_join(proc.get(), &code);
+    return code;
+}
+
 } // namespace llmash

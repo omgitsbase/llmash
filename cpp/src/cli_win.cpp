@@ -88,6 +88,18 @@ bool reg_delete_hkcu_key(const std::string & subkey) {
     return RegDeleteKeyW(HKEY_CURRENT_USER, to_wide(subkey).c_str()) == ERROR_SUCCESS;
 }
 
+bool reg_set_run_value(const std::string & name, const std::string & value) {
+    ScopedHKey key;
+    if (key.open(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                 KEY_READ | KEY_WRITE) != ERROR_SUCCESS) {
+        return false;
+    }
+    const std::wstring w = to_wide(value);
+    return RegSetValueExW(key.get(), to_wide(name).c_str(), 0, REG_SZ,
+                          reinterpret_cast<const BYTE *>(w.c_str()),
+                          static_cast<DWORD>((w.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+}
+
 bool remove_from_user_path(const std::string & bin_dir) {
     ScopedHKey key;
     if (key.open(HKEY_CURRENT_USER, L"Environment", KEY_READ | KEY_WRITE) != ERROR_SUCCESS) {
