@@ -117,12 +117,12 @@ and come off where they do not.
 
 The source is the repository's Q8_0, read a block of rows at a time and
 dropped once quantized, so nothing but the result is written to disk and the
-whole conversion holds about 350 MB of memory. The picker shows both numbers,
-what comes down and what is kept:
+whole conversion holds about 350 MB of memory. The picker shows both
+numbers, the bandwidth it costs and what it leaves behind:
 
 ```
 qwen3-1.7b, which build?
-  advanced RCO-3.9         2.2 GB down,   996 MB kept
+  advanced RCO-3.9         2.2 GB bandwidth,   996 MB finalized
   tiny     IQ3_XS          923 MB
   medium   Q4_K_M          1.1 GB
   large    Q8_0            2.2 GB
@@ -138,7 +138,7 @@ temperature 0 with the Q8_0 as the reference:
 | RCO-3.9 | 0.93 GB | 5/6 |
 
 Qwen3.6-35B-A3B, a mixture of experts, goes from 37 GB of Q8_0 to 17 GB in
-24 minutes and answers 5 of the same 6, holding 443 MB of memory while it
+17 minutes and answers 5 of the same 6, holding 438 MB of memory while it
 works.
 
 It needs ggml, which comes with the llama.cpp runtime beside `llama-server`.

@@ -1597,6 +1597,11 @@ namespace {
 // an option.
 constexpr int64_t BLOCK_BYTES = 16ll << 20;
 
+// One request per half block. Eight small pieces per block put forty
+// requests in flight and Hugging Face refused them; ten large ones move the
+// same bytes.
+constexpr int64_t PIECE_BYTES = 8ll << 20;
+
 std::string mmss(double seconds) {
     const int s = static_cast<int>(seconds);
     char      buf[32];
@@ -1657,16 +1662,19 @@ std::string find_imatrix(const std::vector<HfFile> & files) {
 
 // A stretch of a remote file, into a caller-owned buffer, over several
 // connections.
+// `min_piece` keeps the pieces large: throughput is (requests in flight) x
+// (bytes each), but it is the number of requests that trips a rate limiter,
+// so the same overlap is bought with fewer, bigger ones.
 bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out, const ProgressFn & progress,
-                std::string & err) {
+                std::string & err, int64_t min_piece = 0) {
     struct Block {
         int64_t from, bytes, into;
     };
-    // Split across every connection rather than into fixed lumps: a fetch
-    // this size cut into 8 MB pieces only ever had three in flight, and the
-    // conversion went from download-bound at 60 MB/s to 12.
+    // Across every connection, but never into pieces smaller than the caller
+    // asks for.
     std::vector<Block> blocks;
-    const int64_t      step = (std::max<int64_t>)(1ll << 20, (bytes + dl_streams() - 1) / dl_streams());
+    const int64_t      step = (std::max)((std::max<int64_t>)(1ll << 20, min_piece),
+                                    (bytes + dl_streams() - 1) / dl_streams());
     for (int64_t at = 0; at < bytes; at += step) {
         blocks.push_back(Block{from + at, (std::min)(step, bytes - at), at});
     }
@@ -1696,7 +1704,9 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out
                     b = blocks[next++];
                 }
                 std::string last;
-                for (int attempt = 0; attempt < 4; attempt++) {
+                // A conversion reads for many minutes, so a refusal is worth
+                // waiting out rather than failing the whole pull.
+                for (int attempt = 0; attempt < 7; attempt++) {
                     char range[64];
                     std::snprintf(range, sizeof(range), "bytes=%lld-%lld", static_cast<long long>(b.from),
                                   static_cast<long long>(b.from + b.bytes - 1));
@@ -1709,7 +1719,7 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out
                         // the ceiling is the server's, and hurrying into it
                         // only earns another refusal.
                         last = "the server is rate limiting this address";
-                        std::this_thread::sleep_for(std::chrono::seconds(2 + attempt * 3));
+                        std::this_thread::sleep_for(std::chrono::seconds(3 + attempt * 7));
                     } else if (stm.status != 200 && stm.status != 206) {
                         last = "HTTP " + std::to_string(stm.status);
                     } else {
@@ -2126,7 +2136,8 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         buf[slot].assign(static_cast<size_t>(block_bytes(blocks[i])), '\0');
         return std::async(std::launch::async, [&, i, slot] {
             return fetch_span(hf_download_url(repo, src[layout.tensors[blocks[i].tensor].part].name),
-                              block_from(blocks[i]), block_bytes(blocks[i]), &buf[slot][0], nullptr, job_err[slot]);
+                              block_from(blocks[i]), block_bytes(blocks[i]), &buf[slot][0], nullptr, job_err[slot],
+                              PIECE_BYTES);
         });
     };
 
