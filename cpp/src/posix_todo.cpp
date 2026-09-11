@@ -1,5 +1,5 @@
-// Stands in for what is still Windows-only: the downloader, the tray, and the
-// shell integration. Each says so rather than pretending to work.
+// Stands in for what is still Windows-only: the tray and the shell
+// integration. Each says so rather than pretending to work.
 #ifndef _WIN32
 
 #include "cli_win.h"
@@ -15,30 +15,6 @@ namespace fs = std::filesystem;
 namespace llmash {
 
 static std::string not_ported(const char * what) { return std::string(what) + " is not available on Linux yet"; }
-
-HttpResult http_request(const std::string &, const std::string &, const std::string &,
-                        const std::vector<std::string> &, int) {
-    HttpResult r;
-    r.error = not_ported("downloading");
-    return r;
-}
-
-void handle_pull(const httplib::Request &, httplib::Response & res, Config &, Registry &) {
-    res.status = 501;
-    res.set_content("{\"error\":\"pull is not available on Linux yet\"}", "application/json");
-}
-
-void handle_quants(const httplib::Request &, httplib::Response & res, Config &, Registry &) {
-    res.status = 501;
-    res.set_content("{\"error\":\"quants is not available on Linux yet\"}", "application/json");
-}
-
-void handle_resolve(const httplib::Request &, httplib::Response & res, Config &, Registry &) {
-    res.status = 501;
-    res.set_content("{\"error\":\"resolve is not available on Linux yet\"}", "application/json");
-}
-
-std::string quant_tag(const std::string &) { return ""; }
 
 bool cmd_tray(const Config &, std::string & err) {
     err = not_ported("the tray");
