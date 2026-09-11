@@ -46,6 +46,14 @@ struct Tiers {
     int tiny = 0, medium = 0, large = 0;
 };
 
+// What the build picker came back with. `registry` means the model's own
+// build on the Ollama registry, which is not one of the repository's.
+struct BuildChoice {
+    std::string quant;
+    std::string mtp;
+    bool        registry = false;
+};
+
 double bits_of(const std::string & quant_name);
 Tiers  tiers_of(const std::vector<QuantInfo> & quants);
 // The quantisation tag embedded in a GGUF file name (pull.go's quantTag),

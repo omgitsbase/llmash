@@ -163,25 +163,31 @@ private:
 // ============================================================ allocations
 
 const std::vector<Allocation> & known() {
+    static const std::string q38 = "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF";
+    static const std::string im  = "imatrix-qwen3.8-27b.gguf";
+    static const std::string dir = "tensor-allocation/Qwen3.8-27B-GSQ-RCO-";
     static const std::vector<Allocation> all = {
-        {"GSQ-RCO 3.5 bpw (task-lossless)", "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF",
-         "tensor-allocation/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.rco-allocation.txt", "imatrix-qwen3.8-27b.gguf", 3.5,
-         "qwen35", 5120, "IQ3_S"},
-        {"GSQ-RCO 3.0 bpw", "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF",
-         "tensor-allocation/Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.rco-allocation.txt", "imatrix-qwen3.8-27b.gguf", 3.0,
-         "qwen35", 5120, "IQ3_XXS"},
+        {"GSQ-RCO 3.5 bpw, task-lossless", q38, dir + "IQ3_S-mtp.rco-allocation.txt", im, 3.5, "qwen35", 5120,
+         "IQ3_S"},
+        {"GSQ-RCO 3.0 bpw", q38, dir + "IQ3_XXS-mtp.rco-allocation.txt", im, 3.0, "qwen35", 5120, "IQ3_XXS"},
+        {"GSQ-RCO 2.75 bpw", q38, dir + "IQ2_S-mtp.rco-allocation.txt", im, 2.75, "qwen35", 5120, "IQ2_S"},
+        {"GSQ-RCO 2.5 bpw", q38, dir + "IQ2_XS-mtp.rco-allocation.txt", im, 2.5, "qwen35", 5120, "IQ2_XS"},
     };
     return all;
 }
 
 std::string quant_name(double bpw) {
     char buf[32];
-    if (bpw == static_cast<int>(bpw)) {
-        std::snprintf(buf, sizeof(buf), "GSQ-%d", static_cast<int>(bpw));
-    } else {
-        std::snprintf(buf, sizeof(buf), "GSQ-%.1f", bpw);
+    std::snprintf(buf, sizeof(buf), "%.2f", bpw);
+    std::string s = buf;
+    while (s.find('.') != std::string::npos && (s.back() == '0' || s.back() == '.')) {
+        const bool dot = s.back() == '.';
+        s.pop_back();
+        if (dot) {
+            break;
+        }
     }
-    return buf;
+    return "GSQ-" + s;
 }
 
 double bpw_of_quant(const std::string & quant) {
