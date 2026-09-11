@@ -137,6 +137,10 @@ temperature 0 with the Q8_0 as the reference:
 | IQ3_XS | 0.90 GB | 4/6 |
 | RCO-3.9 | 0.93 GB | 5/6 |
 
+Qwen3.6-35B-A3B, a mixture of experts, goes from 37 GB of Q8_0 to 17 GB in
+24 minutes and answers 5 of the same 6, holding 443 MB of memory while it
+works.
+
 It needs ggml, which comes with the llama.cpp runtime beside `llama-server`.
 
 ## Speculation
