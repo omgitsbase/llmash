@@ -177,6 +177,21 @@ double bits_of_type(const Ggml & g, int type) {
     return b > 0 ? static_cast<double>(g.type_size(type)) * 8.0 / static_cast<double>(b) : 32.0;
 }
 
+std::vector<int> candidates_for(const Ggml & g, double bpw) {
+    // A tensor more than a bit and a half under the average does more damage
+    // than the bytes it frees are worth: measured on Qwen3.6-35B-A3B, an
+    // unwindowed search funded itself with a hundred iq1_m tensors and the
+    // model came back repeating one word.
+    std::vector<int> out;
+    for (const int t : candidates()) {
+        if (bits_of_type(g, t) >= bpw - 1.5) {
+            out.push_back(t);
+        }
+    }
+    return out.empty() ? candidates() : out;
+}
+
+
 std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int64_t n_per_row,
                           const std::vector<int> & types, const float * imatrix, int64_t sample_rows,
                           int nthread) {

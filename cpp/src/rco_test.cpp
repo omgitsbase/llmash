@@ -67,6 +67,23 @@ int main() {
     check(total_bytes(ms, solve_lambda(ms, 600)) <= 600, "a tight budget is still met");
     check(total_bytes(ms, solve_lambda(ms, 1600)) <= 1600, "a loose one spends what it may");
 
+    // The ladder's steps are coarse, so the bisection alone leaves budget on
+    // the table; what allocate() adds is handing that remainder out.
+    {
+        const auto    types = allocate(ms, budget);
+        int64_t       spent = 0;
+        for (const Measured & one : ms) {
+            for (const Cost & c : one.costs) {
+                if (c.type == types.at(one.name)) {
+                    spent += c.bytes;
+                }
+            }
+        }
+        check(types.size() == ms.size(), "every tensor is given a type");
+        check(spent <= budget, "and the total stays inside the budget");
+        check(spent >= total_bytes(ms, lambda), "using at least what the bisection did");
+    }
+
     Config      cfg;
     cfg.llama_bin = env_str("LLAMA_BIN");
     Ggml        g;

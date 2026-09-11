@@ -54,6 +54,9 @@ private:
 // The types a search may assign. Ordered widest first.
 const std::vector<int> & candidates();
 
+// Those of them a build at this width may use.
+std::vector<int> candidates_for(const Ggml & g, double bpw);
+
 // What a custom build aims for by default: the size of an IQ4_XS build,
 // spent where it does the most good.
 constexpr double DEFAULT_BPW = 4.25;
