@@ -1922,8 +1922,9 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         // costs does not grow with the model, then bisect the multiplier
         // until the total lands on the budget.
         const int64_t sample_rows = 128;
+        const std::vector<int> types = rco::candidates_for(ggml, bpw);
         emit(json{{"status", "  " + pad_right("allocation", 12) + "measuring " + std::to_string(work.size()) +
-                                 " tensors against " + std::to_string(rco::candidates().size()) + " types"}});
+                                 " tensors against " + std::to_string(types.size()) + " types"}});
 
         std::vector<rco::Measured> measured(work.size());
         std::atomic<size_t>        next{0}, done{0};
@@ -1957,7 +1958,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     rco::Measured m;
                     m.name     = t.name;
                     m.elements = t.dims[0] * rows;
-                    m.costs    = rco::measure(ggml, f.data(), take, t.dims[0], rco::candidates(),
+                    m.costs    = rco::measure(ggml, f.data(), take, t.dims[0], types,
                                               weights(t.name, t.dims[0], 0), take, 1);
                     for (rco::Cost & c : m.costs) {
                         c.bytes = static_cast<int64_t>(ggml.row_size(c.type, t.dims[0])) * rows;
@@ -1993,7 +1994,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         }
         chosen = rco::allocate(measured, budget);
         (void) fixed;
-        how = "measured here against " + std::to_string(rco::candidates().size()) + " types";
+        how = "measured here against " + std::to_string(types.size()) + " types";
     }
 
     {
@@ -2050,7 +2051,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     const int nthread = (std::max)(1u, std::thread::hardware_concurrency());
     // Spans of consecutive tensors, sized so a download stays ahead of the
     // quantizer without holding much.
-    const int64_t span_bytes = 2ll << 30;
+    const int64_t span_bytes = 512ll << 20;
     std::vector<gsq::Chunk> spans = gsq::plan_chunks(layout, span_bytes);
 
     std::string       ahead;      // the next span, fetched while this one runs
@@ -2059,10 +2060,12 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     size_t            ahead_at = 0;
 
     const auto span_range = [&](const gsq::Chunk & c, size_t & part, int64_t & from, int64_t & bytes) {
-        part  = layout.tensors[c.first].part;
-        from  = layout.data_start[part] + layout.tensors[c.first].offset;
-        const gsq::TensorEntry & last = layout.tensors[c.last];
-        bytes = layout.data_start[last.part] + last.offset + last.bytes - from;
+        part = layout.tensors[c.first].part;
+        from = layout.data_start[part] + layout.tensors[c.first].offset;
+        bytes = 0;
+        for (size_t i = c.first; i <= c.last && layout.tensors[i].part == part; i++) {
+            bytes = layout.data_start[part] + layout.tensors[i].offset + layout.tensors[i].bytes - from;
+        }
     };
 
     std::vector<unsigned char> qbuf;
