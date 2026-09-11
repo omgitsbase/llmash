@@ -14,6 +14,7 @@
 #include <limits>
 #include <random>
 #include <regex>
+#include <set>
 #include <stdexcept>
 #include <system_error>
 
@@ -657,6 +658,99 @@ void run_copy(const Config & cfg, const Model & source, const std::string & dest
 
 // ------------------------------------------------------------- delete
 
+json read_manifest(const fs::path & p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) {
+        return json::object();
+    }
+    const json j = json::parse(in, nullptr, false);
+    return j.is_object() ? j : json::object();
+}
+
+// Every blob a manifest names, config layer included.
+std::vector<std::string> digests_of(const json & j) {
+    std::vector<std::string> out;
+    json layers = j.value("layers", json::array());
+    if (j.contains("config") && j["config"].is_object()) {
+        layers.push_back(j["config"]);
+    }
+    for (const auto & layer : layers) {
+        std::string d = layer.value("digest", std::string());
+        if (!d.empty()) {
+            std::replace(d.begin(), d.end(), ':', '-');
+            out.push_back(d);
+        }
+    }
+    return out;
+}
+
+// Every blob digest named by any manifest under a store, so a blob shared
+// with a model that is staying is never collected.
+std::set<std::string> digests_in_use(const fs::path & manifests,
+                                     const std::string & except) {
+    std::set<std::string> used;
+    std::error_code       ec;
+    for (auto it = fs::recursive_directory_iterator(
+             manifests, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+        if (!it->is_regular_file(ec) || it->path().string() == except) {
+            continue;
+        }
+        for (const auto & d : digests_of(read_manifest(it->path()))) {
+            used.insert(d);
+        }
+    }
+    return used;
+}
+
+// Remove a model the Ollama way: drop its manifest, then the blobs no
+// remaining manifest still refers to.
+DeleteOutcome delete_from_store(const Model & m) {
+    DeleteOutcome out;
+    std::error_code ec;
+
+    const std::vector<std::string> mine = digests_of(read_manifest(fs::path(m.manifest)));
+
+    if (!fs::remove(fs::path(m.manifest), ec) || ec) {
+        out.status = 500;
+        out.body   = error_obj("could not remove " + m.name + "'s manifest: " +
+                             (ec ? ec.message() : std::string("it is still there")));
+        return out;
+    }
+    // Ollama leaves the empty <name> folder behind; tidy it so `list` on the
+    // store does not show a directory with nothing in it.
+    fs::path dir = fs::path(m.manifest).parent_path();
+    for (int i = 0; i < 3 && fs::is_empty(dir, ec) && !ec; i++) {
+        if (!fs::remove(dir, ec) || ec) {
+            break;
+        }
+        dir = dir.parent_path();
+    }
+
+    std::vector<std::string> removed{m.name};
+    const auto used = digests_in_use(fs::path(m.store_root) / "manifests", m.manifest);
+    uint64_t freed = 0;
+    for (const auto & d : mine) {
+        if (used.count(d)) {
+            continue;
+        }
+        const fs::path blob = fs::path(m.store_root) / "blobs" / d;
+        const auto     sz   = fs::file_size(blob, ec);
+        if (!ec && fs::remove(blob, ec) && !ec) {
+            freed += sz;
+            removed.push_back(d);
+        }
+    }
+    out.status = 200;
+    out.body   = json{{"status", "success"}, {"removed", removed},
+                      {"freed", freed}};
+    return out;
+}
+
 DeleteOutcome run_delete(const Model & m) {
     DeleteOutcome out;
     // Go compares the file's folder against the loose-GGUF folder; the only
@@ -669,6 +763,13 @@ DeleteOutcome run_delete(const Model & m) {
         return out;
     }
     std::vector<std::string> removed;
+    // An Ollama-store model is a manifest naming blobs that other manifests
+    // may also name, so deleting `path` is both wrong and not enough: the
+    // blob carries no .gguf extension, the shard scan below matched nothing,
+    // and `rm` answered "nothing to delete" for a model plainly in the list.
+    if (!m.manifest.empty()) {
+        return delete_from_store(m);
+    }
     if (file_exists(m.path)) {
         const fs::path    dir  = fs::path(m.path).parent_path();
         const std::string stem = strip_shard(stem_of(m.path));

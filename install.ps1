@@ -221,16 +221,27 @@ if ($Uninstall) {
 function Ask ($question) {
     if ($Yes) { return $true }
     if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
-        while ($true) {
+        # Whatever is already in the keyboard buffer was typed at the shell,
+        # not at this question — the newline that ran `irm ... | iex` among it.
+        # Left there, each stray key was eaten as an answer, matched neither
+        # branch, and redrew the prompt: five copies on one screen.
+        try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
+        for ($i = 0; $i -lt 5; $i++) {
             Write-Host "  $question " -NoNewline
-            Write-Host '[y/n]' -ForegroundColor Cyan -NoNewline
+            Write-Host '[Y/n]' -ForegroundColor Cyan -NoNewline
             Write-Host ' ' -NoNewline
-            switch ([Console]::ReadKey($true).KeyChar) {
-                'y' { Write-Host 'y'; return $true }
-                'n' { Write-Host 'n'; return $false }
+            try { $key = [Console]::ReadKey($true).KeyChar } catch { break }
+            if ($key -eq 'y' -or $key -eq 'Y' -or $key -eq "`r" -or $key -eq "`n") {
+                Write-Host 'y'; return $true
+            }
+            if ($key -eq 'n' -or $key -eq 'N' -or $key -eq [char]27) {
+                Write-Host 'n'; return $false
             }
             Write-Host ''
         }
+        # A console that cannot be read must not spin.
+        Write-Host 'y'
+        return $true
     }
     Say "$question  assuming yes (nothing is reading the keyboard)"
     return $true

@@ -18,6 +18,10 @@ struct Model {
     bool        has_mtp = false;
     bool        in_library = false;   // read-only: never deleted from
     std::string mtp_path;             // a sidecar drafter, when there is one
+    // An Ollama-store model is a manifest plus shared blobs, so `path` alone
+    // cannot delete it. Empty for a loose GGUF.
+    std::string manifest;
+    std::string store_root;
 
     std::string digest;      // sha256 of the manifest blob, or derived
     std::string family;      // general.basename, size suffix stripped
