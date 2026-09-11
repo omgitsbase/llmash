@@ -1761,9 +1761,28 @@ int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg) {
             }
         }
         const std::string disabled = (fs::path(startup_dir) / "Ollama.lnk.disabled").string();
+        bool              restored = false;
         if (file_exists(disabled)) {
             std::error_code ec;
             fs::rename(disabled, fs::path(startup_dir) / "Ollama.lnk", ec);
+            restored = true;
+        }
+        // Ollama starts from the Run key; the installer saved what it deleted.
+        const std::string saved = (fs::path(cfg.root) / "ollama-startup.json").string();
+        if (file_exists(saved)) {
+            bool       ok   = false;
+            const json list = json::parse(read_file(saved, ok), nullptr, false);
+            if (ok && list.is_array()) {
+                for (const auto & e : list) {
+                    if (e.is_object() && reg_set_run_value(j_str(e, "name"), j_str(e, "value"))) {
+                        restored = true;
+                    }
+                }
+            }
+            std::error_code ec;
+            fs::remove(saved, ec);
+        }
+        if (restored) {
             std::printf("  restored Ollama's startup entry\n");
         }
         if (reg_delete_hkcu_key("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\llmash")) {

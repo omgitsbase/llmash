@@ -50,6 +50,7 @@ std::string ps_quote(const std::string & s) { return s; }
 std::string shortcut_target(const std::string &) { return ""; }
 std::string hidden_powershell(const std::string &, bool, int *) { return ""; }
 bool        reg_delete_hkcu_key(const std::string &) { return false; }
+bool        reg_set_run_value(const std::string &, const std::string &) { return false; }
 bool        remove_from_user_path(const std::string &) { return false; }
 
 } // namespace llmash

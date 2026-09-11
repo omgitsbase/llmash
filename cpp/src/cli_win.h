@@ -9,6 +9,9 @@ namespace llmash {
 
 bool reg_delete_hkcu_key(const std::string & subkey);
 
+// A string value under HKCU\...\Run: what starts a program at login.
+bool reg_set_run_value(const std::string & name, const std::string & value);
+
 // Removes every entry equal to bin_dir (case-insensitively) from HKCU's
 // Environment\Path; returns whether anything changed.
 bool remove_from_user_path(const std::string & bin_dir);

@@ -120,6 +120,10 @@ struct QuantInfo {
 };
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files);
 
+// Bits per weight a quantisation name implies: BF16 is 16, not 1, and a
+// GSQ quality carries its own budget.
+double bits_of_quant(const std::string & quant);
+
 // ----------------------------------------------------------- hub search
 // huggingface.co/api, used to find a drafter for a model already on disk.
 struct HubModel {
@@ -156,6 +160,17 @@ bool fetch_blocks(const std::string & url, const std::string & tmp, int64_t tota
 // it does and the file is worth splitting.
 bool fetch_blob(const std::string & url, const std::string & tmp, int64_t total,
                  const ProgressFn & progress, std::string & err);
+
+// One stretch of a remote file, written into a local file at `into`. No
+// resume map: the caller is building scratch it will throw away.
+struct RangeJob {
+    std::string url;
+    int64_t     from  = 0; // offset in the remote file
+    int64_t     bytes = 0;
+    int64_t     into  = 0; // offset in the local file
+};
+bool fetch_ranges(const std::string & dest, const std::vector<RangeJob> & jobs, const ProgressFn & progress,
+                  std::string & err);
 
 // ----------------------------------------------------------------- pulls
 using Emit = std::function<void(const nlohmann::json &)>;

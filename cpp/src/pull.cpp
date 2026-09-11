@@ -1,6 +1,7 @@
 #include "pull.h"
 
 #include "gguf.h"
+#include "gsq.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -466,6 +467,7 @@ struct HeaderMeta {
     std::string              arch;
     std::string              size_label;
     int64_t                  file_type = -1;
+    int64_t                  embd      = 0; // <arch>.embedding_length
     std::vector<std::string> keys;
 };
 
@@ -500,6 +502,12 @@ HeaderMeta read_header_meta(std::istream & in) {
             int64_t v = 0;
             if (g.read_int(type, v) && !g.bad()) {
                 m.file_type = v;
+            }
+            if (g.bad()) break;
+        } else if (ends_with(key, ".embedding_length")) {
+            int64_t v = 0;
+            if (g.read_int(type, v) && !g.bad()) {
+                m.embd = v;
             }
             if (g.bad()) break;
         } else {
@@ -1032,6 +1040,25 @@ std::optional<HfFile> pick_mmproj(const std::vector<HfFile> & files) {
     return smallest(mm);
 }
 
+double bits_of_quant(const std::string & quant) {
+    const std::string up = upper(quant);
+    if (up == "F32" || up == "FP32") {
+        return 32;
+    }
+    if (up == "F16" || up == "BF16" || up == "FP16") {
+        return 16;
+    }
+    if (const double g = gsq::bpw_of_quant(quant); g > 0) {
+        return g;
+    }
+    static const std::regex re(R"((?:^|[^0-9])([1-8])(?:_|$|[A-Za-z]))");
+    std::smatch             m;
+    if (!std::regex_search(up, m, re)) {
+        return 0;
+    }
+    return (m[1].str()[0] - '0') + (contains(up, "_K") || contains(up, "XL") ? 0.5 : 0.0);
+}
+
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files) {
     std::vector<QuantInfo> out; // insertion order, then a stable sort by size
     for (const auto & f : files) {
@@ -1310,6 +1337,129 @@ bool fetch_blocks(const std::string & url, const std::string & tmp, int64_t tota
     return true;
 }
 
+bool fetch_ranges(const std::string & dest, const std::vector<RangeJob> & jobs, const ProgressFn & progress,
+                  std::string & err) {
+    // Split into blocks so several connections share the work, the way a
+    // whole-file download does.
+    struct Block {
+        std::string url;
+        int64_t     from = 0, bytes = 0, into = 0;
+    };
+    std::vector<Block> blocks;
+    for (const RangeJob & j : jobs) {
+        for (int64_t at = 0; at < j.bytes; at += dl_block()) {
+            const int64_t n = (std::min)(dl_block(), j.bytes - at);
+            blocks.push_back(Block{j.url, j.from + at, n, j.into + at});
+        }
+    }
+    if (blocks.empty()) {
+        return true;
+    }
+
+    std::mutex  mu;
+    std::string first_err;
+    size_t      next = 0;
+    int64_t     done = 0;
+
+    int workers = dl_streams();
+    if (static_cast<size_t>(workers) > blocks.size()) {
+        workers = static_cast<int>(blocks.size());
+    }
+    if (workers < 1) {
+        workers = 1;
+    }
+
+    std::vector<std::thread> pool;
+    for (int w = 0; w < workers; w++) {
+        pool.emplace_back([&] {
+            std::fstream fh(dest, std::ios::binary | std::ios::in | std::ios::out);
+            if (!fh) {
+                std::lock_guard<std::mutex> lk(mu);
+                if (first_err.empty()) {
+                    first_err = "could not open " + dest;
+                }
+                return;
+            }
+            std::vector<char> buf(1 << 20);
+            for (;;) {
+                Block b;
+                {
+                    std::lock_guard<std::mutex> lk(mu);
+                    if (next >= blocks.size() || !first_err.empty()) {
+                        return;
+                    }
+                    b = blocks[next++];
+                }
+                std::string last_err;
+                for (int attempt = 0; attempt < 4; attempt++) {
+                    last_err.clear();
+                    char range[64];
+                    std::snprintf(range, sizeof(range), "bytes=%lld-%lld", static_cast<long long>(b.from),
+                                  static_cast<long long>(b.from + b.bytes - 1));
+                    Stream stm;
+                    if (!open_stream(b.url, "GET", range, {}, stm, last_err)) {
+                        // last_err carries the reason
+                    } else if (stm.status != 200 && stm.status != 206) {
+                        last_err = "HTTP " + std::to_string(stm.status);
+                    } else {
+                        int64_t off  = b.into;
+                        int64_t left = b.bytes;
+                        size_t  got  = 0;
+                        bool    ok   = true;
+                        while (left > 0) {
+                            if (!stm.read_chunk(buf.data(), (std::min)(buf.size(), static_cast<size_t>(left)), got)) {
+                                last_err = "the connection dropped";
+                                ok       = false;
+                                break;
+                            }
+                            if (got == 0) {
+                                break;
+                            }
+                            fh.seekp(off, std::ios::beg);
+                            fh.write(buf.data(), static_cast<std::streamsize>(got));
+                            if (!fh) {
+                                last_err = "could not write to " + dest;
+                                ok       = false;
+                                break;
+                            }
+                            off += static_cast<int64_t>(got);
+                            left -= static_cast<int64_t>(got);
+                            std::lock_guard<std::mutex> lk(mu);
+                            done += static_cast<int64_t>(got);
+                            if (progress) {
+                                progress(done);
+                            }
+                        }
+                        if (ok && left == 0) {
+                            fh.flush();
+                            break;
+                        }
+                        if (ok) {
+                            last_err = "the connection ended early";
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1500 * (attempt + 1)));
+                }
+                if (!last_err.empty()) {
+                    std::lock_guard<std::mutex> lk(mu);
+                    if (first_err.empty()) {
+                        first_err = last_err;
+                    }
+                    return;
+                }
+            }
+        });
+    }
+    for (auto & t : pool) {
+        t.join();
+    }
+    if (!first_err.empty()) {
+        err = first_err;
+        return false;
+    }
+    return true;
+}
+
 bool fetch_blob(const std::string & url, const std::string & tmp, int64_t total, const ProgressFn & progress,
                 std::string & err) {
     if (total > 2 * dl_block()) {
@@ -1381,8 +1531,351 @@ void set_alias(const Config & cfg, const std::string & file, const std::string &
     write_alias(cfg, file, name, err);
 }
 
+// ----------------------------------------------------------------- GSQ
+// A chunk at a time, so the source and the result are never both whole.
+
+namespace {
+
+// The highest-quality build in the repo, as the requantization source.
+std::vector<HfFile> pick_gsq_source(const std::vector<HfFile> & files) {
+    for (const std::string & want : gsq::source_preference()) {
+        std::vector<HfFile> cand;
+        for (const HfFile & f : files) {
+            const std::string low = lower(f.name);
+            if (contains(low, want) && !contains(low, "mmproj") && kind_of(f.name) == nullptr &&
+                ends_with(low, ".gguf")) {
+                cand.push_back(f);
+            }
+        }
+        if (cand.empty()) {
+            continue;
+        }
+        std::vector<HfFile> shards;
+        for (const HfFile & f : cand) {
+            if (contains(f.name, "-of-")) {
+                shards.push_back(f);
+            }
+        }
+        if (!shards.empty()) {
+            std::sort(shards.begin(), shards.end(), [](const HfFile & a, const HfFile & b) { return a.name < b.name; });
+            return shards;
+        }
+        std::sort(cand.begin(), cand.end(), [](const HfFile & a, const HfFile & b) { return a.size < b.size; });
+        return {cand.back()};
+    }
+    return {};
+}
+
+std::string mmss(double seconds) {
+    const int s = static_cast<int>(seconds);
+    char      buf[32];
+    std::snprintf(buf, sizeof(buf), "%d:%02d", s / 60, s % 60);
+    return buf;
+}
+
+std::string pad_right(const std::string & s, size_t n) {
+    return s.size() >= n ? s : s + std::string(n - s.size(), ' ');
+}
+
+// The repository's own file, fetched into the cache once.
+bool cache_file(const std::string & repo, const std::string & rel, const Config & cfg, std::string & path,
+                std::string & err) {
+    const fs::path  dir = fs::path(cfg.root) / "cache" / "gsq";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const fs::path dest = dir / base_name(rel);
+    if (fs::is_regular_file(dest, ec) && fs::file_size(dest, ec) > 0) {
+        path = dest.string();
+        return true;
+    }
+    const std::string url  = hf_download_url(repo, rel);
+    const HttpResult  head = http_request(url, "HEAD");
+    const int64_t     n    = head.content_length;
+    if (n > 0 && n > (64ll << 20)) {
+        // the imatrix is tens of megabytes; anything larger is not one
+        if (!fetch_blob(url, dest.string() + ".part", n, [](int64_t) {}, err)) {
+            return false;
+        }
+        fs::rename(dest.string() + ".part", dest, ec);
+        path = dest.string();
+        return true;
+    }
+    const HttpResult r = http_request(url);
+    if (!r.error.empty() || r.status != 200) {
+        err = rel + " came back " + (r.error.empty() ? std::to_string(r.status) : r.error);
+        return false;
+    }
+    std::ofstream out(dest, std::ios::binary | std::ios::trunc);
+    out << r.body;
+    if (!out) {
+        err = "could not write " + dest.string();
+        return false;
+    }
+    out.close();
+    path = dest.string();
+    return true;
+}
+
+} // namespace
+
+// Returns the finished model's path, or "".
+std::string gsq_pull(const std::string & repo, double bpw, const std::string & as, const Config & cfg, Registry & reg,
+                     const Emit & emit) {
+    const std::string dest_dir = loose_dir(cfg);
+    std::error_code   ec;
+    fs::create_directories(dest_dir, ec);
+
+    emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
+    std::string               ferr;
+    const std::vector<HfFile> files = hf_files(repo, &ferr);
+    if (files.empty()) {
+        emit(error_obj(ferr.empty() ? "no GGUF files in " + repo : ferr));
+        return "";
+    }
+    const std::vector<HfFile> src = pick_gsq_source(files);
+    if (src.empty()) {
+        emit(error_obj("no high-quality build in " + repo + " to requantize from"));
+        return "";
+    }
+
+    // The first shard's header names the architecture; the rest add tensors.
+    const std::string first_url = hf_download_url(repo, src.front().name);
+    const HttpResult  probe     = http_request(first_url, "GET", "bytes=0-33554431");
+    if (probe.error.empty() && probe.status != 200 && probe.status != 206) {
+        emit(error_obj("could not read the header of " + base_name(src.front().name)));
+        return "";
+    }
+    gsq::Layout layout = gsq::layout_from(probe.body);
+    if (!layout.error.empty()) {
+        emit(error_obj(base_name(src.front().name) + ": " + layout.error));
+        return "";
+    }
+    std::istringstream hin(probe.body, std::ios::binary);
+    const HeaderMeta   meta = read_header_meta(hin);
+    const gsq::Allocation * alloc = gsq::for_model(meta.arch, meta.embd, bpw);
+    if (alloc == nullptr) {
+        emit(error_obj("no GSQ-RCO allocation is published for " + (meta.arch.empty() ? "this model" : meta.arch)));
+        return "";
+    }
+    for (size_t i = 1; i < src.size(); i++) {
+        const HttpResult p = http_request(hf_download_url(repo, src[i].name), "GET", "bytes=0-33554431");
+        if (!gsq::append_part(layout, p.body)) {
+            emit(error_obj(base_name(src[i].name) + ": " + layout.error));
+            return "";
+        }
+    }
+
+    const std::string exe = gsq::quantize_exe(cfg);
+    if (exe.empty()) {
+        emit(error_obj("a GSQ build is assembled by llama-quantize, which is not in " +
+                       fs::path(cfg.llama_bin).parent_path().string() +
+                       ". Run `llmash update` to replace the runtime with one that has it."));
+        return "";
+    }
+    std::string alloc_path, imatrix_path, cerr;
+    if (!cache_file(alloc->repo, alloc->alloc, cfg, alloc_path, cerr) ||
+        !cache_file(alloc->repo, alloc->imatrix, cfg, imatrix_path, cerr)) {
+        emit(error_obj(cerr));
+        return "";
+    }
+    std::ifstream     af(alloc_path, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(af)), std::istreambuf_iterator<char>());
+    const gsq::Plan   plan = gsq::plan_types(layout, gsq::parse_allocation(text));
+    if (plan.total > 0 && plan.covered * 10 < plan.total * 9) {
+        emit(error_obj("that allocation covers only " + std::to_string(plan.covered) + " of " +
+                       std::to_string(plan.total) + " tensors here, so it was built for another architecture"));
+        return "";
+    }
+
+    int64_t src_bytes = 0;
+    for (const HfFile & f : src) {
+        src_bytes += f.size;
+    }
+    emit(json{{"status", ""}});
+    emit(json{{"status", "  " + alloc->name}});
+    emit(json{{"status", "  one quantization type per tensor under a whole-file bit budget,"}});
+    emit(json{{"status", "  searched by IST-DASLab and assembled here."}});
+    emit(json{{"status", ""}});
+    emit(json{{"status", "  " + pad_right("source", 12) + base_name(src.front().name)}});
+    emit(json{{"status", "  " + pad_right("", 12) + human_bytes(src_bytes) +
+                             (src.size() > 1 ? ", " + std::to_string(src.size()) + " shards" : "")}});
+    emit(json{{"status", "  " + pad_right("allocation", 12) + base_name(alloc->alloc)}});
+    emit(json{{"status", "  " + pad_right("", 12) + std::to_string(plan.covered) + " of " +
+                             std::to_string(plan.total) + " tensors, " + std::to_string(plan.lines.size()) +
+                             " to requantize"}});
+    {
+        std::vector<std::pair<std::string, int>> top(plan.by_type.begin(), plan.by_type.end());
+        std::sort(top.begin(), top.end(), [](const auto & a, const auto & b) { return a.second > b.second; });
+        std::string shown;
+        for (size_t i = 0; i < top.size() && i < 5; i++) {
+            shown += (i ? "  " : "") + top[i].first + " x" + std::to_string(top[i].second);
+        }
+        if (top.size() > 5) {
+            shown += "  and " + std::to_string(top.size() - 5) + " more";
+        }
+        emit(json{{"status", "  " + pad_right("", 12) + shown}});
+    }
+
+    // Scratch space stays a fraction of the model.
+    const int64_t target = (std::max)(static_cast<int64_t>(2) << 30, src_bytes / 8);
+    const std::vector<gsq::Chunk> chunks = gsq::plan_chunks(layout, target);
+    emit(json{{"status", "  " + pad_right("chunks", 12) + std::to_string(chunks.size()) + " of about " +
+                             human_bytes(target) + ", each fetched, requantized and freed in turn"}});
+    emit(json{{"status", ""}});
+
+    const fs::path work = fs::path(cfg.root) / "cache" / "gsq" / "work";
+    fs::remove_all(work, ec);
+    fs::create_directories(work, ec);
+    const std::string type_file = (work / "types.txt").string();
+    {
+        std::ofstream tf(type_file, std::ios::binary | std::ios::trunc);
+        for (const std::string & l : plan.lines) {
+            tf << l << "\n";
+        }
+    }
+
+    const auto               t0 = std::chrono::steady_clock::now();
+    std::vector<std::string> made;
+    for (size_t ci = 0; ci < chunks.size(); ci++) {
+        const gsq::Chunk & c   = chunks[ci];
+        const std::string  raw = (work / ("part" + std::to_string(ci) + ".gguf")).string();
+        const std::string  out = (work / ("part" + std::to_string(ci) + ".q.gguf")).string();
+        const std::string  tag = "chunk " + std::to_string(ci + 1) + "/" + std::to_string(chunks.size());
+
+        std::string err;
+        const int64_t head_bytes = gsq::write_chunk_header(raw, layout, c, err);
+        if (head_bytes < 0) {
+            emit(error_obj(err));
+            return "";
+        }
+        std::vector<RangeJob> jobs;
+        for (const gsq::Piece & p : gsq::chunk_pieces(layout, c, head_bytes)) {
+            jobs.push_back(RangeJob{hf_download_url(repo, src[p.part].name), p.from, p.bytes, p.into});
+        }
+        {
+            // size it up front so every connection writes into place
+            std::ofstream sz(raw, std::ios::binary | std::ios::in | std::ios::out);
+        }
+        fs::resize_file(raw, static_cast<uintmax_t>(head_bytes + c.bytes), ec);
+
+        std::atomic<int64_t> seen{0};
+        std::atomic<bool>    done{false};
+        bool                 ok = false;
+        std::thread          worker([&] {
+            ok = fetch_ranges(raw, jobs, [&](int64_t n) { seen.store(n); }, err);
+            done.store(true);
+        });
+        while (!done.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            emit(json{{"status", "fetching " + tag},
+                      {"digest", "gsq-fetch-" + std::to_string(ci)},
+                      {"total", c.bytes},
+                      {"completed", (std::min)(seen.load(), c.bytes)}});
+        }
+        worker.join();
+        if (!ok) {
+            emit(error_obj(err));
+            return "";
+        }
+        emit(json{{"status", "fetching " + tag},
+                  {"digest", "gsq-fetch-" + std::to_string(ci)},
+                  {"total", c.bytes},
+                  {"completed", c.bytes}});
+
+        std::atomic<int> at{0}, of{0};
+        std::atomic<bool> qdone{false};
+        bool              qok = false;
+        std::string       qerr;
+        std::thread       quant([&] {
+            qok = gsq::quantize(exe, raw, out, type_file, imatrix_path, alloc->fallback,
+                                [&](int a, int b) { at.store(a); of.store(b); }, qerr);
+            qdone.store(true);
+        });
+        while (!qdone.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            if (of.load() > 0) {
+                emit(json{{"status", "requantizing " + tag},
+                          {"digest", "gsq-quant-" + std::to_string(ci)},
+                          {"total", of.load()},
+                          {"completed", at.load()}});
+            }
+        }
+        quant.join();
+        fs::remove(raw, ec); // the source chunk has done its job
+        if (!qok) {
+            emit(error_obj(qerr));
+            return "";
+        }
+        emit(json{{"status", "requantizing " + tag},
+                  {"digest", "gsq-quant-" + std::to_string(ci)},
+                  {"total", (std::max)(of.load(), 1)},
+                  {"completed", (std::max)(of.load(), 1)}});
+        made.push_back(out);
+    }
+
+    std::string stem = strip_shard(stem_of(src.front().name));
+    for (const std::string & q : gsq::source_preference()) {
+        const std::string up = upper(q);
+        for (const std::string & sep : {"-", "."}) {
+            const size_t at = lower(stem).find(lower(sep + up));
+            if (at != std::string::npos) {
+                stem.erase(at, sep.size() + up.size());
+                break;
+            }
+        }
+    }
+    const std::string dest = (fs::path(dest_dir) / (stem + "-" + gsq::quant_name(bpw) + ".gguf")).string();
+    int64_t           written = 0;
+    for (const std::string & m : made) {
+        written += static_cast<int64_t>(fs::file_size(m, ec));
+    }
+    std::string aerr;
+    {
+        std::atomic<int64_t> seen{0};
+        std::atomic<bool>    done{false};
+        bool                 ok = false;
+        std::thread          worker([&] {
+            ok = gsq::assemble(made, dest, [&](int64_t n) { seen.store(n); }, aerr);
+            done.store(true);
+        });
+        while (!done.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            emit(json{{"status", "assembling"},
+                      {"digest", "gsq-assemble"},
+                      {"total", written},
+                      {"completed", (std::min)(seen.load(), written)}});
+        }
+        worker.join();
+        if (!ok) {
+            emit(error_obj(aerr));
+            return "";
+        }
+    }
+    fs::remove_all(work, ec);
+
+    const int64_t out_bytes = static_cast<int64_t>(fs::file_size(dest, ec));
+    emit(json{{"status", ""}});
+    emit(json{{"status", "  " + pad_right("built", 12) + base_name(dest)}});
+    emit(json{{"status", "  " + pad_right("", 12) + human_bytes(out_bytes) + ", down from " +
+                             human_bytes(src_bytes) + " (" +
+                             std::to_string(100 - 100 * out_bytes / (std::max<int64_t>)(src_bytes, 1)) +
+                             "% smaller)"}});
+    emit(json{{"status", "  " + pad_right("", 12) + "took " + mmss(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()) +
+                             "; nothing but the result is left on disk"}});
+    emit(json{{"status", ""}});
+
+    reg.invalidate();
+    if (as.empty()) {
+        emit(json{{"status", loose_name(dest) + " ready, " + human_bytes(out_bytes)}});
+    }
+    return dest;
+}
+
 std::string hf_pull(const std::string & repo, const std::string & quant, const std::string & as, const Config & cfg,
                     Registry & reg, const Emit & emit) {
+    if (const double bpw = gsq::bpw_of_quant(quant); bpw > 0) {
+        return gsq_pull(repo, bpw, as, cfg, reg, emit);
+    }
     const std::string dest_dir = loose_dir(cfg);
     std::error_code   ec;
     fs::create_directories(dest_dir, ec);
@@ -2100,6 +2593,24 @@ json api_quants(const std::string & repo_arg) {
     if (!err.empty()) {
         return error_obj(err);
     }
+    std::vector<QuantInfo> quants = quants_of(files);
+
+    // Assembled here rather than downloaded, so it is offered whenever an
+    // allocation exists for this architecture.
+    if (const std::vector<HfFile> src = pick_gsq_source(files); !src.empty() && !quants.empty()) {
+        const HttpResult p = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-4194303");
+        std::istringstream in(p.body, std::ios::binary);
+        const HeaderMeta   meta = read_header_meta(in);
+        const double       ref  = bits_of_quant(quants.back().name);
+        for (const gsq::Allocation & a : gsq::all_for_arch(meta.arch, meta.embd)) {
+            int64_t size = 0;
+            if (ref > 0) {
+                size = static_cast<int64_t>(static_cast<double>(quants.back().size) * a.bpw / ref);
+            }
+            quants.push_back(QuantInfo{gsq::quant_name(a.bpw), size, 1});
+        }
+    }
+
     std::vector<QuantInfo> heads;
     for (const auto & f : files) {
         const DraftKind * k = kind_of(f.name);
@@ -2117,8 +2628,10 @@ json api_quants(const std::string & repo_arg) {
         }
         return arr;
     };
+    std::stable_sort(quants.begin(), quants.end(),
+                     [](const QuantInfo & a, const QuantInfo & b) { return a.size < b.size; });
     return json{{"repo", repo},
-                {"quants", to_json(quants_of(files))},
+                {"quants", to_json(quants)},
                 {"mtp", to_json(heads)},
                 {"vision", pick_mmproj(files).has_value()}};
 }
