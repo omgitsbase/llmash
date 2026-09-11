@@ -463,8 +463,12 @@ std::string pad_to(const std::string & s, int width, bool left_align) {
     return left_align ? s + std::string(static_cast<size_t>(n), ' ') : std::string(static_cast<size_t>(n), ' ') + s;
 }
 
+// A build assembled here downloads one thing and leaves another, so both
+// sizes are shown: what comes down, then what is kept.
 std::string build_row(const std::string & label, const QuantInfo & q) {
-    return pad_to(label, 7, true) + " " + pad_to(q.name, 12, true) + " " + pad_to(human_bytes(q.size), 8, false);
+    std::string row = pad_to(label, 8, true) + " " + pad_to(q.name, 12, true) + " " +
+                      pad_to(human_bytes(q.fetch > 0 ? q.fetch : q.size), 8, false);
+    return row + (q.fetch > 0 ? " down, " + pad_to(human_bytes(q.size), 8, false) + " kept" : "");
 }
 
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
@@ -521,6 +525,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             qi.name  = j_str(q, "name");
             qi.size  = static_cast<int64_t>(j_num(q, "size"));
             qi.files = static_cast<int>(j_num(q, "files"));
+            qi.fetch = static_cast<int64_t>(j_num(q, "fetch"));
             quants.push_back(qi);
             (is_rco(qi.name) ? gsq : plain).push_back(qi);
         }
@@ -547,7 +552,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     std::vector<Row> basic, full;
     if (!gsq.empty()) {
         const QuantInfo & best = gsq.front();
-        basic.push_back(Row{build_row("advanced", best) + "  RCO, built here from the best weights: a longer pull",
+        basic.push_back(Row{build_row("advanced", best),
                             best.name, false});
     }
     if (plain.size() > 1) {
@@ -562,9 +567,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         }
     }
     for (const auto & q : quants) {
-        full.push_back(Row{build_row(is_rco(q.name) ? "advanced" : "", q) +
-                               (is_rco(q.name) ? "  RCO, built here: a longer pull" : ""),
-                           q.name, false});
+        full.push_back(Row{build_row(is_rco(q.name) ? "advanced" : "", q), q.name, false});
     }
     if (registry_build) {
         const Row own{build_row("ollama", *registry_build), "", true};

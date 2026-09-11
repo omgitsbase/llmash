@@ -115,8 +115,9 @@ std::string           hf_download_url(const std::string & repo, const std::strin
 
 struct QuantInfo {
     std::string name;
-    int64_t     size  = 0;
+    int64_t     size  = 0;  // what the finished model weighs
     int         files = 0;
+    int64_t     fetch = 0;  // what has to come down for it, when that differs
 };
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files);
 

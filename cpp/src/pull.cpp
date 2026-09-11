@@ -1546,11 +1546,12 @@ void set_alias(const Config & cfg, const std::string & file, const std::string &
 
 namespace {
 
-// A block costs about six times its size in RAM: two of them in flight, the
-// float copy of one, and its quantized result. 48 MB keeps the whole
-// conversion inside 550 MB, and the largest tensor in a 35B is 2 GB as a
-// float, so whole-tensor buffers were never an option.
-constexpr int64_t BLOCK_BYTES = 48ll << 20;
+// A block of q8_0 rows costs about four times its size once expanded to
+// float, and two are in flight. With a 35B's importance matrix alongside
+// (190 MB) this keeps the whole conversion near 350 MB; the largest single
+// tensor in that model is 2 GB as float, so whole-tensor buffers were never
+// an option.
+constexpr int64_t BLOCK_BYTES = 24ll << 20;
 
 std::string mmss(double seconds) {
     const int s = static_cast<int>(seconds);
@@ -1716,12 +1717,12 @@ bool quantizable(const ggufio::TensorEntry & t, const rco::Ggml & g) {
 }
 
 // One run of rows out of one tensor: what is fetched, quantized and written
-// as a unit. Never crosses an expert, whose importance weights differ.
+// as a unit. It may span experts, which are contiguous in the file; the
+// quantizer is handed each expert's own rows, since their weights differ.
 struct RowBlock {
     size_t  tensor = 0;
     int64_t from   = 0; // first row
     int64_t rows   = 0;
-    int64_t expert = 0;
 };
 
 std::vector<RowBlock> plan_blocks(const ggufio::Layout & l, const rco::Ggml & g,
@@ -1731,17 +1732,14 @@ std::vector<RowBlock> plan_blocks(const ggufio::Layout & l, const rco::Ggml & g,
         const ggufio::TensorEntry & t    = l.tensors[i];
         const int64_t               rows = t.dims.empty() ? 1 : t.rows();
         if (chosen.find(t.name) == chosen.end()) {
-            out.push_back(RowBlock{i, 0, rows, 0}); // copied through whole
+            out.push_back(RowBlock{i, 0, rows}); // copied through whole
             continue;
         }
-        const int64_t per_expert = rows / (std::max<int64_t>)(t.experts(), 1);
-        const int64_t src_row    = static_cast<int64_t>(g.row_size(static_cast<int>(t.type), t.dims[0]));
-        int64_t       step       = src_row > 0 ? BLOCK_BYTES / src_row : per_expert;
-        step                     = (std::max<int64_t>)(1, (std::min)(step, per_expert));
-        for (int64_t e = 0; e < t.experts(); e++) {
-            for (int64_t at = 0; at < per_expert; at += step) {
-                out.push_back(RowBlock{i, e * per_expert + at, (std::min)(step, per_expert - at), e});
-            }
+        const int64_t src_row = static_cast<int64_t>(g.row_size(static_cast<int>(t.type), t.dims[0]));
+        int64_t       step    = src_row > 0 ? BLOCK_BYTES / src_row : rows;
+        step                  = (std::max<int64_t>)(1, (std::min)(step, rows));
+        for (int64_t at = 0; at < rows; at += step) {
+            out.push_back(RowBlock{i, at, (std::min)(step, rows - at)});
         }
     }
     return out;
@@ -2102,19 +2100,37 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
             ggml.dequantize(static_cast<int>(t.type), data.data(), fbuf.data(), b.rows * n_per);
             qbuf.assign(ggml.row_size(ty, n_per) * static_cast<size_t>(b.rows) + 64, 0);
 
-            const int64_t            step = (std::max<int64_t>)(1, (b.rows + nthread - 1) / nthread);
-            std::atomic<int64_t>     nr{0};
+            // Every thread takes a run of rows inside one expert: a dense
+            // tensor has one expert, and quantizing it on a single thread
+            // was most of the time this used to take.
+            const int64_t per_expert = (std::max<int64_t>)(1, t.rows() / (std::max<int64_t>)(t.experts(), 1));
+            struct Run {
+                int64_t from, rows, expert;
+            };
+            std::vector<Run> runs;
+            for (int64_t at = 0; at < b.rows;) {
+                const int64_t abs  = b.from + at;
+                const int64_t e    = abs / per_expert;
+                const int64_t left = (std::min)(b.rows - at, per_expert - abs % per_expert);
+                const int64_t step = (std::max<int64_t>)(1, (left + nthread - 1) / nthread);
+                for (int64_t k = 0; k < left; k += step) {
+                    runs.push_back(Run{at + k, (std::min)(step, left - k), e});
+                }
+                at += left;
+            }
+            std::atomic<size_t>      nr{0};
             std::vector<std::thread> pool;
             for (int w = 0; w < nthread; w++) {
                 pool.emplace_back([&] {
                     for (;;) {
-                        const int64_t from = nr.fetch_add(1) * step;
-                        if (from >= b.rows) {
+                        const size_t k = nr.fetch_add(1);
+                        if (k >= runs.size()) {
                             return;
                         }
-                        ggml.quantize(ty, fbuf.data() + from * n_per,
-                                      qbuf.data() + ggml.row_size(ty, n_per) * static_cast<size_t>(from),
-                                      (std::min)(step, b.rows - from), n_per, weights(t.name, n_per, b.expert));
+                        const Run & r = runs[k];
+                        ggml.quantize(ty, fbuf.data() + r.from * n_per,
+                                      qbuf.data() + ggml.row_size(ty, n_per) * static_cast<size_t>(r.from),
+                                      r.rows, n_per, weights(t.name, n_per, r.expert));
                     }
                 });
             }
@@ -2921,7 +2937,7 @@ json api_quants(const std::string & repo_arg) {
         const double ref = bits_of_quant(quant_tag(src.front().name));
         for (const double b : {rco::DEFAULT_BPW, 3.0, 2.75}) {
             const int64_t size = ref > 0 ? static_cast<int64_t>(static_cast<double>(src_bytes) * b / ref) : 0;
-            quants.push_back(QuantInfo{rco_quant_name(b), size, 1});
+            quants.push_back(QuantInfo{rco_quant_name(b), size, 1, src_bytes});
         }
     }
 
@@ -2938,7 +2954,7 @@ json api_quants(const std::string & repo_arg) {
     const auto to_json = [](const std::vector<QuantInfo> & v) {
         json arr = json::array();
         for (const auto & q : v) {
-            arr.push_back(json{{"name", q.name}, {"size", q.size}, {"files", q.files}});
+            arr.push_back(json{{"name", q.name}, {"size", q.size}, {"files", q.files}, {"fetch", q.fetch}});
         }
         return arr;
     };
