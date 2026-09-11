@@ -181,7 +181,7 @@ private:
 // One in-flight response. Every handle it owns is closed by its destructor,
 // on the error paths too.
 struct Stream {
-    Handle  session, connect, request;
+    Handle  request;
     int     status         = 0;
     int64_t content_length = -1;
 
@@ -195,6 +195,24 @@ struct Stream {
         return true;
     }
 };
+
+// One session and one connection per thread, kept open between requests.
+// WinHTTP reuses the socket underneath a connection handle, so a worker that
+// asks for range after range pays for TLS once rather than every time: a
+// conversion reads its source in thousands of small ranges, and setting them
+// up was most of what it spent its time on.
+struct ThreadConn {
+    Handle       session;
+    Handle       connect;
+    std::wstring host;
+    int          port    = 0;
+    int          timeout = -1;
+};
+
+ThreadConn & thread_conn() {
+    static thread_local ThreadConn c;
+    return c;
+}
 
 std::string winhttp_error(const char * what) {
     const DWORD e = GetLastError();
@@ -224,31 +242,42 @@ bool open_stream(const std::string & url, const std::string & method, const std:
     std::wstring       target(uc.lpszUrlPath, uc.dwUrlPathLength);
     target.append(uc.lpszExtraInfo, uc.dwExtraInfoLength);
 
-    st.session.reset(WinHttpOpen(L"llmash", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                                 WINHTTP_NO_PROXY_BYPASS, 0));
-    if (!st.session) {
-        st.session.reset(WinHttpOpen(L"llmash", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+    ThreadConn & tc = thread_conn();
+    if (!tc.session) {
+        tc.session.reset(WinHttpOpen(L"llmash", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                      WINHTTP_NO_PROXY_BYPASS, 0));
+        if (!tc.session) {
+            tc.session.reset(WinHttpOpen(L"llmash", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                                         WINHTTP_NO_PROXY_BYPASS, 0));
+        }
+        if (!tc.session) {
+            err = winhttp_error("WinHttpOpen");
+            return false;
+        }
+        tc.timeout = -1;
     }
-    if (!st.session) {
-        err = winhttp_error("WinHttpOpen");
-        return false;
-    }
-    if (timeout_s > 0) {
-        const int ms = timeout_s * 1000;
-        WinHttpSetTimeouts(st.session.get(), ms, ms, ms, ms);
-    } else {
-        WinHttpSetTimeouts(st.session.get(), 30000, 30000, 60000, 120000);
+    if (tc.timeout != timeout_s) {
+        const int ms = timeout_s > 0 ? timeout_s * 1000 : 0;
+        if (ms > 0) {
+            WinHttpSetTimeouts(tc.session.get(), ms, ms, ms, ms);
+        } else {
+            WinHttpSetTimeouts(tc.session.get(), 30000, 30000, 60000, 120000);
+        }
+        tc.timeout = timeout_s;
     }
 
-    st.connect.reset(WinHttpConnect(st.session.get(), host_s.c_str(), uc.nPort, 0));
-    if (!st.connect) {
-        err = winhttp_error("WinHttpConnect");
-        return false;
+    if (!tc.connect || tc.host != host_s || tc.port != static_cast<int>(uc.nPort)) {
+        tc.connect.reset(WinHttpConnect(tc.session.get(), host_s.c_str(), uc.nPort, 0));
+        if (!tc.connect) {
+            err = winhttp_error("WinHttpConnect");
+            return false;
+        }
+        tc.host = host_s;
+        tc.port = static_cast<int>(uc.nPort);
     }
 
     const DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    st.request.reset(WinHttpOpenRequest(st.connect.get(), widen(method).c_str(), target.c_str(), nullptr,
+    st.request.reset(WinHttpOpenRequest(tc.connect.get(), widen(method).c_str(), target.c_str(), nullptr,
                                         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
     if (!st.request) {
         err = winhttp_error("WinHttpOpenRequest");
@@ -300,10 +329,21 @@ bool open_stream(const std::string & url, const std::string & method, const std:
 // round: perform until the callback has left something in `pending`, then
 // hand it out. One perform delivers at most a few writes, so the buffer
 // stays small without pausing the transfer.
+CURLM * thread_multi() {
+    static thread_local CURLM * m = curl_multi_init();
+    return m;
+}
+
+CURL * thread_easy() {
+    static thread_local CURL * e = curl_easy_init();
+    return e;
+}
+
 struct Stream {
     CURLM *      multi = nullptr;
     CURL *       easy  = nullptr;
     curl_slist * hdrs  = nullptr;
+    bool         owns  = true;
     std::string  pending;
     bool         done           = false;
     int          status         = 0;
@@ -314,10 +354,10 @@ struct Stream {
         if (multi != nullptr && easy != nullptr) {
             curl_multi_remove_handle(multi, easy);
         }
-        if (easy != nullptr) {
+        if (owns && easy != nullptr) {
             curl_easy_cleanup(easy);
         }
-        if (multi != nullptr) {
+        if (owns && multi != nullptr) {
             curl_multi_cleanup(multi);
         }
         if (hdrs != nullptr) {
@@ -358,12 +398,16 @@ size_t curl_sink(char * data, size_t size, size_t nmemb, void * user) {
 
 bool open_stream(const std::string & url, const std::string & method, const std::string & range,
                  const std::vector<std::string> & headers, Stream & st, std::string & err, int timeout_s = 0) {
-    st.multi = curl_multi_init();
-    st.easy  = curl_easy_init();
+    // The handles are kept per thread and reset between requests, so libcurl
+    // reuses the connection instead of opening one per range.
+    st.multi = thread_multi();
+    st.easy  = thread_easy();
+    st.owns  = false;
     if (st.multi == nullptr || st.easy == nullptr) {
         err = "could not start a request";
         return false;
     }
+    curl_easy_reset(st.easy);
     curl_easy_setopt(st.easy, CURLOPT_URL, url.c_str());
     curl_easy_setopt(st.easy, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(st.easy, CURLOPT_WRITEFUNCTION, curl_sink);
@@ -1551,7 +1595,7 @@ namespace {
 // (190 MB) this keeps the whole conversion near 350 MB; the largest single
 // tensor in that model is 2 GB as float, so whole-tensor buffers were never
 // an option.
-constexpr int64_t BLOCK_BYTES = 24ll << 20;
+constexpr int64_t BLOCK_BYTES = 16ll << 20;
 
 std::string mmss(double seconds) {
     const int s = static_cast<int>(seconds);
@@ -1660,6 +1704,12 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out
                     last.clear();
                     if (!open_stream(url, "GET", range, {}, stm, last)) {
                         // last carries the reason
+                    } else if (stm.status == 429 || stm.status == 503) {
+                        // Too many at once. Wait longer than the usual retry:
+                        // the ceiling is the server's, and hurrying into it
+                        // only earns another refusal.
+                        last = "the server is rate limiting this address";
+                        std::this_thread::sleep_for(std::chrono::seconds(2 + attempt * 3));
                     } else if (stm.status != 200 && stm.status != 206) {
                         last = "HTTP " + std::to_string(stm.status);
                     } else {
@@ -1840,14 +1890,23 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         return "";
     }
 
-    const HttpResult probe  = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-50331647");
-    ggufio::Layout   layout = ggufio::layout_from(probe.body);
+    const HttpResult probe = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-50331647");
+    if (probe.status != 200 && probe.status != 206) {
+        emit(error_obj("could not read " + base_name(src.front().name) + ": " +
+                       (probe.error.empty() ? "HTTP " + std::to_string(probe.status) : probe.error)));
+        return "";
+    }
+    ggufio::Layout layout = ggufio::layout_from(probe.body);
     if (!layout.error.empty()) {
         emit(error_obj(base_name(src.front().name) + ": " + layout.error));
         return "";
     }
     for (size_t i = 1; i < src.size(); i++) {
         const HttpResult p = http_request(hf_download_url(repo, src[i].name), "GET", "bytes=0-50331647");
+        if (p.status != 200 && p.status != 206) {
+            emit(error_obj("could not read " + base_name(src[i].name) + ": HTTP " + std::to_string(p.status)));
+            return "";
+        }
         if (!ggufio::append_part(layout, p.body)) {
             emit(error_obj(base_name(src[i].name) + ": " + layout.error));
             return "";
@@ -2041,11 +2100,16 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         expected += (n + layout.align - 1) / layout.align * layout.align;
     }
 
-    // Two buffers, swapped: one being quantized, one being fetched into.
-    const std::vector<RowBlock> blocks = plan_blocks(layout, ggml, chosen);
-    std::string                 buf[2];
-    std::future<bool>           ahead;
-    std::string                 ahead_err;
+    // A ring of blocks in flight. One ahead was not enough: a range request
+    // costs about a second before its first byte whatever its size, so with
+    // only eight outstanding the machine spent three quarters of the
+    // conversion waiting rather than quantizing. Depth hides that latency;
+    // the block size is what holds the memory down.
+    const std::vector<RowBlock>    blocks = plan_blocks(layout, ggml, chosen);
+    const int                      depth  = (std::max)(2, env_int("LLMASH_RCO_AHEAD", 5));
+    std::vector<std::string>       buf(static_cast<size_t>(depth));
+    std::vector<std::future<bool>> job(static_cast<size_t>(depth));
+    std::vector<std::string>       job_err(static_cast<size_t>(depth));
 
     const auto block_bytes = [&](const RowBlock & b) {
         const ggufio::TensorEntry & t = layout.tensors[b.tensor];
@@ -2058,12 +2122,11 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                (t.dims.empty() ? 0
                                : static_cast<int64_t>(ggml.row_size(static_cast<int>(t.type), t.dims[0])) * b.from);
     };
-    const auto start_fetch = [&](size_t i, int slot) {
-        const RowBlock & b = blocks[i];
-        buf[slot].assign(static_cast<size_t>(block_bytes(b)), '\0');
+    const auto start_fetch = [&](size_t i, size_t slot) {
+        buf[slot].assign(static_cast<size_t>(block_bytes(blocks[i])), '\0');
         return std::async(std::launch::async, [&, i, slot] {
             return fetch_span(hf_download_url(repo, src[layout.tensors[blocks[i].tensor].part].name),
-                              block_from(blocks[i]), block_bytes(blocks[i]), &buf[slot][0], nullptr, ahead_err);
+                              block_from(blocks[i]), block_bytes(blocks[i]), &buf[slot][0], nullptr, job_err[slot]);
         });
     };
 
@@ -2073,19 +2136,18 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     int64_t                    fetched = 0;
     std::map<size_t, int64_t>  tensor_at; // where each tensor's data begins
 
-    std::future<bool> job = start_fetch(0, 0);
+    for (size_t k = 0; k < static_cast<size_t>(depth) && k < blocks.size(); k++) {
+        job[k] = start_fetch(k, k);
+    }
     for (size_t i = 0; i < blocks.size(); i++) {
-        const int        slot = static_cast<int>(i % 2);
+        const size_t     slot = i % static_cast<size_t>(depth);
         const RowBlock & b    = blocks[i];
-        if (!job.get()) {
-            emit(error_obj(ahead_err));
+        if (!job[slot].get()) {
+            emit(error_obj(job_err[slot]));
             return "";
         }
         std::string & data = buf[slot];
         fetched += static_cast<int64_t>(data.size());
-        if (i + 1 < blocks.size()) {
-            job = start_fetch(i + 1, static_cast<int>((i + 1) % 2));
-        }
 
         const ggufio::TensorEntry & t = layout.tensors[b.tensor];
         if (tensor_at.find(b.tensor) == tensor_at.end()) {
@@ -2150,6 +2212,9 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         }
         data.clear();
         data.shrink_to_fit();
+        if (i + static_cast<size_t>(depth) < blocks.size()) {
+            job[slot] = start_fetch(i + static_cast<size_t>(depth), slot);
+        }
 
         // The last block of a tensor closes it: pad to alignment and record
         // where it began.
