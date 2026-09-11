@@ -485,8 +485,10 @@ std::string choose_custom(const std::vector<QuantInfo> & rco) {
     if (rco.empty()) {
         return "";
     }
-    std::printf("\n  %sa custom build spends one size's bytes where they do the most good,%s\n", kDim, kReset);
-    std::printf("  %squantized here from the repository's Q8_0. It takes a few minutes.%s\n\n", kDim, kReset);
+    std::printf("\n  %sa custom build spends one size's bytes where they do the most good.%s\n", kDim, kReset);
+    std::printf("  %sThe repository's Q8_0 is read a piece at a time and quantized here,%s\n", kDim, kReset);
+    std::printf("  %sso only the result is kept. It takes a few minutes.%s\n\n", kDim, kReset);
+    std::printf("  %s\n\n", build_row("", rco.front()).c_str());
     std::printf("Build one? [Y/n/a] ");
     for (;;) {
         const int k = read_pick([]() { return raw_getch(); });
