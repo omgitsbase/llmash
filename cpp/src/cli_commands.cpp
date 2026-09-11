@@ -469,7 +469,42 @@ std::string build_row(const std::string & label, const QuantInfo & q) {
 
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
 // heads, and asks for one of each.
-bool is_gsq(const std::string & name) { return upper(name).rfind("GSQ", 0) == 0; }
+bool is_rco(const std::string & name) {
+    const std::string u = upper(name);
+    return u.rfind("RCO", 0) == 0 || u.rfind("GSQ", 0) == 0;
+}
+
+// Asked before the sizes: a custom build is quantized on this machine from
+// the repository's best weights, so it costs minutes the others do not.
+// Answering no falls through to the three sizes.
+std::string choose_custom(const std::vector<QuantInfo> & rco) {
+    if (rco.empty()) {
+        return "";
+    }
+    std::printf("\n  %sa custom build spends one size's bytes where they do the most good,%s\n", kDim, kReset);
+    std::printf("  %squantized here from the repository's Q8_0. It takes a few minutes.%s\n\n", kDim, kReset);
+    std::printf("Build one? [Y/n/a] ");
+    for (;;) {
+        const int k = read_pick([]() { return raw_getch(); });
+        if (k == 'y' || k == 'Y' || k == kPickEnter) {
+            std::printf("yes\n");
+            return rco.front().name;
+        }
+        if (k == 'n' || k == 'N' || k == kPickEsc) {
+            std::printf("no\n");
+            return "";
+        }
+        if (k == 'a' || k == 'A') {
+            std::printf("choose\n");
+            std::vector<std::string> rows;
+            for (const QuantInfo & q : rco) {
+                rows.push_back(build_row("", q));
+            }
+            const int n = pick_menu("custom builds:", rows, 0, kArrows + " move   enter choose", "");
+            return n < 0 ? std::string() : rco[static_cast<size_t>(n)].name;
+        }
+    }
+}
 
 BuildChoice choose_build(ApiClient & api, const std::string & model, std::string quant,
                           const std::optional<QuantInfo> & registry_build, const std::string & title) {
@@ -487,10 +522,20 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             qi.size  = static_cast<int64_t>(j_num(q, "size"));
             qi.files = static_cast<int>(j_num(q, "files"));
             quants.push_back(qi);
-            (is_gsq(qi.name) ? gsq : plain).push_back(qi);
+            (is_rco(qi.name) ? gsq : plain).push_back(qi);
         }
     }
     choice.quant = quant;
+
+    // The custom build is offered first, since it is the one that costs
+    // time; saying no falls through to the sizes.
+    std::sort(gsq.begin(), gsq.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size > b.size; });
+    if (quant.empty() && !gsq.empty()) {
+        if (const std::string picked = choose_custom(gsq); !picked.empty()) {
+            choice.quant = picked;
+            return choice;
+        }
+    }
 
     // One list: the assembled build on top, the three sizes, and for a
     // registry model its own build at the bottom.
@@ -501,7 +546,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     };
     std::vector<Row> basic, full;
     if (!gsq.empty()) {
-        const QuantInfo & best = gsq.back();
+        const QuantInfo & best = gsq.front();
         basic.push_back(Row{build_row("advanced", best) + "  RCO, built here from the best weights: a longer pull",
                             best.name, false});
     }
@@ -517,8 +562,8 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         }
     }
     for (const auto & q : quants) {
-        full.push_back(Row{build_row(is_gsq(q.name) ? "advanced" : "", q) +
-                               (is_gsq(q.name) ? "  RCO, built here: a longer pull" : ""),
+        full.push_back(Row{build_row(is_rco(q.name) ? "advanced" : "", q) +
+                               (is_rco(q.name) ? "  RCO, built here: a longer pull" : ""),
                            q.name, false});
     }
     if (registry_build) {
@@ -1002,7 +1047,10 @@ Tiers tiers_of(const std::vector<QuantInfo> & quants) {
             t.medium = n / 2;
         }
     }
-    t.tiny = find({"Q3_K_M", "UD-Q3_K_XL", "IQ3_M", "IQ3_XS", "Q3_K_S", "IQ3_XXS", "UD-IQ3_XXS"});
+    // IQ4_XS first: it is the smallest build still worth running, and the
+    // 3-bit uniforms below it are what the computed allocation replaces.
+    t.tiny = find({"IQ4_XS", "UD-IQ4_XS", "IQ4_NL", "Q3_K_M", "UD-Q3_K_XL", "IQ3_M", "IQ3_XS", "Q3_K_S",
+                   "IQ3_XXS", "UD-IQ3_XXS"});
     if (t.tiny < 0) {
         t.tiny = by_bits(2.5, 3.9, true);
         if (t.tiny < 0) {
