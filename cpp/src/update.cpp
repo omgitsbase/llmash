@@ -3,6 +3,7 @@
 #include "cli_util.h"
 #include "cli_run.h"
 #include "platform.h"
+#include "pull.h"
 #include "version.h"
 
 #ifdef _WIN32
@@ -139,6 +140,50 @@ int die(const std::string & message) {
     return 1;
 }
 
+// The installer that came with this install, wherever the layout put it.
+//
+// `cfg.root` is the folder holding the running executable, and the installer
+// puts a second copy of the program in `<root>/bin` so one shim is on PATH.
+// Run from PATH, root is therefore `...\llmash\bin` while install.ps1 sits in
+// its parent, so the old single check never found it and `update` told every
+// user to go and paste the one-liner instead.
+std::string find_installer(const Config & cfg) {
+    std::error_code ec;
+    const fs::path  root = fs::path(cfg.root);
+    for (const fs::path & dir : {root, root.parent_path()}) {
+        if (dir.empty()) {
+            continue;
+        }
+        const fs::path p = dir / installer_name();
+        if (fs::is_regular_file(p, ec)) {
+            return p.string();
+        }
+    }
+    return "";
+}
+
+// Failing that, fetch it from the release being installed. An install that
+// cannot update itself is worse than one that downloads 30 KB to do it.
+std::string fetch_installer(const clidoc::Release & rel) {
+    std::string url;
+    for (const auto & a : rel.assets) {
+        if (a.first == installer_name()) {
+            url = a.second;
+            break;
+        }
+    }
+    if (url.empty()) {
+        return "";
+    }
+    std::error_code ec;
+    const fs::path  dest = fs::temp_directory_path(ec) / (std::string("llmash-") + installer_name());
+    std::string     err;
+    if (!fetch_blob(url, dest.string(), 0, [](int64_t) {}, err)) {
+        return "";
+    }
+    return fs::is_regular_file(dest, ec) ? dest.string() : "";
+}
+
 } // namespace
 
 int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
@@ -175,23 +220,35 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
         return 0;
     }
 
-    const std::string script = (fs::path(cfg.root) / installer_name()).string();
-    if (!fs::is_regular_file(script, ec)) {
+    std::string script = find_installer(cfg);
+    if (script.empty()) {
+        std::printf("fetching the installer for %s\n", there.c_str());
+        std::fflush(stdout);
+        script = fetch_installer(rel);
+    }
+    if (script.empty()) {
 #ifdef _WIN32
-        std::printf("the installer is not beside the program; run this instead:\n\n"
+        std::printf("could not get the installer; run this instead:\n\n"
                     "  irm https://raw.githubusercontent.com/%s/main/install.ps1 | iex\n",
                     clidoc::repo_slug().c_str());
 #else
-        std::printf("the installer is not beside the program; run this instead:\n\n"
+        std::printf("could not get the installer; run this instead:\n\n"
                     "  curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sh\n",
                     clidoc::repo_slug().c_str());
 #endif
         return 1;
     }
 
-    std::printf("updating %s to %s\n\n", cfg.root.c_str(), there.c_str());
+    // Install where this install lives, which is the folder holding the
+    // installer, not `cfg.root` — from PATH that is the `bin` copy, and
+    // passing it would lay a second install down inside the first.
+    const std::string target = fs::path(script).parent_path().string();
+    const std::string where  = fs::is_regular_file(fs::path(target) / "llmash.exe", ec)
+                                   ? target
+                                   : fs::path(cfg.root).parent_path().string();
+    std::printf("updating %s to %s\n\n", where.c_str(), there.c_str());
     std::fflush(stdout);
-    const int code = run_installer(script, cfg.root);
+    const int code = run_installer(script, where);
     if (code != 0) {
         return die("the installer stopped: exit " + std::to_string(code));
     }

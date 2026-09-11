@@ -6,6 +6,7 @@
 #include "cli_http.h"
 #include "cli_run.h"
 #include "config.h"
+#include "pull.h"
 #include "registry.h"
 
 #include <nlohmann/json.hpp>
@@ -40,12 +41,6 @@ ParsedArgs parse_simple(const std::vector<std::string> & args, const std::vector
                         const std::vector<std::string> & val_flags);
 
 // -------------------------------------------------------- pure logic units
-
-struct QuantInfo {
-    std::string name;
-    int64_t     size  = 0;
-    int         files = 0;
-};
 
 struct Tiers {
     int tiny = 0, medium = 0, large = 0;
@@ -102,6 +97,9 @@ int cmd_link(const std::vector<std::string> & args, const Config & cfg);
 int cmd_unlink();
 int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg);
 int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg);
+
+// `run`'s first-use pull: cmdPull(name, "", true), throwing CliExit on failure.
+void pull_model(const std::string & name);
 
 // The name main() was invoked as ("llmash", "ollama", a shim's own name),
 // substituted into every message above that carries `prog`.

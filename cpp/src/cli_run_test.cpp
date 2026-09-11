@@ -307,19 +307,24 @@ int main() {
               "InterruptGuard: a freshly-acquired guard starts clean (the earlier guard's release really ran)");
     }
 
-    // ----------------------------------------------------------- RAII: Spinner
+    // ----------------------------------------------------------- spinner
 
-    check(Spinner::live_count().load() == 0, "Spinner: no spinner thread running before the test");
     {
-        std::ostringstream sink;
-        {
-            Spinner sp(sink);
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            check(Spinner::live_count().load() == 1, "Spinner: its background thread runs while the guard is alive");
-        } // sp's destructor joins the thread here
-        check(!sink.str().empty(), "Spinner: it actually wrote frames to its output stream");
+        ProgSpinner       s("");
+        const std::string first = s.str();
+        check(first == "\xe2\xa0\x8b ", "ProgSpinner: an empty message draws just the glyph and a space");
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        check(s.str() != first, "ProgSpinner: the glyph advances every 100 ms");
+        s.stop();
+        check(s.str().empty(), "ProgSpinner: stopped with an empty message, it draws nothing");
     }
-    check(Spinner::live_count().load() == 0, "Spinner: the thread is gone once the guard is destroyed (no leak)");
+    {
+        WaitSpinner sp;
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        sp.stop_and_clear();
+        sp.stop_and_clear();
+        check(true, "WaitSpinner: stop_and_clear twice returns instead of deadlocking");
+    }
 
     std::printf("\n%s (%d failure%s)\n", failures == 0 ? "all passed" : "FAILURES", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

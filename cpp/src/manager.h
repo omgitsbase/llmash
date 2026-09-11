@@ -50,14 +50,15 @@ private:
     int exit_code_ = 0;
     bool exited_ = false;
 
-    std::vector<std::string> args() const;
+    std::vector<std::string> args();
 };
 
 class Manager {
 public:
     explicit Manager(Config cfg, Registry * reg);
 
-    std::vector<Instance *> loaded();
+    std::vector<Instance *> loaded(); // ready ones only
+    std::vector<Instance *> live();   // every instance, still loading included
     Instance *              get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err);
     bool                    unload(const std::string & name);
     Instance *              find(const std::string & name);

@@ -24,6 +24,7 @@ struct Config {
     std::map<std::string, int> ctx_max;      // local.json ctx_max
     std::map<std::string, std::vector<std::string>> launch_extra; // extra llama-server flags, by name fragment
     std::vector<std::string> no_mmproj;      // names whose projector is not loaded up front
+    std::vector<std::string> pin;            // LLMASH_PIN, or local.json pin: never evicted
 };
 
 // Never throws: an unreadable file leaves the defaults.

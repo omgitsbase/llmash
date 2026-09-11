@@ -52,6 +52,7 @@ set(LLMASH_PORTABLE
     src/version.cpp
     src/sha256.cpp
     src/table.cpp
+    src/progress.cpp
     src/caps.cpp
     src/manager.cpp
     src/api_logic.cpp

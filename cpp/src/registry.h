@@ -4,6 +4,8 @@
 #include "gguf.h"
 
 #include <cstdint>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -42,8 +44,8 @@ class Registry {
 public:
     explicit Registry(Config cfg);
 
-    std::vector<Model> all();
-    const Model *      find(const std::string & name);
+    std::vector<Model>   all();
+    std::optional<Model> find(const std::string & name);
 
     std::vector<std::string> library_dirs() const;
     bool                     in_library(const std::string & path) const;
@@ -54,6 +56,7 @@ public:
 
 private:
     Config             cfg_;
+    mutable std::mutex mu_;
     std::vector<Model> cache_;
     bool               loaded_ = false;
 

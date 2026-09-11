@@ -412,6 +412,17 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
         load_error(res, name, err, false);
         return false;
     }
+    // No messages asks for the model to be loaded and nothing more.
+    if (messages.empty()) {
+        json out           = json::object();
+        out["model"]       = name;
+        out["created_at"]  = iso_time(now_seconds());
+        out["message"]     = json{{"role", "assistant"}, {"content", ""}};
+        out["done"]        = true;
+        out["done_reason"] = "load";
+        write_json(res, 200, out);
+        return false;
+    }
 
     std::string       hoff;
     const std::string custom = jstr(opts, "handoff");
@@ -680,6 +691,26 @@ void handle_generate(const httplib::Request & req, httplib::Response & res, Conf
         out["response"]    = "";
         out["done"]        = true;
         out["done_reason"] = freed ? "unload" : "not_loaded";
+        write_json(res, 200, out);
+        return;
+    }
+    // An empty prompt asks for the model to be loaded and nothing more.
+    if (jstr(body, "prompt").empty() && jlist(body, "images").empty()) {
+        std::string err;
+        const json  ka  = body.contains("keep_alive") ? body["keep_alive"] : json();
+        const int   ctx = body.contains("options") && body["options"].is_object()
+                              ? static_cast<int>(jnum(body["options"], "num_ctx"))
+                              : 0;
+        if (mgr.get(name, ctx, parse_keep_alive(ka, cfg.keep_alive), false, err) == nullptr) {
+            load_error(res, name, err, false);
+            return;
+        }
+        json out           = json::object();
+        out["model"]       = name;
+        out["created_at"]  = iso_time(now_seconds());
+        out["response"]    = "";
+        out["done"]        = true;
+        out["done_reason"] = "load";
         write_json(res, 200, out);
         return;
     }

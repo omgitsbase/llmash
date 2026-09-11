@@ -213,13 +213,26 @@ struct RegistryBuild {
 };
 RegistryBuild inspect_registry_build(const RegistryManifest & m);
 
-void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, const Emit & emit);
+// The tags a registry repository publishes.
+std::vector<std::string> registry_tags(const std::string & host, const std::string & repo);
+
+// The builds of a registry model: the sibling tags that carry the same size
+// and a quantisation, with the bytes each would pull. Empty when the
+// repository publishes only the one build.
+std::vector<QuantInfo> registry_quants(const std::string & ref);
+
+// `store_as`, when set, is the ref the manifest is filed under: a pull of
+// one quantisation's tag that the user asked for by the plain name.
+void registry_pull(const std::string & ref, const std::string & store_as, const Config & cfg, Registry & reg,
+                   const Emit & emit);
 
 // The logic behind handle_pull/handle_resolve/handle_quants, kept free of
 // httplib types.
 void           run_pull(const nlohmann::json & body, const Config & cfg, Registry & reg, const Emit & emit);
 nlohmann::json api_resolve(const std::string & ref, const Config & cfg);
-nlohmann::json api_quants(const std::string & repo_arg);
+// `registry_ref` asks for an Ollama-registry model's own tags instead of a
+// Hugging Face repository's files.
+nlohmann::json api_quants(const std::string & repo_arg, bool registry_ref = false);
 
 std::string human_bytes(int64_t b);
 

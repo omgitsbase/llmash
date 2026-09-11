@@ -64,13 +64,13 @@ int main() {
     const auto models = reg.all();
     check(models.size() == 2, "sidecars are not listed as models");
 
-    const Model * nail = reg.find("nail-a3b");
-    check(nail != nullptr, "a model in a subfolder is found by name");
+    const std::optional<Model> nail = reg.find("nail-a3b");
+    check(nail.has_value(), "a model in a subfolder is found by name");
     check(nail && nail->has_mtp, "an mtp head in the weights is seen");
     check(nail && nail->arch == "qwen35moe", "the architecture is read from the header");
 
-    const Model * qwen = reg.find("qwen3-8b");
-    check(qwen != nullptr, "a model at the top level is found");
+    const std::optional<Model> qwen = reg.find("qwen3-8b");
+    check(qwen.has_value(), "a model at the top level is found");
     check(qwen && !qwen->has_mtp, "a model without an mtp head is not claimed to have one");
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");
 

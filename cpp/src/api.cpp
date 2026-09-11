@@ -181,9 +181,9 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     // A model name can hold both ':' and '/', so the id is everything after
     // the prefix, the way Go's TrimPrefix takes it.
     mount(srv, R"(/v1/models/(.*))", [&cfg, &reg](const Request & req, Response & res) {
-        const std::string name = req.matches.size() > 1 ? req.matches[1].str() : std::string();
-        const Model *     m    = reg.find(name);
-        if (m == nullptr || !std::filesystem::exists(m->path)) {
+        const std::string          name = req.matches.size() > 1 ? req.matches[1].str() : std::string();
+        const std::optional<Model> m    = reg.find(name);
+        if (!m || !std::filesystem::exists(m->path)) {
             write_json(res, 404,
                        openai_error_json("model '" + name + "' not found", "invalid_request_error",
                                           "model_not_found"));
@@ -194,9 +194,9 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
     mount(srv, "/api/show", [&cfg, &reg](const Request & req, Response & res) {
         const json  body = read_body(req);
-        std::string name = first_of(jstr(body, "model"), jstr(body, "name"));
-        const Model * m  = reg.find(name);
-        if (m == nullptr) {
+        std::string                name = first_of(jstr(body, "model"), jstr(body, "name"));
+        const std::optional<Model> m    = reg.find(name);
+        if (!m) {
             write_json(res, 404, error_obj("model not found"));
             return;
         }
@@ -205,9 +205,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
     mount(srv, "/api/loading", [&mgr](const Request &, Response & res) {
         json out = json::array();
-        // manager.h exposes only instances that are already ready, so a model
-        // still loading is invisible from here; Go reads mgr.Live().
-        for (Instance * in : mgr.loaded()) {
+        for (Instance * in : mgr.live()) {
             if (in->ready()) {
                 continue;
             }
@@ -260,13 +258,13 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
     mount(srv, "/api/delete", [&mgr, &reg, st](const Request & req, Response & res) {
         const json    body = read_body(req);
-        std::string   name = first_of(jstr(body, "model"), jstr(body, "name"));
-        const Model * found = reg.find(name);
-        if (found == nullptr) {
+        std::string                name  = first_of(jstr(body, "model"), jstr(body, "name"));
+        const std::optional<Model> found = reg.find(name);
+        if (!found) {
             write_json(res, 404, error_obj("model not found"));
             return;
         }
-        const Model m = *found; // the invalidate below drops what `found` points at
+        const Model m = *found;
         mgr.unload(m.name);
         DeleteOutcome out = run_delete(m);
         reg.invalidate();
@@ -325,10 +323,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
         const std::string source      = jstr(body, "source");
         const std::string destination = jstr(body, "destination");
 
-        std::optional<Model> m;
-        if (const Model * found = reg.find(source)) {
-            m = *found;
-        }
+        const std::optional<Model> m = reg.find(source);
         stream_ndjson(res, [&cfg, &reg, st, m, source, destination](const Emit & emit) {
             if (!m) {
                 emit(error_obj(source + ": model not found"));

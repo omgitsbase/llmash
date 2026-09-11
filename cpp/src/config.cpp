@@ -229,6 +229,30 @@ Config load_config() {
         }
     }
 
+    const std::string pin_env = env_str("LLMASH_PIN");
+    if (!pin_env.empty()) {
+        size_t start = 0;
+        while (start <= pin_env.size()) {
+            const size_t comma = pin_env.find(',', start);
+            std::string  one   = pin_env.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+            while (!one.empty() && std::isspace(static_cast<unsigned char>(one.front()))) one.erase(one.begin());
+            while (!one.empty() && std::isspace(static_cast<unsigned char>(one.back()))) one.pop_back();
+            if (!one.empty()) {
+                c.pin.push_back(one);
+            }
+            if (comma == std::string::npos) {
+                break;
+            }
+            start = comma + 1;
+        }
+    } else if (const auto it = local.find("pin"); it != local.end() && it->is_array()) {
+        for (const auto & e : *it) {
+            if (e.is_string()) {
+                c.pin.push_back(e.get<std::string>());
+            }
+        }
+    }
+
     if (c.models_root.empty()) {
         const std::string home = env_str("USERPROFILE", env_str("HOME"));
         if (!home.empty()) {

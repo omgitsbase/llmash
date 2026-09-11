@@ -22,6 +22,7 @@ namespace llmash {
 int  raw_key() { return _getch(); }
 bool stdin_is_terminal() { return _isatty(_fileno(stdin)) != 0; }
 bool stdout_is_terminal() { return _isatty(_fileno(stdout)) != 0; }
+bool stderr_is_terminal() { return _isatty(_fileno(stderr)) != 0; }
 
 int terminal_columns() {
     CONSOLE_SCREEN_BUFFER_INFO info;
@@ -109,6 +110,7 @@ int raw_key() {
 
 bool stdin_is_terminal() { return isatty(STDIN_FILENO) != 0; }
 bool stdout_is_terminal() { return isatty(STDOUT_FILENO) != 0; }
+bool stderr_is_terminal() { return isatty(STDERR_FILENO) != 0; }
 
 int terminal_columns() {
     struct winsize ws {};

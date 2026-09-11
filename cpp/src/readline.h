@@ -87,6 +87,7 @@ public:
     StepResult step(RuneSource & in, std::ostream & out);
 
     void set_prefill(std::string s) { prefill_ = std::move(s); }
+    void set_use_alt(bool v) { use_alt_ = v; }
 
     const std::u32string &          buffer() const { return buf_; }
     size_t                          cursor() const { return pos_; }

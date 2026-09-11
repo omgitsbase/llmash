@@ -1,5 +1,11 @@
+#include "cli_commands.h"
+#include "cli_console.h"
 #include "cli_format.h"
+#include "cli_http.h"
 #include "cli_run.h"
+#include "config.h"
+#include "progress.h"
+#include "readline.h"
 
 #include <csignal>
 #ifndef _WIN32
@@ -31,12 +37,6 @@
 #include <sstream>
 #include <thread>
 #include <utility>
-
-// Cross-file pieces run.go leans on that belong to other command modules
-// (cmds.go's cmdList/showInfo, pull.go's cmdPull, draft_install.go's
-// confirm, readline.go's raw-mode editor, progress.go's multi-state
-// renderer) are not ported here — they are a different Go file each, and
-// this job is run.go only.
 
 namespace llmash {
 
@@ -609,14 +609,6 @@ bool server_up() {
     return false;
 }
 
-// die()'s C++ shape (see cli_run.h): print, then unwind via CliExit rather
-// than calling std::exit, so a test can catch it instead of the process
-// dying.
-[[noreturn]] void die(const std::string & msg) {
-    std::fprintf(stderr, "%s\n", msg.c_str());
-    throw CliExit(1, msg);
-}
-
 void need_server() {
     if (server_up()) return;
     std::fprintf(stderr, "llmash isn't running at %s.\nStart it with:  %s serve\n", resolve_host().c_str(),
@@ -681,53 +673,14 @@ private:
     bool installed_ = false;
 };
 
-// newProgress+newSpinner's C++ shape: run.go only ever adds one spinner to
-// one progress and stops it the same call, so the two collapse into one RAII
-// guard instead of the general multi-state renderer in progress.go.
-class Spinner {
+// A bare spinner on stderr until the first token arrives.
+class WaitSpinner {
 public:
-    explicit Spinner(std::ostream & out) : out_(out) { thread_ = std::thread([this] { run(); }); }
-    ~Spinner() {
-        stop_.store(true);
-        if (thread_.joinable()) thread_.join();
-    }
-    Spinner(const Spinner &)             = delete;
-    Spinner & operator=(const Spinner &) = delete;
-
-    // Called once the first token/error arrives, matching stopAndClear().
-    void stop_and_clear() {
-        if (stop_.exchange(true)) return;
-        if (thread_.joinable()) thread_.join();
-        std::lock_guard<std::mutex> lk(mu_);
-        out_ << "\r\x1b[K" << std::flush;
-    }
-
-    static std::atomic<int> & live_count() {
-        static std::atomic<int> n{0};
-        return n;
-    }
+    WaitSpinner() { p_.add(std::make_shared<ProgSpinner>("")); }
+    void stop_and_clear() { p_.stop_and_clear(); }
 
 private:
-    void run() {
-        live_count().fetch_add(1);
-        static const char * frames[] = {"\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc",
-                                          "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f"};
-        int i = 0;
-        while (!stop_.load()) {
-            {
-                std::lock_guard<std::mutex> lk(mu_);
-                out_ << "\r" << frames[i % 10] << " " << std::flush;
-            }
-            i++;
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        live_count().fetch_sub(1);
-    }
-
-    std::ostream &    out_;
-    std::mutex        mu_;
-    std::thread       thread_;
-    std::atomic<bool> stop_{false};
+    Progress p_;
 };
 
 constexpr const char * kColorGrey    = "\x1b[38;5;245m";
@@ -823,57 +776,6 @@ void print_summary(const json & m) {
     }
 }
 
-// ----------------------------------------------- stand-ins for other files
-
-// draft_install.go's confirm(): a plain y/N prompt on stdin.
-bool confirm(const std::string & question) {
-    std::fprintf(stderr, "%s [y/N] ", question.c_str());
-    std::string line;
-    if (!std::getline(std::cin, line)) return false;
-    return line == "y" || line == "Y" || line == "yes" || line == "Yes";
-}
-
-// pull.go's cmdPull is a whole other command (download, verify, decompress).
-void stand_in_pull(const std::string & name) {
-    die("Error: '" + name + "' is not installed and pulling models isn't wired into this build yet; " +
-        "install it first with the model's own release, then run it.");
-}
-
-// cmds.go's showInfo() lays this out as aligned tables; this keeps the same
-// blocks and order without table.go's column layout.
-void print_model_info(const json & resp) {
-    const json info = j_sub(resp, "model_info");
-    const json det   = j_sub(resp, "details");
-    std::printf("  Model\n");
-    const std::string arch = j_str(info, "general.architecture");
-    if (!info.empty()) {
-        if (!arch.empty()) std::printf("    architecture        %s\n", arch.c_str());
-        std::string param = j_str(det, "parameter_size");
-        if (!param.empty()) std::printf("    parameters          %s\n", param.c_str());
-        if (info.contains(arch + ".context_length")) {
-            std::printf("    context length      %s\n", j_str(info, arch + ".context_length").c_str());
-        }
-    } else {
-        std::printf("    architecture        %s\n", j_str(det, "family").c_str());
-        std::printf("    parameters          %s\n", j_str(det, "parameter_size").c_str());
-    }
-    std::printf("    quantization        %s\n\n", j_str(det, "quantization_level").c_str());
-    const json caps = j_list(resp, "capabilities");
-    if (!caps.empty()) {
-        std::printf("  Capabilities\n");
-        for (const auto & c : caps) std::printf("    %s\n", c.is_string() ? c.get<std::string>().c_str() : c.dump().c_str());
-        std::printf("\n");
-    }
-}
-
-// cmds.go's cmdList, minus table.go's aligned columns: enough for the
-// REPL's own /list to show something real.
-void stand_in_list() {
-    const HttpResult r = http_call_json("GET", "/api/tags", nullptr, 60);
-    if (!r.ok) die("error: " + r.error);
-    for (const auto & m : j_list(r.body, "models")) std::printf("%s\n", j_str(m, "name").c_str());
-}
-
 } // namespace
 
 // ============================================================ model calls
@@ -894,7 +796,7 @@ json show_or_pull(RunOptions & o) {
     if (is_console(stdin) && is_console(stdout) && !confirm(o.model + " is not on this machine. Pull it?")) {
         throw CliExit(1);
     }
-    stand_in_pull(o.model);
+    pull_model(o.model);
     std::tie(d, code) = show_model(o.model);
     if (code != 200) die("Error: " + first_of({j_str(d, "error"), "model not found"}));
     return d;
@@ -912,7 +814,7 @@ std::string http_status_text(int code) {
 
 // A blank generate request loads (or with keep_alive 0, unloads) the model.
 void load_or_unload_model(RunOptions & o) {
-    Spinner sp(std::cerr);
+    WaitSpinner sp;
     const json body = o.body({{"prompt", ""}, {"stream", false}});
     const HttpResult r = http_call_json("POST", "/api/generate", &body, 600);
     sp.stop_and_clear();
@@ -945,7 +847,7 @@ void ensure_thinking_support(const std::string & model) {
 
 Message chat_once(RunOptions o) {
     InterruptGuard guard;
-    Spinner        sp(std::cerr);
+    WaitSpinner    sp;
 
     DisplayState state;
     std::string  thinking, full, role = "assistant", api_err;
@@ -1007,7 +909,7 @@ Message chat_once(RunOptions o) {
 
 void generate_once(RunOptions o) {
     InterruptGuard guard;
-    Spinner        sp(std::cerr);
+    WaitSpinner    sp;
 
     DisplayState state;
     std::string  thinking, api_err;
@@ -1085,24 +987,49 @@ void embed_once(const RunOptions & o, const std::optional<bool> & truncate, int 
 
 namespace {
 
-enum class ReadOutcome { Ok, Eof };
-
-// Stand-in for readline.go's raw-mode editor (history navigation, Ctrl+G
-// external-editor, bracketed paste) — that file is its own module and isn't
-// ported here.
-class SimpleEditor {
+#ifdef _WIN32
+using ReplEditor = Editor;
+#else
+// readline.cpp is Windows-only; a line reader stands in until it is ported.
+class ReplEditor {
 public:
-    bool    use_alt          = false;
-    bool    pasting          = false;
-    bool    history_enabled  = true;
+    struct Hist {
+        bool enabled = true;
+    };
 
-    std::pair<std::string, ReadOutcome> readline(const std::string & prompt) {
-        std::fputs(prompt.c_str(), stdout);
+    LineResult read_line() {
+        std::fputs(use_alt_ ? "... " : ">>> ", stdout);
         std::fflush(stdout);
         std::string line;
-        if (!std::getline(std::cin, line)) return {"", ReadOutcome::Eof};
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        return {line, ReadOutcome::Ok};
+        if (!std::getline(std::cin, line)) {
+            return {"", ReadStatus::Eof};
+        }
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        return {line, ReadStatus::Ok};
+    }
+    void   set_prefill(const std::string &) {}
+    void   set_use_alt(bool v) { use_alt_ = v; }
+    bool   pasting() const { return false; }
+    Hist & history() { return hist_; }
+
+private:
+    Hist hist_;
+    bool use_alt_ = false;
+};
+#endif
+
+// Bracketed paste for the life of the prompt loop.
+class PasteGuard {
+public:
+    PasteGuard() {
+        std::fputs("\x1b[?2004h", stdout);
+        std::fflush(stdout);
+    }
+    ~PasteGuard() {
+        std::fputs("\x1b[?2004l", stdout);
+        std::fflush(stdout);
     }
 };
 
@@ -1192,8 +1119,9 @@ bool starts_with(const std::string & s, const std::string & p) {
 }
 
 void generate_interactive(RunOptions o) {
-    SimpleEditor ed;
-    bool         think_set = !o.think.is_null();
+    ReplEditor ed;
+    bool       think_set = !o.think.is_null();
+    PasteGuard paste;
 
     std::string sb;
     enum class Multiline { None, Prompt, System } multiline = Multiline::None;
@@ -1205,13 +1133,36 @@ void generate_interactive(RunOptions o) {
         else o.messages.push_back(nm);
     };
 
-    // Bracketed paste is intentionally never turned on here: it wraps pasted
-    // text in ESC[200~ / ESC[201~, and SimpleEditor (unlike readline.go's
-    // raw-mode reader) doesn't strip those markers back out.
     for (;;) {
-        const std::string cur_prompt = (multiline != Multiline::None) ? "... " : ">>> ";
-        const auto [line, outcome]   = ed.readline(cur_prompt);
-        if (outcome == ReadOutcome::Eof) return;
+        const LineResult  lr   = ed.read_line();
+        const std::string line = lr.text;
+        if (lr.status == ReadStatus::Eof) {
+            return;
+        }
+        if (lr.status == ReadStatus::Interrupt) {
+            if (line.empty()) {
+                std::printf("\nUse Ctrl + d or /bye to exit.\n");
+            }
+            ed.set_use_alt(false);
+            sb.clear();
+            multiline = Multiline::None;
+            continue;
+        }
+        if (lr.status == ReadStatus::EditPrompt) {
+            sb.clear();
+#ifdef _WIN32
+            const EditorResult er = edit_in_external_editor(line);
+            if (!er.error.empty()) {
+                std::fprintf(stderr, "error: %s\n", er.error.c_str());
+                continue;
+            }
+            if (er.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+                continue;
+            }
+            ed.set_prefill(er.text);
+#endif
+            continue;
+        }
 
         if (multiline != Multiline::None) {
             std::string before  = line;
@@ -1220,6 +1171,7 @@ void generate_interactive(RunOptions o) {
             sb += before;
             if (!closed) {
                 sb += "\n";
+                ed.set_use_alt(true);
                 continue;
             }
             if (multiline == Multiline::System) {
@@ -1228,6 +1180,7 @@ void generate_interactive(RunOptions o) {
                 sb.clear();
             }
             multiline = Multiline::None;
+            ed.set_use_alt(false);
         } else if (starts_with(line, "\"\"\"")) {
             std::string rest   = line.substr(3);
             const bool  closed = rest.size() >= 3 && rest.compare(rest.size() - 3, 3, "\"\"\"") == 0;
@@ -1235,17 +1188,18 @@ void generate_interactive(RunOptions o) {
             sb += rest;
             if (!closed) {
                 sb += "\n";
-                multiline  = Multiline::Prompt;
-                ed.use_alt = true;
+                multiline = Multiline::Prompt;
+                ed.set_use_alt(true);
             }
-        } else if (ed.pasting) {
-            // Never true today (see SimpleEditor); kept so the branch order
-            // matches run.go's if a paste-aware editor is wired in later.
+        } else if (ed.pasting()) {
             sb += line;
             sb += "\n";
             continue;
         } else if (starts_with(line, "/list")) {
-            stand_in_list(); // cmds.go's cmdList also filters by a name prefix; ours doesn't
+            const auto   args = fields(line);
+            const Config cfg  = load_config();
+            ApiClient    api(cfg);
+            cmd_list(std::vector<std::string>(args.begin() + 1, args.end()), api, cfg);
         } else if (starts_with(line, "/load")) {
             const auto args = fields(line);
             if (args.size() != 2) {
@@ -1311,9 +1265,9 @@ void generate_interactive(RunOptions o) {
             } else {
                 const std::string & sub = args[1];
                 if (sub == "history") {
-                    ed.history_enabled = true;
+                    ed.history().enabled = true;
                 } else if (sub == "nohistory") {
-                    ed.history_enabled = false;
+                    ed.history().enabled = false;
                 } else if (sub == "wordwrap") {
                     o.word_wrap = true;
                     std::printf("Set 'wordwrap' mode.\n");
@@ -1393,7 +1347,7 @@ void generate_interactive(RunOptions o) {
                     }
                     sb += rest;
                     if (multiline != Multiline::None) {
-                        ed.use_alt = true;
+                        ed.set_use_alt(true);
                         continue;
                     }
                     set_system(sb);
@@ -1416,7 +1370,9 @@ void generate_interactive(RunOptions o) {
                 }
                 const std::string & sub = args[1];
                 if (sub == "info") {
-                    print_model_info(info);
+                    std::string out;
+                    show_info(info, false, out);
+                    std::fputs(out.c_str(), stderr);
                 } else if (sub == "license") {
                     const std::string lic = j_str(info, "license");
                     if (lic.empty()) std::printf("No license was specified for this model.\n");
