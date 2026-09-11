@@ -1,4 +1,5 @@
 #include "config.h"
+#include "platform.h"
 #include "registry.h"
 
 #include <cstdio>
@@ -82,6 +83,22 @@ int main() {
     check(!reg.in_library("/somewhere/else/x.gguf"), "a file outside it is not");
     check(same_dir("/A/B", "/A/B/"), "a trailing separator is the same folder");
 #endif
+
+    // Run from the bin copy on PATH, the install is the folder above it.
+    {
+        const fs::path root = dir / "installed";
+        const fs::path bin  = root / "bin";
+        fs::create_directories(bin);
+        { std::ofstream f(root / llmash_exe()); }
+        { std::ofstream f(bin / llmash_exe()); }
+        check(same_dir(install_root(bin.string()), root.string()), "the bin copy resolves to the install above it");
+        check(same_dir(install_root(root.string()), root.string()), "the install itself resolves to itself");
+
+        const fs::path lone = dir / "lonely" / "bin";
+        fs::create_directories(lone);
+        check(same_dir(install_root(lone.string()), lone.string()),
+              "a bin folder with no program above it is left alone");
+    }
 
     fs::remove_all(dir);
     std::printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");
