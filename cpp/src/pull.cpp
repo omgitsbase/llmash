@@ -1702,11 +1702,12 @@ int64_t rows_of(const gsq::TensorEntry & t) {
     return n;
 }
 
-// Norms, biases and anything one-dimensional are left as the source has
-// them; so is anything too small for a block.
-bool quantizable(const gsq::TensorEntry & t) {
-    return t.dims.size() > 1 && t.dims[0] % 256 == 0 && rows_of(t) > 0 &&
-           t.name.size() > 7 && t.name.compare(t.name.size() - 7, 7, ".weight") == 0;
+// Only what the source itself quantized. llama.cpp holds the router, the
+// norms and the state-space tensors at full precision on purpose, and they
+// are 2-D and block-aligned like any other, so going by shape alone
+// requantized the router and the model answered "the the the".
+bool quantizable(const gsq::TensorEntry & t, const rco::Ggml & g) {
+    return t.dims.size() > 1 && t.dims[0] % 256 == 0 && rows_of(t) > 0 && g.quantized(static_cast<int>(t.type));
 }
 
 
@@ -1882,7 +1883,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     std::string                how;
     std::vector<size_t>        work;
     for (size_t i = 0; i < layout.tensors.size(); i++) {
-        if (quantizable(layout.tensors[i])) {
+        if (quantizable(layout.tensors[i], ggml)) {
             work.push_back(i);
         }
     }
@@ -1984,7 +1985,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         // Everything not in the search keeps the bytes it already has.
         int64_t fixed = 0;
         for (const gsq::TensorEntry & t : layout.tensors) {
-            if (!quantizable(t)) {
+            if (!quantizable(t, ggml)) {
                 fixed += t.bytes;
             }
         }
@@ -2184,7 +2185,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     const int64_t out_bytes = static_cast<int64_t>(fs::file_size(dest, ec));
     int64_t       params    = 0;
     for (const gsq::TensorEntry & t : layout.tensors) {
-        if (quantizable(t)) {
+        if (quantizable(t, ggml)) {
             params += t.dims[0] * rows_of(t);
         }
     }
