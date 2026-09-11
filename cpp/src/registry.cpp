@@ -448,6 +448,8 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
         mo.arch    = g.arch;
         mo.has_mtp = g.has_mtp;
         mo.size    = static_cast<uint64_t>(fs::file_size(path, ec));
+        mo.manifest     = it->path().string();
+        mo.store_root   = root;
         mo.digest       = raw_digest;
         mo.family       = family.empty() ? g.arch : family;
         mo.param_size   = !param_size.empty() ? param_size : (g.n_params > 0 ? pretty_params(g.n_params) : "");

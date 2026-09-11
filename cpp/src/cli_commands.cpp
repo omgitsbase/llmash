@@ -473,7 +473,11 @@ std::pair<std::string, std::string> choose_build(ApiClient & api, const std::str
     std::string chosen = quant;
     if (!quants.empty()) {
         const Tiers t = tiers_of(quants);
-        const std::vector<std::string> basic{build_row("tiny", quants[t.tiny]), build_row("medium", quants[t.medium]),
+        // "tiny" is the wrong word for a GSQ build: it is that size but not
+        // that quality, and the row is what tells someone which to take.
+        const bool tiny_is_gsq = quants[static_cast<size_t>(t.tiny)].name.rfind("GSQ", 0) == 0;
+        const std::vector<std::string> basic{build_row(tiny_is_gsq ? "best" : "tiny", quants[t.tiny]),
+                                             build_row("medium", quants[t.medium]),
                                              build_row("large", quants[t.large])};
         std::vector<std::string> full;
         for (const auto & q : quants) {
@@ -938,7 +942,21 @@ Tiers tiers_of(const std::vector<QuantInfo> & quants) {
             t.medium = n / 2;
         }
     }
-    t.tiny = find({"Q3_K_M", "UD-Q3_K_XL", "IQ3_M", "IQ3_XS", "Q3_K_S", "IQ3_XXS", "UD-IQ3_XXS"});
+    // A GSQ build is assembled here from the repo's best weights rather than
+    // downloaded, and measured better than a uniform quant of the same size
+    // (Qwopus 27B: 11.3 GB at ppl 5.98, against 11.7 GB at 6.18). So it is the
+    // small tier whenever the server offers one; the largest fits most cards.
+    int gsq = -1;
+    for (size_t i = 0; i < quants.size(); i++) {
+        const bool is_gsq = quants[i].name.rfind("GSQ", 0) == 0 || quants[i].name.rfind("gsq", 0) == 0;
+        if (is_gsq && (gsq < 0 || quants[i].size > quants[static_cast<size_t>(gsq)].size)) {
+            gsq = static_cast<int>(i);
+        }
+    }
+    t.tiny = gsq;
+    if (t.tiny < 0) {
+        t.tiny = find({"Q3_K_M", "UD-Q3_K_XL", "IQ3_M", "IQ3_XS", "Q3_K_S", "IQ3_XXS", "UD-IQ3_XXS"});
+    }
     if (t.tiny < 0) {
         t.tiny = by_bits(2.5, 3.9, true);
         if (t.tiny < 0) {

@@ -467,6 +467,41 @@ int main() {
         check(fs::exists(lib.path), "delete: the library file is still there");
     }
 
+    // An Ollama-store model: a manifest naming blobs with no .gguf extension.
+    // `rm phi3:3.8b` answered "nothing to delete" for exactly this shape.
+    {
+        const fs::path store  = dir / "store";
+        const fs::path mdir   = store / "manifests" / "registry.ollama.ai" / "library" / "phi3";
+        const fs::path blobs  = store / "blobs";
+        fs::create_directories(mdir);
+        fs::create_directories(blobs);
+        const std::string own    = "sha256-aaa";   // only phi3 uses it
+        const std::string shared = "sha256-bbb";   // another model uses it too
+        write_file(blobs / own, "weights");
+        write_file(blobs / shared, "template");
+        write_file(mdir / "3.8b",
+                   R"({"layers":[{"mediaType":"application/vnd.ollama.image.model","digest":"sha256:aaa"},)"
+                   R"({"mediaType":"application/vnd.ollama.image.template","digest":"sha256:bbb"}]})");
+        const fs::path other = store / "manifests" / "registry.ollama.ai" / "library" / "other";
+        fs::create_directories(other);
+        write_file(other / "latest",
+                   R"({"layers":[{"mediaType":"application/vnd.ollama.image.template","digest":"sha256:bbb"}]})");
+
+        Model sm;
+        sm.name       = "phi3:3.8b";
+        sm.path       = (blobs / own).string();
+        sm.manifest   = (mdir / "3.8b").string();
+        sm.store_root = store.string();
+
+        const DeleteOutcome d = run_delete(sm);
+        check(d.status == 200, "delete: a model in the Ollama store is removed");
+        check(!fs::exists(mdir / "3.8b"), "delete: its manifest is gone");
+        check(!fs::exists(blobs / own), "delete: the blob only it used is gone");
+        check(fs::exists(blobs / shared), "delete: a blob another model shares is kept");
+        check(!fs::exists(mdir), "delete: the emptied model folder is tidied away");
+        check(fs::exists(other / "latest"), "delete: the other model's manifest is untouched");
+    }
+
     // ------------------------------------------------------------- cli cache
     {
         CliTextCache cache;
