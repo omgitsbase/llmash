@@ -5,6 +5,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
+#else
+#include <curl/curl.h>
 #endif
 
 #include <algorithm>
@@ -21,7 +23,9 @@
 #include <thread>
 
 // TLS without a vendored SSL library: Windows already has one.
+#ifdef _WIN32
 #pragma comment(lib, "winhttp.lib")
+#endif
 
 namespace fs = std::filesystem;
 using json   = nlohmann::json;
@@ -125,6 +129,12 @@ int64_t j_int(const json & j, const char * key) {
 }
 
 // ------------------------------------------------------------- WinHTTP
+//
+// One request at a time, read in chunks. Both platforms answer to the same
+// two names: a Stream the caller drains with read_chunk, and open_stream to
+// start one.
+
+#ifdef _WIN32
 
 std::wstring widen(const std::string & s) {
     if (s.empty()) {
@@ -171,9 +181,14 @@ struct Stream {
     int     status         = 0;
     int64_t content_length = -1;
 
-    bool read_chunk(char * buf, DWORD cap, DWORD & got) {
-        got = 0;
-        return WinHttpReadData(request.get(), buf, cap, &got) != FALSE;
+    bool read_chunk(char * buf, size_t cap, size_t & got) {
+        DWORD n = 0;
+        got     = 0;
+        if (WinHttpReadData(request.get(), buf, static_cast<DWORD>(cap), &n) == FALSE) {
+            return false;
+        }
+        got = n;
+        return true;
     }
 };
 
@@ -272,6 +287,138 @@ bool open_stream(const std::string & url, const std::string & method, const std:
     }
     return true;
 }
+
+#else
+
+// ---------------------------------------------------------------- libcurl
+
+// curl pushes bytes at a write callback, so the multi interface turns that
+// round: perform until the callback has left something in `pending`, then
+// hand it out. One perform delivers at most a few writes, so the buffer
+// stays small without pausing the transfer.
+struct Stream {
+    CURLM *      multi = nullptr;
+    CURL *       easy  = nullptr;
+    curl_slist * hdrs  = nullptr;
+    std::string  pending;
+    bool         done           = false;
+    int          status         = 0;
+    int64_t      content_length = -1;
+
+    Stream() = default;
+    ~Stream() {
+        if (multi != nullptr && easy != nullptr) {
+            curl_multi_remove_handle(multi, easy);
+        }
+        if (easy != nullptr) {
+            curl_easy_cleanup(easy);
+        }
+        if (multi != nullptr) {
+            curl_multi_cleanup(multi);
+        }
+        if (hdrs != nullptr) {
+            curl_slist_free_all(hdrs);
+        }
+    }
+    Stream(const Stream &)             = delete;
+    Stream & operator=(const Stream &) = delete;
+
+    bool read_chunk(char * buf, size_t cap, size_t & got) {
+        got = 0;
+        while (pending.empty() && !done) {
+            int running = 0;
+            if (curl_multi_perform(multi, &running) != CURLM_OK) {
+                return false;
+            }
+            if (running == 0) {
+                done = true;
+                break;
+            }
+            if (pending.empty()) {
+                curl_multi_poll(multi, nullptr, 0, 200, nullptr);
+            }
+        }
+        const size_t n = std::min(cap, pending.size());
+        std::memcpy(buf, pending.data(), n);
+        pending.erase(0, n);
+        got = n;
+        return true;
+    }
+};
+
+size_t curl_sink(char * data, size_t size, size_t nmemb, void * user) {
+    const size_t n = size * nmemb;
+    static_cast<Stream *>(user)->pending.append(data, n);
+    return n;
+}
+
+bool open_stream(const std::string & url, const std::string & method, const std::string & range,
+                 const std::vector<std::string> & headers, Stream & st, std::string & err, int timeout_s = 0) {
+    st.multi = curl_multi_init();
+    st.easy  = curl_easy_init();
+    if (st.multi == nullptr || st.easy == nullptr) {
+        err = "could not start a request";
+        return false;
+    }
+    curl_easy_setopt(st.easy, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(st.easy, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(st.easy, CURLOPT_WRITEFUNCTION, curl_sink);
+    curl_easy_setopt(st.easy, CURLOPT_WRITEDATA, &st);
+    curl_easy_setopt(st.easy, CURLOPT_USERAGENT, "llmash");
+    curl_easy_setopt(st.easy, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(st.easy, CURLOPT_CONNECTTIMEOUT, static_cast<long>(timeout_s > 0 ? timeout_s : 30));
+    if (method == "HEAD") {
+        curl_easy_setopt(st.easy, CURLOPT_NOBODY, 1L);
+    } else if (method != "GET") {
+        curl_easy_setopt(st.easy, CURLOPT_CUSTOMREQUEST, method.c_str());
+    }
+    if (!range.empty()) {
+        const std::string bytes = starts_with(range, "bytes=") ? range.substr(6) : range;
+        curl_easy_setopt(st.easy, CURLOPT_RANGE, bytes.c_str());
+    }
+    for (const std::string & h : headers) {
+        st.hdrs = curl_slist_append(st.hdrs, h.c_str());
+    }
+    if (st.hdrs != nullptr) {
+        curl_easy_setopt(st.easy, CURLOPT_HTTPHEADER, st.hdrs);
+    }
+    if (curl_multi_add_handle(st.multi, st.easy) != CURLM_OK) {
+        err = "could not start a request";
+        return false;
+    }
+
+    // Perform until the response line has arrived, which is when the status
+    // code becomes readable.
+    for (;;) {
+        int running = 0;
+        if (curl_multi_perform(st.multi, &running) != CURLM_OK) {
+            err = "the request failed";
+            return false;
+        }
+        long code = 0;
+        curl_easy_getinfo(st.easy, CURLINFO_RESPONSE_CODE, &code);
+        if (code != 0) {
+            st.status = static_cast<int>(code);
+            break;
+        }
+        if (running == 0) {
+            st.done = true;
+            int      left = 0;
+            CURLMsg * m   = curl_multi_info_read(st.multi, &left);
+            err = (m != nullptr && m->data.result != CURLE_OK) ? curl_easy_strerror(m->data.result)
+                                                               : "the request failed";
+            return false;
+        }
+        curl_multi_poll(st.multi, nullptr, 0, 200, nullptr);
+    }
+    curl_off_t len = -1;
+    if (curl_easy_getinfo(st.easy, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &len) == CURLE_OK && len >= 0) {
+        st.content_length = static_cast<int64_t>(len);
+    }
+    return true;
+}
+
+#endif
 
 // ------------------------------------------------- GGUF header, from a URL
 
@@ -563,10 +710,10 @@ HttpResult http_request(const std::string & url, const std::string & method, con
     out.content_length = st.content_length;
 
     std::vector<char> buf(64 * 1024);
-    DWORD             got = 0;
+    size_t            got = 0;
     // Beyond this a caller wanted a file, and those go through fetch_blob.
     const size_t cap = 64u * 1024u * 1024u;
-    while (st.read_chunk(buf.data(), static_cast<DWORD>(buf.size()), got) && got > 0) {
+    while (st.read_chunk(buf.data(), buf.size(), got) && got > 0) {
         out.body.append(buf.data(), got);
         if (out.body.size() >= cap) {
             break;
@@ -1107,10 +1254,10 @@ bool fetch_blocks(const std::string & url, const std::string & tmp, int64_t tota
                         last_err = "HTTP " + std::to_string(stm.status);
                     } else {
                         int64_t off = start;
-                        DWORD   got = 0;
+                        size_t  got = 0;
                         bool    ok  = true;
                         while (true) {
-                            if (!stm.read_chunk(buf.data(), static_cast<DWORD>(buf.size()), got)) {
+                            if (!stm.read_chunk(buf.data(), buf.size(), got)) {
                                 last_err = "the connection dropped";
                                 ok       = false;
                                 break;
@@ -1195,9 +1342,9 @@ bool fetch_blob(const std::string & url, const std::string & tmp, int64_t total,
     int64_t           done = 0;
     auto              last = std::chrono::steady_clock::now() - std::chrono::hours(1);
     std::vector<char> buf(1 << 20);
-    DWORD             got = 0;
+    size_t            got = 0;
     while (true) {
-        if (!st.read_chunk(buf.data(), static_cast<DWORD>(buf.size()), got)) {
+        if (!st.read_chunk(buf.data(), buf.size(), got)) {
             err = "the connection dropped";
             return false;
         }

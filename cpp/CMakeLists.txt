@@ -53,6 +53,7 @@ set(LLMASH_PORTABLE
     src/sha256.cpp
     src/table.cpp
     src/progress.cpp
+    src/pull.cpp
     src/caps.cpp
     src/manager.cpp
     src/api_logic.cpp
@@ -66,7 +67,6 @@ set(LLMASH_PORTABLE
 # tests; the rest is what a mac port has left to do.
 set(LLMASH_WINDOWS
     src/readline.cpp
-    src/pull.cpp
     src/cli_win.cpp
     src/tray.cpp
     src/tray_process.cpp
