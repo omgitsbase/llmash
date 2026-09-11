@@ -107,6 +107,38 @@ prompt-prefix reuse, a host-RAM prompt cache sized from free RAM, batch width
 when the card has room, raised process priority, and DirectIO loading.
 `LLMASH_TUNE_OFF` disables any of them.
 
+## Custom builds
+
+`pull` offers to build a model for this machine before it offers the
+published sizes. Every tensor is quantized at each candidate type on a sample
+of its rows and scored by importance-weighted error, then one type per tensor
+is chosen under a total size budget: the bits go where they change the answer
+and come off where they do not.
+
+The source is the repository's Q8_0, read a block of rows at a time and
+dropped once quantized, so nothing but the result is written to disk and the
+whole conversion holds about 350 MB of memory. The picker shows both numbers,
+what comes down and what is kept:
+
+```
+qwen3-1.7b, which build?
+  advanced RCO-3.9         2.2 GB down,   996 MB kept
+  tiny     IQ3_XS          923 MB
+  medium   Q4_K_M          1.1 GB
+  large    Q8_0            2.2 GB
+```
+
+Against llama.cpp's own build of the same size, on technical problems at
+temperature 0 with the Q8_0 as the reference:
+
+| build | size | correct |
+|---|---|---|
+| Q8_0 | 2.02 GB | 5/6 |
+| IQ3_XS | 0.90 GB | 4/6 |
+| RCO-3.9 | 0.93 GB | 5/6 |
+
+It needs ggml, which comes with the llama.cpp runtime beside `llama-server`.
+
 ## Speculation
 
 A model carrying an MTP head drafts for itself, with nothing to fetch or
