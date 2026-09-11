@@ -475,7 +475,7 @@ std::string build_row(const std::string & label, const QuantInfo & q) {
 // heads, and asks for one of each.
 bool is_rco(const std::string & name) {
     const std::string u = upper(name);
-    return u.rfind("RCO", 0) == 0 || u.rfind("GSQ", 0) == 0;
+    return u.rfind("RCO", 0) == 0;
 }
 
 // Asked before the sizes: a custom build is quantized on this machine from
@@ -518,7 +518,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     const bool      have = r.ok && r.status == 200;
     const std::string repo = have ? j_str(d, "repo") : model;
 
-    std::vector<QuantInfo> quants, plain, gsq;
+    std::vector<QuantInfo> quants, plain, custom;
     if (have) {
         for (const auto & q : j_list(d, "quants")) {
             QuantInfo qi;
@@ -527,16 +527,16 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             qi.files = static_cast<int>(j_num(q, "files"));
             qi.fetch = static_cast<int64_t>(j_num(q, "fetch"));
             quants.push_back(qi);
-            (is_rco(qi.name) ? gsq : plain).push_back(qi);
+            (is_rco(qi.name) ? custom : plain).push_back(qi);
         }
     }
     choice.quant = quant;
 
     // The custom build is offered first, since it is the one that costs
     // time; saying no falls through to the sizes.
-    std::sort(gsq.begin(), gsq.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size > b.size; });
-    if (quant.empty() && !gsq.empty()) {
-        if (const std::string picked = choose_custom(gsq); !picked.empty()) {
+    std::sort(custom.begin(), custom.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size > b.size; });
+    if (quant.empty() && !custom.empty()) {
+        if (const std::string picked = choose_custom(custom); !picked.empty()) {
             choice.quant = picked;
             return choice;
         }
@@ -550,8 +550,8 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         bool        registry = false;
     };
     std::vector<Row> basic, full;
-    if (!gsq.empty()) {
-        const QuantInfo & best = gsq.front();
+    if (!custom.empty()) {
+        const QuantInfo & best = custom.front();
         basic.push_back(Row{build_row("advanced", best),
                             best.name, false});
     }

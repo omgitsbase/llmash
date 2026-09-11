@@ -1618,8 +1618,11 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out
     struct Block {
         int64_t from, bytes, into;
     };
+    // Split across every connection rather than into fixed lumps: a fetch
+    // this size cut into 8 MB pieces only ever had three in flight, and the
+    // conversion went from download-bound at 60 MB/s to 12.
     std::vector<Block> blocks;
-    const int64_t      step = (std::max<int64_t>)(dl_block() / 4, 8ll << 20);
+    const int64_t      step = (std::max<int64_t>)(1ll << 20, (bytes + dl_streams() - 1) / dl_streams());
     for (int64_t at = 0; at < bytes; at += step) {
         blocks.push_back(Block{from + at, (std::min)(step, bytes - at), at});
     }

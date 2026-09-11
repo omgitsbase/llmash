@@ -122,7 +122,7 @@ struct QuantInfo {
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files);
 
 // Bits per weight a quantisation name implies: BF16 is 16, not 1, and a
-// GSQ quality carries its own budget.
+// custom build carries its own budget.
 double bits_of_quant(const std::string & quant);
 
 // ----------------------------------------------------------- hub search
