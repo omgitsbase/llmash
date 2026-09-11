@@ -2597,16 +2597,19 @@ json api_quants(const std::string & repo_arg) {
 
     // Assembled here rather than downloaded, so it is offered whenever an
     // allocation exists for this architecture.
-    if (const std::vector<HfFile> src = pick_gsq_source(files); !src.empty() && !quants.empty()) {
+    if (const std::vector<HfFile> src = pick_gsq_source(files); !src.empty()) {
         const HttpResult p = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-4194303");
         std::istringstream in(p.body, std::ios::binary);
         const HeaderMeta   meta = read_header_meta(in);
-        const double       ref  = bits_of_quant(quants.back().name);
+        // Scaled off the build it would be made from, whose width is known.
+        int64_t      src_bytes = 0;
+        for (const HfFile & f : src) {
+            src_bytes += f.size;
+        }
+        const double ref = bits_of_quant(quant_tag(src.front().name));
         for (const gsq::Allocation & a : gsq::all_for_arch(meta.arch, meta.embd)) {
-            int64_t size = 0;
-            if (ref > 0) {
-                size = static_cast<int64_t>(static_cast<double>(quants.back().size) * a.bpw / ref);
-            }
+            const int64_t size =
+                ref > 0 ? static_cast<int64_t>(static_cast<double>(src_bytes) * a.bpw / ref) : 0;
             quants.push_back(QuantInfo{gsq::quant_name(a.bpw), size, 1});
         }
     }

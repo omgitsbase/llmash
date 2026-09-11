@@ -139,6 +139,8 @@ int main() {
     check(bpw_of_quant("Q4_K_M") == 0, "an ordinary quant is not a GSQ quality");
     check(quant_name(3.5) == "GSQ-3.5", "and the name round-trips");
     check(quant_name(3.0) == "GSQ-3", "a whole number loses the decimal");
+    check(quant_name(2.75) == "GSQ-2.75", "two decimals survive");
+    check(bpw_of_quant(quant_name(2.75)) == 2.75, "and parse back");
 
     const auto alloc = parse_allocation("blk.0.attn_q.weight: IQ3_S\n# a comment\nbad line\n");
     check(alloc.size() == 1, "only well-formed allocation lines count");

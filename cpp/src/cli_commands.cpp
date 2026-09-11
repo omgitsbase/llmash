@@ -469,74 +469,113 @@ std::string build_row(const std::string & label, const QuantInfo & q) {
 
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
 // heads, and asks for one of each.
-std::pair<std::string, std::string> choose_build(ApiClient & api, const std::string & model, std::string quant) {
-    ApiResult  r;
-    const json d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(model), nullptr, 60, r);
-    if (!r.ok || r.status != 200) {
-        return {quant, ""};
+bool is_gsq(const std::string & name) { return upper(name).rfind("GSQ", 0) == 0; }
+
+BuildChoice choose_build(ApiClient & api, const std::string & model, std::string quant,
+                          const std::optional<QuantInfo> & registry_build, const std::string & title) {
+    BuildChoice     choice;
+    ApiResult       r;
+    const json      d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(model), nullptr, 120, r);
+    const bool      have = r.ok && r.status == 200;
+    const std::string repo = have ? j_str(d, "repo") : model;
+
+    std::vector<QuantInfo> quants, plain, gsq;
+    if (have) {
+        for (const auto & q : j_list(d, "quants")) {
+            QuantInfo qi;
+            qi.name  = j_str(q, "name");
+            qi.size  = static_cast<int64_t>(j_num(q, "size"));
+            qi.files = static_cast<int>(j_num(q, "files"));
+            quants.push_back(qi);
+            (is_gsq(qi.name) ? gsq : plain).push_back(qi);
+        }
     }
-    const std::string      repo = j_str(d, "repo");
-    std::vector<QuantInfo> quants;
-    for (const auto & q : j_list(d, "quants")) {
-        QuantInfo qi;
-        qi.name  = j_str(q, "name");
-        qi.size  = static_cast<int64_t>(j_num(q, "size"));
-        qi.files = static_cast<int>(j_num(q, "files"));
-        quants.push_back(qi);
+    choice.quant = quant;
+
+    // One list: the assembled build on top, the three sizes, and for a
+    // registry model its own build at the bottom.
+    struct Row {
+        std::string text;
+        std::string quant;
+        bool        registry = false;
+    };
+    std::vector<Row> basic, full;
+    if (!gsq.empty()) {
+        const QuantInfo & best = gsq.back();
+        basic.push_back(Row{build_row("advanced", best) + "  RCO, built here from the best weights: a longer pull",
+                            best.name, false});
+    }
+    if (plain.size() > 1) {
+        const Tiers t = tiers_of(plain);
+        for (const auto & [label, idx] : {std::pair{"tiny", t.tiny}, {"medium", t.medium}, {"large", t.large}}) {
+            basic.push_back(Row{build_row(label, plain[static_cast<size_t>(idx)]),
+                                plain[static_cast<size_t>(idx)].name, false});
+        }
+    } else {
+        for (const auto & q : plain) {
+            basic.push_back(Row{build_row("", q), q.name, false});
+        }
+    }
+    for (const auto & q : quants) {
+        full.push_back(Row{build_row(is_gsq(q.name) ? "advanced" : "", q) +
+                               (is_gsq(q.name) ? "  RCO, built here: a longer pull" : ""),
+                           q.name, false});
+    }
+    if (registry_build) {
+        const Row own{build_row("ollama", *registry_build), "", true};
+        basic.push_back(own);
+        full.push_back(own);
+    }
+    if (basic.size() < 2) {
+        return choice; // one build is not a choice
     }
 
-    std::string chosen = quant;
-    // One build is not a choice.
-    if (quants.size() > 1) {
-        const Tiers t = tiers_of(quants);
-        // "tiny" is the wrong word for a GSQ build: it is that size but not
-        // that quality, and the row is what tells someone which to take.
-        const bool tiny_is_gsq = quants[static_cast<size_t>(t.tiny)].name.rfind("GSQ", 0) == 0;
-        const std::vector<std::string> basic{build_row(tiny_is_gsq ? "best" : "tiny", quants[t.tiny]),
-                                             build_row("medium", quants[t.medium]),
-                                             build_row("large", quants[t.large])};
-        std::vector<std::string> full;
-        for (const auto & q : quants) {
-            full.push_back(build_row("", q));
+    const auto texts = [](const std::vector<Row> & rows) {
+        std::vector<std::string> out;
+        for (const Row & r : rows) {
+            out.push_back(r.text);
         }
-        int start = 2;
-        if (!quant.empty()) {
-            for (size_t i = 0; i < quants.size(); i++) {
-                if (equal_fold(quants[i].name, quant)) {
-                    start = static_cast<int>(i);
-                }
+        return out;
+    };
+    const auto find_row = [](const std::vector<Row> & rows, const std::string & want) {
+        for (size_t i = 0; i < rows.size(); i++) {
+            if (equal_fold(rows[i].quant, want)) {
+                return static_cast<int>(i);
             }
         }
-        bool advanced = !quant.empty() && start != t.tiny && start != t.medium && start != t.large;
-        int  cursor   = start;
-        if (!advanced) {
-            cursor = start == t.tiny ? 0 : start == t.medium ? 1 : start == t.large ? 2 : 0;
-            if (quant.empty()) {
-                cursor = 2;
-            }
+        return -1;
+    };
+
+    bool showing_all = !quant.empty() && find_row(basic, quant) < 0;
+    int  cursor      = showing_all ? std::max(find_row(full, quant), 0)
+                                   : (quant.empty() ? static_cast<int>(basic.size()) - (registry_build ? 2 : 1)
+                                                    : std::max(find_row(basic, quant), 0));
+    for (;;) {
+        const std::vector<Row> & rows = showing_all ? full : basic;
+        const int                n =
+            showing_all ? pick_menu(repo + ", every build:", texts(full), cursor,
+                                    kArrows + " move   enter choose   a back", "aA")
+                        : pick_menu(title, texts(basic), cursor, kArrows + " move   enter choose   a all builds", "aA");
+        if (n == -1) {
+            throw CliExit(1);
         }
-        const int tier[3] = {t.tiny, t.medium, t.large};
-        for (;;) {
-            const int n = advanced ? pick_menu(repo + ", every build:", full, cursor,
-                                               kArrows + " move   enter choose   a back", "aA")
-                                   : pick_menu(repo + ", which build?", basic, cursor,
-                                               kArrows + " move   enter choose   a all builds", "aA");
-            if (n == -1) {
-                throw CliExit(1);
-            }
-            if (n < -1) {
-                advanced = !advanced;
-                cursor   = advanced ? tier[std::min(std::max(cursor, 0), 2)] : 2;
-                continue;
-            }
-            chosen = advanced ? quants[static_cast<size_t>(n)].name : quants[static_cast<size_t>(tier[n])].name;
-            break;
+        if (n < -1) {
+            const std::string at = cursor < static_cast<int>(rows.size()) ? rows[static_cast<size_t>(cursor)].quant : "";
+            showing_all          = !showing_all;
+            cursor               = std::max(find_row(showing_all ? full : basic, at), 0);
+            continue;
         }
+        choice.quant    = rows[static_cast<size_t>(n)].quant;
+        choice.registry = rows[static_cast<size_t>(n)].registry;
+        break;
+    }
+    if (choice.registry) {
+        return choice;
     }
 
     const json heads = j_list(d, "mtp");
     if (heads.empty()) {
-        return {chosen, ""};
+        return choice;
     }
     std::vector<std::string> names;
     std::vector<int64_t>     sizes;
@@ -545,7 +584,7 @@ std::pair<std::string, std::string> choose_build(ApiClient & api, const std::str
         sizes.push_back(static_cast<int64_t>(j_num(h, "size")));
     }
     int def = 0;
-    for (const auto & want : {chosen, std::string("Q8_0"), std::string("BF16")}) {
+    for (const auto & want : {choice.quant, std::string("Q8_0"), std::string("BF16")}) {
         int found = -1;
         for (size_t i = 0; i < names.size(); i++) {
             if (equal_fold(quant_tag(names[i]), want)) {
@@ -563,11 +602,12 @@ std::pair<std::string, std::string> choose_build(ApiClient & api, const std::str
         const int k = read_pick([]() { return raw_getch(); });
         if (k == 'y' || k == 'Y' || k == kPickEnter) {
             std::printf("yes\n");
-            return {chosen, names[static_cast<size_t>(def)]};
+            choice.mtp = names[static_cast<size_t>(def)];
+            return choice;
         }
         if (k == 'n' || k == 'N' || k == kPickEsc) {
             std::printf("no\n");
-            return {chosen, ""};
+            return choice;
         }
         if (k == 'a' || k == 'A') {
             std::printf("choose\n");
@@ -577,9 +617,10 @@ std::pair<std::string, std::string> choose_build(ApiClient & api, const std::str
             }
             const int n = pick_menu("MTP heads:", rows, def + 1, kArrows + " move   enter choose", "");
             if (n <= 0) {
-                return {chosen, ""};
+                return choice;
             }
-            return {chosen, names[static_cast<size_t>(n - 1)]};
+            choice.mtp = names[static_cast<size_t>(n - 1)];
+            return choice;
         }
     }
 }
@@ -961,21 +1002,7 @@ Tiers tiers_of(const std::vector<QuantInfo> & quants) {
             t.medium = n / 2;
         }
     }
-    // A GSQ build is assembled here from the repo's best weights rather than
-    // downloaded, and measured better than a uniform quant of the same size
-    // (Qwopus 27B: 11.3 GB at ppl 5.98, against 11.7 GB at 6.18). So it is the
-    // small tier whenever the server offers one; the largest fits most cards.
-    int gsq = -1;
-    for (size_t i = 0; i < quants.size(); i++) {
-        const bool is_gsq = quants[i].name.rfind("GSQ", 0) == 0 || quants[i].name.rfind("gsq", 0) == 0;
-        if (is_gsq && (gsq < 0 || quants[i].size > quants[static_cast<size_t>(gsq)].size)) {
-            gsq = static_cast<int>(i);
-        }
-    }
-    t.tiny = gsq;
-    if (t.tiny < 0) {
-        t.tiny = find({"Q3_K_M", "UD-Q3_K_XL", "IQ3_M", "IQ3_XS", "Q3_K_S", "IQ3_XXS", "UD-IQ3_XXS"});
-    }
+    t.tiny = find({"Q3_K_M", "UD-Q3_K_XL", "IQ3_M", "IQ3_XS", "Q3_K_S", "IQ3_XXS", "UD-IQ3_XXS"});
     if (t.tiny < 0) {
         t.tiny = by_bits(2.5, 3.9, true);
         if (t.tiny < 0) {
@@ -1438,7 +1465,8 @@ namespace {
 void do_pull(ApiClient & api, const std::string & model, std::string quant, bool offer) {
     need_server(api);
     const bool  interactive = is_console_stdin() && is_console_stdout();
-    std::string repo, as;
+    std::string repo, as, mtp;
+    bool        picked = false;
     if (is_hf_ref(model)) {
         repo = model;
     } else {
@@ -1459,24 +1487,23 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
             }
         } else if (source == "registry" && interactive && quant.empty() && !j_str(d, "repo").empty()) {
             // The registry serves one build per model and lists no others, so
-            // the choice is between it and the repository it came from.
+            // its own build joins the repository's in the one menu.
             const std::string hf   = j_str(d, "repo");
             const QuantInfo   here = {j_str(d, "quant"), static_cast<int64_t>(j_num(d, "size")), 1};
-            const std::vector<std::string> rows{build_row("ollama", here),
-                                                "other builds and draft heads from " + hf};
-            const int n = pick_menu(model + ", which build?", rows, 0, kArrows + " move   enter choose", "");
-            if (n == -1) {
-                throw CliExit(1);
-            }
-            if (n == 1) {
-                repo = "hf:" + hf;
-                as   = model;
+            const BuildChoice c    = choose_build(api, "hf:" + hf, "", here, model + ", which build?");
+            if (!c.registry) {
+                repo  = "hf:" + hf;
+                as    = model;
+                quant = c.quant;
+                mtp   = c.mtp;
+                picked = true;
             }
         }
     }
-    std::string mtp;
-    if (!repo.empty() && interactive && repo.find('@') == std::string::npos) {
-        std::tie(quant, mtp) = choose_build(api, repo, quant);
+    if (!repo.empty() && interactive && !picked && repo.find('@') == std::string::npos) {
+        const BuildChoice c = choose_build(api, repo, quant, std::nullopt, repo + ", which build?");
+        quant               = c.quant;
+        mtp                 = c.mtp;
     }
     json body = json{{"model", first_of({repo, model})}};
     if (!quant.empty()) {

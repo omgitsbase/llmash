@@ -167,14 +167,13 @@ void test_tiers_of() {
         eq_num(t.large, 2, "tiers large falls back to the last build");
     }
     {
-        // a GSQ build is assembled locally and beats a uniform quant its own
-        // size, so it takes the small slot ahead of the named 3-bit builds
-        const std::vector<QuantInfo> qs{Q("GSQ-3", 3), Q("Q3_K_M", 4), Q("GSQ-3.5", 5),
-                                        Q("Q4_K_M", 6), Q("Q8_0", 9)};
+        // a GSQ build has a row of its own above the three sizes, so the
+        // picker hands tiers_of the ordinary quants only
+        const std::vector<QuantInfo> qs{Q("Q3_K_M", 4), Q("Q4_K_M", 6), Q("Q8_0", 9)};
         const Tiers                  t = tiers_of(qs);
-        eq_str(qs[t.tiny].name, "GSQ-3.5", "tiers small prefers the largest GSQ build");
-        eq_str(qs[t.medium].name, "Q4_K_M", "a GSQ build does not disturb the medium tier");
-        eq_str(qs[t.large].name, "Q8_0", "nor the large one");
+        eq_str(qs[t.tiny].name, "Q3_K_M", "tiers small is the named 3-bit build");
+        eq_str(qs[t.medium].name, "Q4_K_M", "medium is the 4-bit one");
+        eq_str(qs[t.large].name, "Q8_0", "large is the 8-bit one");
     }
 }
 
