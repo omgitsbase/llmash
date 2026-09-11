@@ -222,6 +222,10 @@ std::string find_dspark(const std::string & gguf) {
 
 // ================================================================ helpers
 
+std::string sidecar_path(const std::string & gguf, const char * suffix) { return sidecar_named(gguf, suffix); }
+
+std::string dspark_path(const std::string & gguf) { return find_dspark(gguf); }
+
 std::string normalise(const std::string & s) {
     std::string out;
     for (const char c : lower(s)) {

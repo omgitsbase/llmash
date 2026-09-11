@@ -1774,7 +1774,94 @@ RegistryBuild inspect_registry_build(const RegistryManifest & m) {
     return b;
 }
 
-void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, const Emit & emit) {
+std::vector<std::string> registry_tags(const std::string & host, const std::string & repo) {
+    std::vector<std::string> out;
+    const HttpResult r = http_request("https://" + host + "/v2/" + repo + "/tags/list", "GET", "",
+                                      {"Accept: application/json"});
+    if (!r.error.empty() || r.status != 200) {
+        return out;
+    }
+    const json j = json::parse(r.body, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) {
+        return out;
+    }
+    const auto tags = j.find("tags");
+    if (tags == j.end() || !tags->is_array()) {
+        return out;
+    }
+    for (const auto & t : *tags) {
+        if (t.is_string()) {
+            out.push_back(t.get<std::string>());
+        }
+    }
+    return out;
+}
+
+std::vector<QuantInfo> registry_quants(const std::string & ref) {
+    std::string host, repo, tag;
+    split_ref(ref, host, repo, tag);
+
+    // The variants of one build are tagged with its own tag and a
+    // quantisation on the end: 3.8b, then 3.8b-mini-4k-instruct-q8_0. A ref
+    // with no tag of its own names no size, and the sizes in a repository
+    // are not builds of each other.
+    if (tag == "latest") {
+        return {};
+    }
+    const std::string        prefix = tag + "-";
+    std::vector<std::string> want;
+    for (const std::string & t : registry_tags(host, repo)) {
+        if (!quant_tag(t).empty() && starts_with(t, prefix)) {
+            want.push_back(t);
+        }
+    }
+    if (want.size() < 2) {
+        return {};
+    }
+    if (want.size() > 16) {
+        want.resize(16);
+    }
+
+    // A manifest apiece for the sizes, a few at a time.
+    std::vector<QuantInfo> out(want.size());
+    std::mutex             mu;
+    size_t                 next = 0;
+    const auto             worker = [&]() {
+        for (;;) {
+            size_t i;
+            {
+                std::lock_guard<std::mutex> lock(mu);
+                if (next >= want.size()) {
+                    return;
+                }
+                i = next++;
+            }
+            RegistryManifest m;
+            std::string      err;
+            if (!fetch_manifest(repo + ":" + want[i], m, err)) {
+                continue;
+            }
+            int64_t size = 0;
+            for (const auto & l : m.layers) {
+                size += l.size;
+            }
+            out[i] = QuantInfo{want[i], size, 1};
+        }
+    };
+    std::vector<std::thread> pool;
+    for (size_t i = 0; i < (std::min)(want.size(), size_t{4}); i++) {
+        pool.emplace_back(worker);
+    }
+    for (auto & t : pool) {
+        t.join();
+    }
+    out.erase(std::remove_if(out.begin(), out.end(), [](const QuantInfo & q) { return q.size == 0; }), out.end());
+    std::stable_sort(out.begin(), out.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size < b.size; });
+    return out;
+}
+
+void registry_pull(const std::string & ref, const std::string & store_as, const Config & cfg, Registry & reg,
+                   const Emit & emit) {
     std::string host, repo, tag;
     split_ref(ref, host, repo, tag);
     emit(json{{"status", "looking up " + repo + " on " + host}});
@@ -1785,9 +1872,15 @@ void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, 
         emit(error_obj(err));
         return;
     }
-    const std::string name    = manifest.name();
-    const std::string base    = manifest.base();
-    const std::string mf_path = manifest.manifest_path(cfg);
+    const std::string base = manifest.base();
+    std::string       name = manifest.name();
+    std::string       mf_path = manifest.manifest_path(cfg);
+    if (!store_as.empty()) {
+        RegistryManifest as = manifest;
+        split_ref(store_as, as.host, as.repo, as.tag);
+        name    = as.name();
+        mf_path = as.manifest_path(cfg);
+    }
 
     const RegistryBuild b = inspect_registry_build(manifest);
     if (!b.unloadable.empty()) {
@@ -1853,7 +1946,7 @@ void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, 
     for (const auto & l : manifest.layers) {
         pulled += l.size;
     }
-    emit(json{{"status", ref + " ready, " + human_bytes(pulled)}});
+    emit(json{{"status", name + " ready, " + human_bytes(pulled)}});
 }
 
 // ======================================================== the API handlers
@@ -1905,7 +1998,23 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
             return;
         }
     }
-    registry_pull(ref, cfg, reg, emit);
+    // On the registry side `quant` is the whole tag of the build the user
+    // picked, and the model is filed under the name they asked for rather
+    // than under that tag. registry_quants builds the list the same way:
+    // the asked-for tag, a dash, and a quantisation.
+    if (!quant.empty() && !quant_tag(quant).empty()) {
+        std::string host, repo, tag;
+        split_ref(ref, host, repo, tag);
+        if (tag == "latest" || starts_with(quant, tag + "-")) {
+            const size_t      colon = ref.find(':');
+            const std::string want  = (colon == std::string::npos ? ref : ref.substr(0, colon)) + ":" + quant;
+            if (want != ref) {
+                registry_pull(want, ref, cfg, reg, emit);
+                return;
+            }
+        }
+    }
+    registry_pull(ref, "", cfg, reg, emit);
 }
 
 json api_resolve(const std::string & ref, const Config & cfg) {
@@ -1933,18 +2042,36 @@ json api_resolve(const std::string & ref, const Config & cfg) {
     return json{{"source", "hf"}, {"repo", b.hf_repo}, {"reason", b.unloadable}, {"quant", b.quant}};
 }
 
-json api_quants(const std::string & repo_arg) {
+json api_quants(const std::string & repo_arg, bool registry_ref) {
     std::string repo = repo_arg;
     while (!repo.empty() && (repo.front() == ' ' || repo.front() == '\t')) repo.erase(repo.begin());
     while (!repo.empty() && (repo.back() == ' ' || repo.back() == '\t')) repo.pop_back();
+    bool was_hf = false;
     for (const auto & p : hf_prefixes()) {
         if (starts_with(repo, p)) {
-            repo = repo.substr(p.size());
+            repo    = repo.substr(p.size());
+            was_hf  = true;
         }
     }
     const size_t at = repo.find('@');
     if (at != std::string::npos) {
         repo = repo.substr(0, at);
+    }
+
+    // A Hugging Face repository is owner/name; a registry reference carries a
+    // tag, and its builds are that tag's siblings.
+    if (!was_hf && registry_ref) {
+        const auto to_rows = [](const std::vector<QuantInfo> & v) {
+            json arr = json::array();
+            for (const auto & q : v) {
+                arr.push_back(json{{"name", q.name}, {"size", q.size}, {"files", q.files}});
+            }
+            return arr;
+        };
+        return json{{"repo", repo},
+                    {"quants", to_rows(registry_quants(repo))},
+                    {"mtp", json::array()},
+                    {"vision", false}};
     }
 
     std::string err;
@@ -1996,7 +2123,8 @@ void handle_pull(const httplib::Request & req, httplib::Response & res, Config &
 void handle_quants(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg) {
     (void) cfg;
     (void) reg;
-    const json out = api_quants(req.get_param_value("repo"));
+    const std::string ref = req.get_param_value("ref");
+    const json        out = ref.empty() ? api_quants(req.get_param_value("repo")) : api_quants(ref, true);
     res.status     = out.contains("error") ? 502 : 200;
     res.set_content(out.dump(), "application/json");
 }

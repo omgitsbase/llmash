@@ -1,5 +1,6 @@
 #include "manager.h"
 
+#include "draft.h"
 #include "log.h"
 #include "platform.h"
 
@@ -160,38 +161,55 @@ bool run_capture(const std::vector<std::string> & argv, int timeout_ms, std::str
 std::mutex g_vram_mu;
 double     g_vram_at    = -1e9;
 double     g_vram_free  = 0;
+double     g_vram_total = 0;
 bool       g_vram_known = false;
 
 // Free VRAM as the driver reports it, cached for two seconds; unknown reads
 // as no GPU rather than as an 80 GB card, since assuming the budget on a
 // machine with none of it sends every context calculation and offload
 // decision the wrong way.
-std::pair<double, bool> free_vram_gb() {
-    std::lock_guard<std::mutex> lock(g_vram_mu);
+void read_vram_locked() {
     if (now_f() - g_vram_at < 2.0) {
-        return {g_vram_free, g_vram_known};
+        return;
     }
-    double free = 0;
+    double free = 0, total = 0;
     bool   known = false;
     if (const double v = env_float("LLMASH_VRAM_GB", 0); v > 0) {
-        free = v, known = true;
+        free = total = v, known = true;
     } else {
         std::string out;
-        if (run_capture({"nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"}, 8000, out)) {
+        if (run_capture({"nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"}, 8000,
+                        out)) {
             std::istringstream iss(out);
             std::string        line;
             if (std::getline(iss, line)) {
-                line = trim(line);
+                const size_t comma = line.find(',');
                 try {
-                    free  = std::stod(line) / 1024.0;
+                    free  = std::stod(trim(line.substr(0, comma))) / 1024.0;
                     known = true;
+                    if (comma != std::string::npos) {
+                        total = std::stod(trim(line.substr(comma + 1))) / 1024.0;
+                    }
                 } catch (const std::exception &) {
                 }
             }
         }
     }
-    g_vram_at = now_f(), g_vram_free = free, g_vram_known = known;
-    return {free, known};
+    g_vram_at = now_f(), g_vram_free = free, g_vram_total = total, g_vram_known = known;
+}
+
+std::pair<double, bool> free_vram_gb() {
+    std::lock_guard<std::mutex> lock(g_vram_mu);
+    read_vram_locked();
+    return {g_vram_free, g_vram_known};
+}
+
+// What the card holds in total, which is what a prompt batch has to fit
+// beside rather than inside whatever is already resident.
+double total_vram_gb() {
+    std::lock_guard<std::mutex> lock(g_vram_mu);
+    read_vram_locked();
+    return g_vram_total;
 }
 
 double free_ram_gb() {
@@ -290,27 +308,9 @@ bool can_offload_with(const std::string & llama_bin) {
     return !offload_devices(llama_bin).empty();
 }
 
-std::mutex           g_pin_mu;
-bool                 g_pin_loaded = false;
-std::set<std::string> g_pinned;
-
-// Models never evicted for VRAM, from LLMASH_PIN. local.json's own "pin"
-// list is not reachable here: Config carries no arbitrary local.json keys
-// (see the report for this job).
-bool is_pinned(const std::string & name) {
-    std::lock_guard<std::mutex> lock(g_pin_mu);
-    if (!g_pin_loaded) {
-        g_pin_loaded = true;
-        std::stringstream ss(env_str("LLMASH_PIN"));
-        std::string       tok;
-        while (std::getline(ss, tok, ',')) {
-            tok = trim(tok);
-            if (!tok.empty()) {
-                g_pinned.insert(tok);
-            }
-        }
-    }
-    return g_pinned.count(name) != 0;
+// Models never evicted for VRAM.
+bool is_pinned(const Config & cfg, const std::string & name) {
+    return std::find(cfg.pin.begin(), cfg.pin.end(), name) != cfg.pin.end();
 }
 
 std::string sanitize_name(const std::string & s) {
@@ -779,7 +779,7 @@ std::vector<std::string> drop_overridden(const std::vector<std::string> & tuned,
     return out;
 }
 
-std::vector<std::string> Instance::args() const {
+std::vector<std::string> Instance::args() {
     std::vector<std::string> a{cfg_->llama_bin, "-m", model.path, "--host", "127.0.0.1", "--port", std::to_string(port)};
 
     if (can_offload_with(cfg_->llama_bin)) {
@@ -821,6 +821,7 @@ std::vector<std::string> Instance::args() const {
     if (!tuning.flags.empty()) {
         const std::vector<std::string> tuned = drop_overridden(tuning.flags, extra);
         a.insert(a.end(), tuned.begin(), tuned.end());
+        tune_note = tuning.why;
     }
     a.insert(a.end(), extra.begin(), extra.end());
 
@@ -834,17 +835,38 @@ std::vector<std::string> Instance::args() const {
 
     // no GPU: speculation costs more than it saves.
     if (!free_vram_gb().second) {
+        spec_note = "none (no GPU)";
         return a;
     }
 
     // A model's own head is trained with its weights and wins over a
-    // downloaded one.
-    const int mtp_draft = env_int("LLMASH_MTP_DRAFT", 3);
+    // downloaded one; a downloaded one wins over self-speculation.
+    const int         mtp_draft  = env_int("LLMASH_MTP_DRAFT", 3);
+    const int         dspark_max = env_int("LLMASH_DSPARK_DRAFT", 6);
+    const int         dspark_min = env_int("LLMASH_DSPARK_DRAFT_MIN", 6);
+    const std::string mtp        = !model.mtp_path.empty() ? model.mtp_path : sidecar_path(model.path, ".mtp.gguf");
+    const std::string eagle3     = sidecar_path(model.path, ".eagle3.gguf");
+    const std::string dspark     = dspark_path(model.path);
+    const std::string draft      = sidecar_path(model.path, ".draft.gguf");
     if (model.has_mtp) {
         a.insert(a.end(), {"--spec-type", "draft-mtp", "--spec-draft-n-max", std::to_string(mtp_draft)});
-    } else if (!model.mtp_path.empty() && file_exists(model.mtp_path)) {
-        a.insert(a.end(), {"--spec-type", "draft-mtp", "--model-draft", model.mtp_path, "-ngld", "999",
+    } else if (!mtp.empty() && file_exists(mtp)) {
+        a.insert(a.end(), {"--spec-type", "draft-mtp", "--model-draft", mtp, "-ngld", "999", "--spec-draft-n-max",
+                           std::to_string(mtp_draft)});
+        spec_note = "mtp";
+    } else if (!eagle3.empty() && file_exists(eagle3)) {
+        a.insert(a.end(), {"--spec-type", "draft-eagle3", "--model-draft", eagle3, "-ngld", "999",
                            "--spec-draft-n-max", std::to_string(mtp_draft)});
+        spec_note = "eagle3";
+    } else if (!dspark.empty() && file_exists(dspark)) {
+        a.insert(a.end(), {"--spec-type", "draft-dspark", "--model-draft", dspark, "-ngld", "999",
+                           "--spec-draft-n-max", std::to_string(dspark_max), "--spec-draft-n-min",
+                           std::to_string(dspark_min)});
+        spec_note = "dspark";
+    } else if (!draft.empty() && file_exists(draft)) {
+        a.insert(a.end(), {"--spec-type", "draft-simple", "--model-draft", draft, "-ngld", "999",
+                           "--spec-draft-n-max", std::to_string(mtp_draft)});
+        spec_note = "draft";
     } else {
         const std::string fallback = env_str("LLMASH_SPEC_FALLBACK", "ngram-mod");
         if (!fallback.empty() && fallback != "none") {
@@ -852,9 +874,21 @@ std::vector<std::string> Instance::args() const {
             if (fallback.rfind("ngram", 0) != 0) {
                 a.insert(a.end(), {"--spec-draft-n-max", std::to_string(mtp_draft)});
             }
+            spec_note = fallback;
         }
     }
     return a;
+}
+
+// The drafter named in the log the way the flag reads.
+std::string spec_why(const std::string & kind) {
+    if (kind.empty()) {
+        return "";
+    }
+    if (kind.rfind("ngram", 0) == 0) {
+        return "self-speculation " + kind;
+    }
+    return "speculation " + kind;
 }
 
 std::string Instance::start() {
@@ -866,6 +900,20 @@ std::string Instance::start() {
     logfile = (fs::path(log_dir) / (sanitize_name(model.name) + ".log")).string();
 
     const std::vector<std::string> argv = args();
+    if (!tune_note.empty() || !spec_note.empty()) {
+        std::string why = tune_note;
+        if (const std::string s = spec_why(spec_note); !s.empty()) {
+            why += (why.empty() ? "" : ", ") + s;
+        }
+        log_line(model.name + " tuned: " + why);
+    }
+    {
+        std::string line;
+        for (size_t i = 1; i < argv.size(); i++) {
+            line += (i > 1 ? " " : "") + argv[i];
+        }
+        log_line(model.name + " args: " + line);
+    }
     std::vector<const char *>      cargv;
     cargv.reserve(argv.size() + 1);
     for (const auto & s : argv) {
@@ -1032,6 +1080,15 @@ std::vector<Instance *> Manager::loaded() {
     return out;
 }
 
+std::vector<Instance *> Manager::live() {
+    std::lock_guard<std::mutex> lock(mu_);
+    std::vector<Instance *>     out;
+    for (auto & p : live_) {
+        out.push_back(p.get());
+    }
+    return out;
+}
+
 void Manager::drop_dead() {
     std::vector<Instance *> dead;
     {
@@ -1082,7 +1139,7 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
     }
     std::sort(loaded_list.begin(), loaded_list.end(), [](Instance * a, Instance * b) { return a->last_used < b->last_used; });
     for (Instance * in : loaded_list) {
-        if (in->model.name == keep || is_pinned(in->model.name)) {
+        if (in->model.name == keep || is_pinned(cfg_, in->model.name)) {
             continue;
         }
         if (now_f() - in->last_used < busy_grace) {
@@ -1106,10 +1163,9 @@ int Manager::fit_ctx(const Model & m, int ctx) {
     const double weights = static_cast<double>(m.size) / static_cast<double>(1ull << 30);
     const int    parallel = cfg_.parallel > 0 ? cfg_.parallel : 1;
     const double want    = weights * (1.0 + static_cast<double>(ctx) * parallel / kCtxTrainNative);
-    double       freeV;
+    double freeV = free_vram_gb().first;
     {
         std::lock_guard<std::mutex> lock(mu_);
-        freeV = free_vram_gb().first;
         if (Instance * cur = find_by_name(live_, m.name)) {
             freeV += cur->vram_gb();
         }
@@ -1132,7 +1188,7 @@ int Manager::fit_ctx(const Model & m, int ctx) {
 
 Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err) {
     drop_dead();
-    const Model * m = reg_->find(name);
+    const std::optional<Model> m = reg_->find(name);
     if (!m) {
         err = "model not found";
         return nullptr;
@@ -1147,7 +1203,14 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
 
     {
         std::lock_guard<std::mutex> lock(mu_);
-        if (Instance * cur = find_by_name(live_, m->name); cur && cur->ready() && cur->ctx >= ctx) {
+        Instance *                  cur = find_by_name(live_, m->name);
+        if (cur != nullptr && vision && !cur->vision && !m->projector.empty() && file_exists(m->projector)) {
+            log_line(m->name + ": media turn, reloading with projector");
+            cur->stop();
+            erase_ptr(live_, cur);
+            cur = nullptr;
+        }
+        if (cur != nullptr && cur->ready() && cur->ctx >= ctx) {
             cur->set_keep_alive(keep_alive);
             return cur;
         }
@@ -1222,7 +1285,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
 
 bool Manager::unload(const std::string & name) {
     std::string key = name;
-    if (const Model * m = reg_->find(name)) {
+    if (const std::optional<Model> m = reg_->find(name)) {
         key = m->name;
     }
     Instance * inst = nullptr;
@@ -1275,7 +1338,7 @@ void Manager::reap_idle() {
     {
         std::lock_guard<std::mutex> lock(mu_);
         for (auto & p : live_) {
-            if (is_pinned(p->model.name) || !p->ready() || now <= p->expires_at || now - p->last_used < 5) {
+            if (is_pinned(cfg_, p->model.name) || !p->ready() || now <= p->expires_at || now - p->last_used < 5) {
                 continue;
             }
             gone.push_back(p->model.name);
@@ -1312,12 +1375,14 @@ Tuning auto_tune() {
     }
 
     // Prompt processing runs in physical batches; the stock 512 leaves a big
-    // card idle.
+    // card idle. The batch costs a few hundred MB, so the card's size is what
+    // decides it: gating on free VRAM meant a second resident model quietly
+    // dropped every later load back to 512 and with it the prompt speed.
     if (tune_enabled("batch")) {
         int        ub = env_int("LLMASH_UBATCH", 0);
         int        b  = env_int("LLMASH_BATCH", 0);
         const auto fv = free_vram_gb();
-        if (ub == 0 && fv.second && fv.first > 24) {
+        if (ub == 0 && fv.second && std::max(total_vram_gb(), fv.first) > 24) {
             ub = 2048;
             b  = 4096;
         }

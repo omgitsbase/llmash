@@ -4,6 +4,8 @@
 #define _CRT_RAND_S
 
 #include "cli_commands.h"
+
+#include "progress.h"
 #include "platform.h"
 
 #include "winproc.h"
@@ -12,6 +14,7 @@
 #include "cli_format.h"
 #include "cli_process.h"
 #include "cli_win.h"
+#include "draft.h"
 #include "gguf.h"
 
 #include <subprocess.h>
@@ -343,8 +346,7 @@ std::vector<std::vector<std::string>> head_lines(const std::string & s, int n) {
 
 // ------------------------------------------------------------ pull events
 
-// progress.go's animated bars are not part of this port (see the header):
-// one line per status change, and one per percent of a layer.
+// A spinner for each status, a bar for each layer, redrawn in place.
 class PullProgress {
 public:
     void status(const std::string & s) {
@@ -352,7 +354,11 @@ public:
             return;
         }
         last_status_ = s;
-        std::fprintf(stderr, "%s\n", s.c_str());
+        if (spinner_) {
+            spinner_->stop();
+        }
+        spinner_ = std::make_shared<ProgSpinner>(s);
+        prog_.add(spinner_);
     }
 
     void layer(const std::string & digest, int64_t completed, int64_t total) {
@@ -363,19 +369,27 @@ public:
                 name = name.substr(0, 12);
             }
         }
-        const int pct = total > 0 ? static_cast<int>(completed * 100 / total) : 0;
-        int &     seen = pct_[digest];
-        if (pct == seen && completed < total) {
-            return;
+        auto it = bars_.find(digest);
+        if (it == bars_.end()) {
+            if (spinner_) {
+                spinner_->stop();
+                spinner_.reset();
+                last_status_.clear();
+            }
+            auto bar = std::make_shared<ProgBar>("pulling " + name + "...", total, completed);
+            prog_.add(bar);
+            it = bars_.emplace(digest, bar).first;
         }
-        seen = pct;
-        std::fprintf(stderr, "pulling %s: %3d%% %s/%s\n", name.c_str(), pct, human_bytes(completed).c_str(),
-                     human_bytes(total).c_str());
+        it->second->set(completed);
     }
 
+    void finish() { prog_.stop(); }
+
 private:
-    std::string             last_status_;
-    std::map<std::string, int> pct_;
+    Progress                                             prog_;
+    std::string                                          last_status_;
+    std::shared_ptr<ProgSpinner>                         spinner_;
+    std::map<std::string, std::shared_ptr<ProgBar>>      bars_;
 };
 
 void pull_stream(ApiClient & api, const json & body) {
@@ -403,6 +417,7 @@ void pull_stream(ApiClient & api, const json & body) {
         }
         return true;
     }, err);
+    p.finish();
     if (!failed.empty()) {
         std::fprintf(stderr, "Error: %s\n", failed.c_str());
         throw CliExit(1);
@@ -448,15 +463,25 @@ std::string pad_to(const std::string & s, int width, bool left_align) {
     return left_align ? s + std::string(static_cast<size_t>(n), ' ') : std::string(static_cast<size_t>(n), ' ') + s;
 }
 
+// A registry build is named by its whole tag; what tells one from another is
+// the quantisation on the end of it.
+std::string build_name(const std::string & name) {
+    const std::string q = quant_tag(name);
+    return q.empty() || q == name ? name : q;
+}
+
 std::string build_row(const std::string & label, const QuantInfo & q) {
-    return pad_to(label, 7, true) + " " + pad_to(q.name, 12, true) + " " + pad_to(human_bytes(q.size), 8, false);
+    return pad_to(label, 7, true) + " " + pad_to(build_name(q.name), 12, true) + " " +
+           pad_to(human_bytes(q.size), 8, false);
 }
 
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
 // heads, and asks for one of each.
-std::pair<std::string, std::string> choose_build(ApiClient & api, const std::string & model, std::string quant) {
-    ApiResult  r;
-    const json d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(model), nullptr, 60, r);
+std::pair<std::string, std::string> choose_build(ApiClient & api, const std::string & model, std::string quant,
+                                                  bool registry_ref = false) {
+    ApiResult         r;
+    const std::string what = registry_ref ? "ref=" : "repo=";
+    const json d = api.call_json("GET", "/api/quants?" + what + url_query_escape(model), nullptr, 60, r);
     if (!r.ok || r.status != 200) {
         return {quant, ""};
     }
@@ -471,7 +496,8 @@ std::pair<std::string, std::string> choose_build(ApiClient & api, const std::str
     }
 
     std::string chosen = quant;
-    if (!quants.empty()) {
+    // One build is not a choice.
+    if (quants.size() > 1) {
         const Tiers t = tiers_of(quants);
         // "tiny" is the wrong word for a GSQ build: it is that size but not
         // that quality, and the row is what tells someone which to take.
@@ -570,61 +596,9 @@ std::pair<std::string, std::string> choose_build(ApiClient & api, const std::str
 
 // ------------------------------------------------------------- drafters
 
-// draft.go/draft_verify.go (the Hugging Face drafter search and its GGUF
-// spec matching) are a separate subsystem this module was not given, so the
-// search reports nothing and the surrounding flow -- which is cmds.go's --
-// runs unchanged.
-struct DraftCandidate {
-    std::string repo;
-    std::string note;
-};
-
-std::vector<DraftCandidate> find_drafter_candidates(const std::string & gguf_path, Registry & reg) {
-    (void) gguf_path;
-    (void) reg;
-    return {};
-}
-
-std::string stem_of(const std::string & p) { return fs::path(p).stem().string(); }
-
-// registry.go's shardSuffix, so a "-00001-of-00003" shard finds the sidecar
-// named after the whole model.
-std::string unsharded_stem(const std::string & p) {
-    static const std::regex shard(R"(-\d+-of-\d+$)");
-    return std::regex_replace(stem_of(p), shard, "");
-}
-
-// registry.go's findMtp/findDspark/findDraft/findEagle3, in the order
-// draft_install.go's installedDrafter asks about them.
-std::string installed_drafter(const std::string & gguf) {
-    const fs::path    dir  = fs::path(gguf).parent_path();
-    const std::string stem = unsharded_stem(gguf);
-    struct Sidecar {
-        const char * suffix;
-        const char * label;
-    };
-    for (const Sidecar & s : {Sidecar{".mtp.gguf", "an MTP head"}, Sidecar{".dspark.gguf", "a DSpark drafter"},
-                              Sidecar{".draft.gguf", "a draft model"}, Sidecar{".eagle3.gguf", "an EAGLE-3 drafter"}}) {
-        if (file_exists((dir / (stem + s.suffix)).string())) {
-            return s.label;
-        }
-    }
-    return "";
-}
-
-bool has_mtp_head(const std::string & gguf) { return read_gguf(gguf).has_mtp; }
-
-std::string has_own_drafter(const std::string & gguf) {
-    const std::string d = installed_drafter(gguf);
-    if (!d.empty()) {
-        return d;
-    }
-    return has_mtp_head(gguf) ? "an MTP head of its own" : "";
-}
-
-// draft_install.go's modelFor: the local .gguf behind a model name, or ""
-// when the name is not backed by a file on this machine.
-std::string model_gguf(ApiClient & api, const std::string & name) {
+// The local model behind a name, or nothing when the name is not backed by a
+// file on this machine.
+std::optional<Model> model_for(ApiClient & api, const std::string & name) {
     auto [info, code] = show_model(api, name);
     if (code != 200) {
         die("Error: " + first_of({j_str(info, "error"), "model not found"}));
@@ -633,25 +607,80 @@ std::string model_gguf(ApiClient & api, const std::string & name) {
     if (has_prefix(gguf, "FROM ")) {
         gguf = gguf.substr(5);
     }
-    return file_exists(gguf) ? gguf : "";
+    if (!file_exists(gguf)) {
+        return std::nullopt;
+    }
+    Model m;
+    m.name = name;
+    m.path = gguf;
+    return m;
 }
 
-std::string spec_fallback() { return env_str("LLMASH_SPEC_FALLBACK", "ngram-mod"); }
+void say_line(const std::string & line) { std::printf("%s\n", line.c_str()); }
+
+// Downloads behind one progress bar; the installed path, or "" with err set.
+std::string install_draft_shown(const Model & m, const DraftCand & c, const Config & cfg, std::string & err) {
+    if (c.kind == nullptr) {
+        err = "no drafter kind on the candidate";
+        return "";
+    }
+    if (const std::string dest = draft_path(m, *c.kind, cfg); file_exists(dest)) {
+        return dest;
+    }
+    Progress   p;
+    const auto bar = std::make_shared<ProgBar>("pulling " + fs::path(c.file).filename().string() + ":", c.size, 0);
+    p.add(bar);
+    const std::string path = install_draft(m, c, cfg, [&](int64_t done) { bar->set(done); }, err);
+    p.stop();
+    return path;
+}
 
 // Runs at the end of a pull, and says nothing when there is nothing to offer.
-void offer_draft(ApiClient & api, Registry & reg, const std::string & name) {
+void offer_draft(ApiClient & api, const std::string & name) {
     if (!is_console_stdin() || !is_console_stdout()) {
         return;
     }
-    const std::string gguf = model_gguf(api, name);
-    if (gguf.empty() || !has_own_drafter(gguf).empty()) {
+    const Config               cfg = load_config();
+    const std::optional<Model> m   = model_for(api, name);
+    if (!m || !has_own_drafter(*m).empty()) {
         return;
     }
     std::printf("\n%slooking for a draft model...%s ", kDim, kReset);
-    if (find_drafter_candidates(gguf, reg).empty()) {
+    std::fflush(stdout);
+    const std::vector<DraftCand> cands = find_drafters(*m, false);
+    if (cands.empty()) {
         std::printf("%snone published%s\n", kDim, kReset);
         return;
     }
+    std::vector<DraftCand> fit;
+    for (const DraftCand & c : cands) {
+        if (fits_target(*m, c).empty()) {
+            fit.push_back(c);
+        }
+        if (fit.size() == 4) {
+            break;
+        }
+    }
+    if (fit.empty()) {
+        std::printf("%snone that fit these weights%s\n", kDim, kReset);
+        return;
+    }
+    std::printf("\n  a drafter usually makes this model meaningfully faster. These fit:\n");
+    for (size_t i = 0; i < fit.size(); i++) {
+        std::printf("    %2d. %-56s %s\n", static_cast<int>(i + 1), fit[i].repo.c_str(), fit[i].note.c_str());
+    }
+    const int n = ask_number("  Install one? (0 for none)", 1, static_cast<int>(fit.size()));
+    if (n <= 0) {
+        std::printf("  skipped. `%s pulldraft %s` does it later.\n", prog().c_str(), name.c_str());
+        return;
+    }
+    std::string       err;
+    const std::string path = install_draft_shown(*m, fit[static_cast<size_t>(n - 1)], cfg, err);
+    if (path.empty()) {
+        std::printf("  could not install it: %s\n", err.c_str());
+        return;
+    }
+    std::printf("  installed as %s\n", fs::path(path).filename().string().c_str());
 }
 
 // ---------------------------------------------------------------- link
@@ -1412,55 +1441,68 @@ int cmd_stop(const std::vector<std::string> & args, ApiClient & api) {
     }
 }
 
+namespace {
+
+// One bar per layer and a spinner for every other status, the way
+// `ollama pull` draws them.
+void do_pull(ApiClient & api, const std::string & model, std::string quant, bool offer) {
+    need_server(api);
+    const bool  interactive = is_console_stdin() && is_console_stdout();
+    std::string repo, as;
+    if (is_hf_ref(model)) {
+        repo = model;
+    } else {
+        ApiResult  r;
+        const json d = api.call_json("GET", "/api/resolve?model=" + url_query_escape(model), nullptr, 180, r);
+        if (r.ok && r.status == 200 && j_str(d, "source") == "hf") {
+            std::printf("%s: the registry build %s, which llama.cpp does not load.\n", model.c_str(),
+                        j_str(d, "reason").c_str());
+            std::printf("Taking %s from Hugging Face instead.\n", j_str(d, "repo").c_str());
+            repo = "hf:" + j_str(d, "repo");
+            as   = model;
+            if (quant.empty()) {
+                quant = j_str(d, "quant");
+            }
+        }
+    }
+    std::string mtp;
+    if (!repo.empty() && interactive && repo.find('@') == std::string::npos) {
+        std::tie(quant, mtp) = choose_build(api, repo, quant);
+    } else if (repo.empty() && interactive && quant.empty()) {
+        // A registry model has builds of its own, one tag each.
+        std::tie(quant, mtp) = choose_build(api, model, "", true);
+    }
+    json body = json{{"model", first_of({repo, model})}};
+    if (!quant.empty()) {
+        body["quant"] = quant;
+    }
+    if (!as.empty()) {
+        body["as"] = as;
+    }
+    if (!mtp.empty()) {
+        body["mtp"] = mtp;
+    }
+    pull_stream(api, body);
+    if (offer && mtp.empty()) {
+        offer_draft(api, first_of({as, model}));
+    }
+}
+
+} // namespace
+
+void pull_model(const std::string & name) {
+    const Config cfg = load_config();
+    ApiClient    api(cfg);
+    do_pull(api, name, "", true);
+}
+
 int cmd_pull(const std::vector<std::string> & args, ApiClient & api) {
     try {
         const ParsedArgs o = parse_simple(args, {"--insecure", "--draft", "--no-draft"}, {"--quant", "-q"});
         if (o.pos.empty()) {
             die("Error: requires at least 1 arg(s), only received 0");
         }
-        const std::string model = o.pos[0];
-        std::string       quant = first_of({o.val("--quant"), o.val("-q")});
-        const bool        offer = !o.has_flag("--no-draft");
-
-        need_server(api);
-        const bool  interactive = is_console_stdin() && is_console_stdout();
-        std::string repo, as;
-        if (is_hf_ref(model)) {
-            repo = model;
-        } else {
-            ApiResult  r;
-            const json d = api.call_json("GET", "/api/resolve?model=" + url_query_escape(model), nullptr, 180, r);
-            if (r.ok && r.status == 200 && j_str(d, "source") == "hf") {
-                std::printf("%s: the registry build %s, which llama.cpp does not load.\n", model.c_str(),
-                            j_str(d, "reason").c_str());
-                std::printf("Taking %s from Hugging Face instead.\n", j_str(d, "repo").c_str());
-                repo = "hf:" + j_str(d, "repo");
-                as   = model;
-                if (quant.empty()) {
-                    quant = j_str(d, "quant");
-                }
-            }
-        }
-        std::string mtp;
-        if (!repo.empty() && interactive && repo.find('@') == std::string::npos) {
-            std::tie(quant, mtp) = choose_build(api, repo, quant);
-        }
-        json body = json{{"model", first_of({repo, model})}};
-        if (!quant.empty()) {
-            body["quant"] = quant;
-        }
-        if (!as.empty()) {
-            body["as"] = as;
-        }
-        if (!mtp.empty()) {
-            body["mtp"] = mtp;
-        }
-        pull_stream(api, body);
-        if (offer && mtp.empty()) {
-            Config   cfg = load_config();
-            Registry reg(cfg);
-            offer_draft(api, reg, first_of({as, model}));
-        }
+        do_pull(api, o.pos[0], first_of({o.val("--quant"), o.val("-q")}), !o.has_flag("--no-draft"));
         return 0;
     } catch (const CliExit & e) {
         return e.code;
@@ -1765,35 +1807,65 @@ int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg) {
             die("Error: requires at least 1 arg(s), only received 0");
         }
         const std::string name  = o.pos[0];
+        const bool        yes   = o.has_flag("--yes") || o.has_flag("-y");
         const bool        force = o.has_flag("--force");
+        (void) reg;
 
-        Config    cfg = load_config();
-        ApiClient api(cfg);
+        const Config cfg = load_config();
+        ApiClient    api(cfg);
         need_server(api);
 
-        const std::string gguf = model_gguf(api, name);
-        if (gguf.empty()) {
+        const std::optional<Model> m = model_for(api, name);
+        if (!m) {
             die("Error: " + name + " is not a local GGUF, so there is nothing to pair a drafter with");
         }
-        if (has_mtp_head(gguf)) {
+        if (read_gguf(m->path).has_mtp) {
             std::printf("%s has an MTP head of its own, trained with these exact weights.\n", name.c_str());
             std::printf("There is nothing to look for.\n");
             return 0;
         }
-        if (const std::string installed = installed_drafter(gguf); !installed.empty() && !force) {
+        if (const std::string installed = installed_drafter(*m); !installed.empty() && !force) {
             std::printf("%s already has %s installed.\n", name.c_str(), installed.c_str());
             std::printf("`%s pulldraft %s --force` fetches it again.\n", prog().c_str(), name.c_str());
             return 0;
         }
 
         std::printf("looking for a draft model for %s\n", name.c_str());
-        if (find_drafter_candidates(gguf, reg).empty()) {
+        const std::vector<DraftCand> cands = find_drafters(*m, true, say_line);
+        if (cands.empty()) {
             std::printf("\nnothing published for this model. A drafter has to be trained against\n");
             std::printf("these exact weights, and either none exists or the ones that do ship\n");
             std::printf("only safetensors. %s keeps its self-speculation (%s).\n", name.c_str(),
                         spec_fallback().c_str());
             return 0;
         }
+
+        std::printf("\nfound:\n");
+        for (size_t i = 0; i < cands.size(); i++) {
+            std::printf("  %d. %-58s %s\n", static_cast<int>(i + 1), cands[i].repo.c_str(), cands[i].note.c_str());
+        }
+        std::printf("\nchecking which of them fits these weights\n");
+        DraftCand best;
+        if (!pick_drafter(*m, cands, say_line, best)) {
+            std::printf("\nnone of them pairs with %s. It keeps its self-speculation (%s).\n", name.c_str(),
+                        spec_fallback().c_str());
+            return 0;
+        }
+        std::printf("\nbest match: %s (%s)\n\n", best.repo.c_str(), best.note.c_str());
+        if (!yes && !confirm("Install it?")) {
+            return 0;
+        }
+        if (force) {
+            std::error_code ec;
+            fs::remove(draft_path(*m, *best.kind, cfg), ec);
+        }
+        std::string       err;
+        const std::string path = install_draft_shown(*m, best, cfg, err);
+        if (path.empty()) {
+            die("could not install it: " + err);
+        }
+        std::printf("\ninstalled as %s\n", fs::path(path).filename().string().c_str());
+        std::printf("%s now loads with --spec-type %s.\n", name.c_str(), best.kind->spec_arg.c_str());
         return 0;
     } catch (const CliExit & e) {
         return e.code;

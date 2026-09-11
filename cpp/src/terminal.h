@@ -9,5 +9,6 @@ int terminal_columns();
 
 bool stdin_is_terminal();
 bool stdout_is_terminal();
+bool stderr_is_terminal();
 
 } // namespace llmash

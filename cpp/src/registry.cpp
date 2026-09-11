@@ -259,6 +259,7 @@ std::vector<std::string> walk_gguf(const std::string & dir) {
 Registry::Registry(Config cfg) : cfg_(std::move(cfg)) {}
 
 void Registry::invalidate() {
+    std::lock_guard<std::mutex> lock(mu_);
     loaded_ = false;
     cache_.clear();
 }
@@ -387,7 +388,7 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
         if (j.is_discarded()) {
             continue;
         }
-        std::string blob, raw_digest, tmpl_blob, system_blob, params_blob, config_blob;
+        std::string blob, raw_digest, tmpl_blob, system_blob, params_blob, config_blob, projector_blob;
         for (const auto & layer : j.value("layers", json::array())) {
             const std::string mt = layer.value("mediaType", std::string());
             std::string       d  = layer.value("digest", std::string());
@@ -402,6 +403,8 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
                 system_blob = d;
             } else if (mt == "application/vnd.ollama.image.params") {
                 params_blob = d;
+            } else if (mt == "application/vnd.ollama.image.projector") {
+                projector_blob = d;
             }
         }
         if (blob.empty()) {
@@ -463,8 +466,12 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
         mo.ctx_train    = static_cast<int>(g.ctx_train);
         mo.experts      = g.experts;
         mo.experts_used = g.experts_used;
-        mo.projector    = find_projector_for(path.string());
-        mo.caps         = caps_for(g, mo.projector, (fs::path(root) / "gguf").string());
+        // A store model keeps its vision encoder in a layer of its own.
+        mo.projector = find_projector_for(path.string());
+        if (mo.projector.empty() && !projector_blob.empty() && fs::exists(blobs / projector_blob, ec)) {
+            mo.projector = (blobs / projector_blob).string();
+        }
+        mo.caps = caps_for(g, mo.projector, (fs::path(root) / "gguf").string());
         out.push_back(std::move(mo));
     }
 }
@@ -520,29 +527,31 @@ void Registry::scan() {
 }
 
 std::vector<Model> Registry::all() {
+    std::lock_guard<std::mutex> lock(mu_);
     if (!loaded_) {
         scan();
     }
     return cache_;
 }
 
-const Model * Registry::find(const std::string & name) {
+std::optional<Model> Registry::find(const std::string & name) {
+    std::lock_guard<std::mutex> lock(mu_);
     if (!loaded_) {
         scan();
     }
     // registry.go's get: a bare name is name:latest, and failing that the
     // loose file name:gguf; a tagged name is looked up as given.
     const std::string want  = lower(name);
-    const auto        exact = [this](const std::string & n) -> const Model * {
+    const auto        exact = [this](const std::string & n) -> std::optional<Model> {
         for (const auto & m : cache_) {
             if (m.name == n) {
-                return &m;
+                return m;
             }
         }
-        return nullptr;
+        return std::nullopt;
     };
     if (want.find(':') == std::string::npos) {
-        if (const Model * m = exact(want + ":latest")) {
+        if (std::optional<Model> m = exact(want + ":latest")) {
             return m;
         }
         return exact(want + ":gguf");

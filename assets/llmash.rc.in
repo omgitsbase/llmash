@@ -12,7 +12,7 @@ BEGIN
     BEGIN
       VALUE "CompanyName",      "llmash"
       VALUE "LegalCopyright",   "Copyright (C) 2026 llmash"
-      VALUE "FileDescription",  "llmash local model server"
+      VALUE "FileDescription",  "llmash"
       VALUE "FileVersion",      "@LLMASH_VERSION@"
       VALUE "InternalName",     "llmash"
       VALUE "OriginalFilename", "@LLMASH_EXE@"
