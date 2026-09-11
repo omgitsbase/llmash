@@ -463,25 +463,15 @@ std::string pad_to(const std::string & s, int width, bool left_align) {
     return left_align ? s + std::string(static_cast<size_t>(n), ' ') : std::string(static_cast<size_t>(n), ' ') + s;
 }
 
-// A registry build is named by its whole tag; what tells one from another is
-// the quantisation on the end of it.
-std::string build_name(const std::string & name) {
-    const std::string q = quant_tag(name);
-    return q.empty() || q == name ? name : q;
-}
-
 std::string build_row(const std::string & label, const QuantInfo & q) {
-    return pad_to(label, 7, true) + " " + pad_to(build_name(q.name), 12, true) + " " +
-           pad_to(human_bytes(q.size), 8, false);
+    return pad_to(label, 7, true) + " " + pad_to(q.name, 12, true) + " " + pad_to(human_bytes(q.size), 8, false);
 }
 
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
 // heads, and asks for one of each.
-std::pair<std::string, std::string> choose_build(ApiClient & api, const std::string & model, std::string quant,
-                                                  bool registry_ref = false) {
-    ApiResult         r;
-    const std::string what = registry_ref ? "ref=" : "repo=";
-    const json d = api.call_json("GET", "/api/quants?" + what + url_query_escape(model), nullptr, 60, r);
+std::pair<std::string, std::string> choose_build(ApiClient & api, const std::string & model, std::string quant) {
+    ApiResult  r;
+    const json d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(model), nullptr, 60, r);
     if (!r.ok || r.status != 200) {
         return {quant, ""};
     }
@@ -1452,9 +1442,13 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
     if (is_hf_ref(model)) {
         repo = model;
     } else {
+        std::printf("%slooking up %s...%s ", kDim, model.c_str(), kReset);
+        std::fflush(stdout);
         ApiResult  r;
         const json d = api.call_json("GET", "/api/resolve?model=" + url_query_escape(model), nullptr, 180, r);
-        if (r.ok && r.status == 200 && j_str(d, "source") == "hf") {
+        std::printf("\r\x1b[K");
+        const std::string source = (r.ok && r.status == 200) ? j_str(d, "source") : "";
+        if (source == "hf") {
             std::printf("%s: the registry build %s, which llama.cpp does not load.\n", model.c_str(),
                         j_str(d, "reason").c_str());
             std::printf("Taking %s from Hugging Face instead.\n", j_str(d, "repo").c_str());
@@ -1463,14 +1457,26 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
             if (quant.empty()) {
                 quant = j_str(d, "quant");
             }
+        } else if (source == "registry" && interactive && quant.empty() && !j_str(d, "repo").empty()) {
+            // The registry serves one build per model and lists no others, so
+            // the choice is between it and the repository it came from.
+            const std::string hf   = j_str(d, "repo");
+            const QuantInfo   here = {j_str(d, "quant"), static_cast<int64_t>(j_num(d, "size")), 1};
+            const std::vector<std::string> rows{build_row("ollama", here),
+                                                "other builds and draft heads from " + hf};
+            const int n = pick_menu(model + ", which build?", rows, 0, kArrows + " move   enter choose", "");
+            if (n == -1) {
+                throw CliExit(1);
+            }
+            if (n == 1) {
+                repo = "hf:" + hf;
+                as   = model;
+            }
         }
     }
     std::string mtp;
     if (!repo.empty() && interactive && repo.find('@') == std::string::npos) {
         std::tie(quant, mtp) = choose_build(api, repo, quant);
-    } else if (repo.empty() && interactive && quant.empty()) {
-        // A registry model has builds of its own, one tag each.
-        std::tie(quant, mtp) = choose_build(api, model, "", true);
     }
     json body = json{{"model", first_of({repo, model})}};
     if (!quant.empty()) {
