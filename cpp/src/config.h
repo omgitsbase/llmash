@@ -41,6 +41,10 @@ bool mmproj_blocked(const Config & cfg, const std::string & name);
 
 std::string exe_dir();
 
+// The install directory, which is the folder above when the program was run
+// from the `bin` copy the installer puts on PATH.
+std::string install_root(const std::string & exe_directory);
+
 std::string env_str(const char * name, const std::string & fallback = "");
 int         env_int(const char * name, int fallback);
 
