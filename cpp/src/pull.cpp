@@ -2880,6 +2880,27 @@ RegistryBuild inspect_registry_build(const RegistryManifest & m) {
     return b;
 }
 
+namespace {
+
+// "llama-3.2-1b" is how the file on disk is named, and how `list` shows it.
+// The registry writes the size as a tag and runs the rest together, so the
+// same model is "llama3.2:1b" there.
+std::string registry_form(const std::string & ref) {
+    if (contains(ref, ":") || contains(ref, "/")) {
+        return "";
+    }
+    static const std::regex tail(R"(^(.+)-([A-Za-z]?\d+(?:\.\d+)?[bBmM])$)");
+    std::smatch             m;
+    if (!std::regex_match(ref, m, tail)) {
+        return "";
+    }
+    std::string head = m[1].str();
+    head.erase(std::remove(head.begin(), head.end(), '-'), head.end());
+    return head.empty() ? "" : lower(head) + ":" + lower(m[2].str());
+}
+
+} // namespace
+
 void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, const Emit & emit) {
     std::string host, repo, tag;
     split_ref(ref, host, repo, tag);
@@ -2888,8 +2909,13 @@ void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, 
     RegistryManifest manifest;
     std::string      err;
     if (!fetch_manifest(ref, manifest, err)) {
-        emit(error_obj(err));
-        return;
+        const std::string alt = registry_form(ref);
+        std::string       aerr;
+        if (alt.empty() || !fetch_manifest(alt, manifest, aerr)) {
+            emit(error_obj(err + (alt.empty() ? "" : ", and none for " + alt)));
+            return;
+        }
+        emit(json{{"status", "no " + ref + " on " + host + "; it is called " + alt + " there"}});
     }
     const std::string name    = manifest.name();
     const std::string base    = manifest.base();
