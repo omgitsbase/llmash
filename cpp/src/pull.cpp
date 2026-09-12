@@ -1980,20 +1980,30 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         return "";
     }
 
-    // Measure every tensor on a fixed number of its rows, so what this costs
-    // does not grow with the model, then bisect the multiplier until the
-    // total lands on the budget.
-    const int64_t          sample_rows = 128;
-    const std::vector<int> types       = rco::candidates_for(ggml, bpw);
-    emit(json{{"status", "  " + pad_right("allocation", 12) + "measuring " + std::to_string(work.size()) +
-                             " tensors against " + std::to_string(types.size()) + " types"}});
+    // Measure every tensor on a sample of its rows, so what this costs does not
+    // grow with the model, then bisect the multiplier until the total lands on
+    // the budget.
+    //
+    // The sample is counted in weights, not rows. What decides a type is the
+    // ratio between the types' errors over a few hundred superblocks, and a
+    // 4096-wide tensor reaches that in a quarter of the rows a 1024-wide one
+    // needs. Sizing by rows measured the wide tensors four times over.
+    const int64_t          sample_weights = (std::max<int64_t>)(4096, env_int("LLMASH_RCO_SAMPLE", 128 * 1024));
+    const std::vector<int> types          = rco::candidates_for(ggml, bpw);
+
+    // One core stays out of it. The fetch threads need somewhere to run, and a
+    // machine pinned at every core thermally throttles into being slower.
+    const int hw       = (std::max)(1, static_cast<int>(std::thread::hardware_concurrency()));
+    const int nthread  = (std::max)(1, env_int("LLMASH_RCO_THREADS", (std::max)(1, hw - 1)));
+    const int fetchers = (std::min)(nthread, 12);
+
+    emit(json{{"status", "  " + pad_right("measuring", 12) + std::to_string(work.size()) + " tensors against " +
+                             std::to_string(types.size()) + " types, on " + std::to_string(nthread) + " threads"}});
 
     std::vector<rco::Measured> measured(work.size());
     std::atomic<size_t>        next{0}, done{0};
     std::string                merr;
     std::mutex                 emu;
-    const int                  nthread  = (std::max)(1u, std::thread::hardware_concurrency());
-    const int                  fetchers = (std::min)(nthread, 12);
     {
         std::vector<std::thread> pool;
         for (int w = 0; w < fetchers; w++) {
@@ -2003,10 +2013,12 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     if (k >= work.size()) {
                         return;
                     }
-                    const ggufio::TensorEntry & t     = layout.tensors[work[k]];
-                    const int64_t               rows  = t.rows();
-                    const int64_t               take  = (std::min)(rows, sample_rows);
-                    const int64_t               bytes = static_cast<int64_t>(ggml.row_size(
+                    const ggufio::TensorEntry & t    = layout.tensors[work[k]];
+                    const int64_t               rows = t.rows();
+                    const int64_t               want = (std::max<int64_t>)(
+                        8, (std::min<int64_t>)(128, sample_weights / (std::max<int64_t>)(1, t.dims[0])));
+                    const int64_t take  = (std::min)(rows, want);
+                    const int64_t bytes = static_cast<int64_t>(ggml.row_size(
                                           static_cast<int>(t.type), t.dims[0])) * take;
                     std::string raw(static_cast<size_t>(bytes), '\0'), ferr2;
                     if (!fetch_span(hf_download_url(repo, src[t.part].name), layout.file_offset(t), bytes,
@@ -2023,7 +2035,15 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     m.name       = t.name;
                     m.elements   = t.dims[0] * rows;
                     m.floor_bits = rco::floor_bits(t.name);
-                    m.costs    = rco::measure(ggml, f.data(), take, t.dims[0], types,
+                    // A tensor held above a floor can never be given the types
+                    // below it, and those are the slowest ones to measure.
+                    std::vector<int> mine;
+                    for (const int ty : types) {
+                        if (rco::bits_of_type(ggml, ty) >= m.floor_bits) {
+                            mine.push_back(ty);
+                        }
+                    }
+                    m.costs    = rco::measure(ggml, f.data(), take, t.dims[0], mine.empty() ? types : mine,
                                               weights(t.name, t.dims[0], 0), take, 1);
                     for (rco::Cost & c : m.costs) {
                         c.bytes = static_cast<int64_t>(ggml.row_size(c.type, t.dims[0])) * rows;
@@ -2032,7 +2052,9 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     const size_t n = done.fetch_add(1) + 1;
                     std::lock_guard<std::mutex> lk(emu);
                     emit(json{{"status", "measuring"},
-                              {"digest", "rco-measure"},
+                              {"digest", "plan"},
+                              {"label", "choosing bit widths"},
+                              {"unit", "count"},
                               {"total", static_cast<int64_t>(work.size())},
                               {"completed", static_cast<int64_t>(n)}});
                 }
@@ -2046,6 +2068,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         emit(error_obj(merr));
         return "";
     }
+    const auto t_planned = std::chrono::steady_clock::now();
 
     int64_t budget = 0;
     for (const rco::Measured & m : measured) {
@@ -2072,9 +2095,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         for (size_t i = 0; i < top.size() && i < 6; i++) {
             shown += (i ? "  " : "") + top[i].first + " x" + std::to_string(top[i].second);
         }
-        emit(json{{"status", "  " + pad_right("allocation", 12) + "measured against " +
-                                 std::to_string(types.size()) + " types"}});
-        emit(json{{"status", "  " + pad_right("", 12) + shown}});
+        emit(json{{"status", "  " + pad_right("chose", 12) + shown}});
         emit(json{{"status", ""}});
     }
 
@@ -2089,6 +2110,11 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     }
     const std::string dest = (fs::path(dest_dir) / (stem + "-" + rco_quant_name(bpw) + ".gguf")).string();
     const std::string tmp  = dest + ".part";
+
+    char bpw_text[16];
+    std::snprintf(bpw_text, sizeof(bpw_text), "%.3g", bpw);
+    const std::string build_label = std::string("building at ") + bpw_text + " bits";
+
     std::string       herr;
     const int64_t     head = ggufio::write_header(tmp, layout, herr);
     if (head < 0) {
@@ -2150,13 +2176,19 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     for (size_t k = 0; k < static_cast<size_t>(depth) && k < blocks.size(); k++) {
         job[k] = start_fetch(k, k);
     }
+    // Split between the two things this loop does, because which one dominates
+    // depends on the link and the machine and decides what is worth tuning.
+    double wait_sec = 0;
+
     for (size_t i = 0; i < blocks.size(); i++) {
         const size_t     slot = i % static_cast<size_t>(depth);
         const RowBlock & b    = blocks[i];
+        const auto       w0   = std::chrono::steady_clock::now();
         if (!job[slot].get()) {
             emit(error_obj(job_err[slot]));
             return "";
         }
+        wait_sec += std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
         std::string & data = buf[slot];
         fetched += static_cast<int64_t>(data.size());
 
@@ -2170,11 +2202,12 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
             out.write(data.data(), static_cast<std::streamsize>(data.size()));
             written += static_cast<int64_t>(data.size());
         } else {
-            const int     ty    = it->second;
-            const int64_t n_per = t.dims[0];
+            const int     ty      = it->second;
+            const int64_t n_per   = t.dims[0];
+            const size_t  src_row = ggml.row_size(static_cast<int>(t.type), n_per);
+            const size_t  dst_row = ggml.row_size(ty, n_per);
             fbuf.resize(static_cast<size_t>(b.rows * n_per));
-            ggml.dequantize(static_cast<int>(t.type), data.data(), fbuf.data(), b.rows * n_per);
-            qbuf.assign(ggml.row_size(ty, n_per) * static_cast<size_t>(b.rows) + 64, 0);
+            qbuf.assign(dst_row * static_cast<size_t>(b.rows) + 64, 0);
 
             // Every thread takes a run of rows inside one expert: a dense
             // tensor has one expert, and quantizing it on a single thread
@@ -2204,9 +2237,14 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                             return;
                         }
                         const Run & r = runs[k];
+                        // Expanded inside the worker, not in one pass before
+                        // it: that pass ran on a single core, and these rows
+                        // are still in cache when the quantizer reads them.
+                        ggml.dequantize(static_cast<int>(t.type), data.data() + src_row * static_cast<size_t>(r.from),
+                                        fbuf.data() + r.from * n_per, r.rows * n_per);
                         ggml.quantize(ty, fbuf.data() + r.from * n_per,
-                                      qbuf.data() + ggml.row_size(ty, n_per) * static_cast<size_t>(r.from),
-                                      r.rows, n_per, weights(t.name, n_per, r.expert));
+                                      qbuf.data() + dst_row * static_cast<size_t>(r.from), r.rows, n_per,
+                                      weights(t.name, n_per, r.expert));
                     }
                 });
             }
@@ -2241,12 +2279,12 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                                 it == chosen.end() ? t.type : static_cast<uint32_t>(it->second), at - head);
         }
         emit(json{{"status", "quantizing"},
-                  {"digest", "rco-write"},
+                  {"digest", "build"},
+                  {"label", build_label},
                   {"total", expected},
                   {"completed", (std::min)(written, expected)}});
     }
     out.close();
-    (void) fetched;
 
     fs::rename(tmp, dest, ec);
     const int64_t out_bytes = static_cast<int64_t>(fs::file_size(dest, ec));
@@ -2261,12 +2299,18 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                   params > 0 ? static_cast<double>(out_bytes) * 8 / static_cast<double>(params) : 0.0);
 
     emit(json{{"status", ""}});
-    emit(json{{"status", "  " + pad_right("built", 12) + base_name(dest)}});
+    emit(json{{"status", "  " + pad_right("built", 12) + dest}});
     emit(json{{"status", "  " + pad_right("", 12) + human_bytes(out_bytes) + " at " + achieved +
                              " bpw, down from " + human_bytes(src_bytes)}});
-    emit(json{{"status", "  " + pad_right("", 12) + "took " +
-                             mmss(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()) +
-                             "; the source was never written to disk"}});
+    const double plan_sec  = std::chrono::duration<double>(t_planned - t0).count();
+    const double total_sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    emit(json{{"status", "  " + pad_right("", 12) + "took " + mmss(total_sec) + ": " + mmss(plan_sec) +
+                             " choosing bit widths, " + mmss(wait_sec) + " waiting on the download, " +
+                             mmss((std::max)(0.0, total_sec - plan_sec - wait_sec)) + " quantizing"}});
+    emit(json{{"status", "  " + pad_right("", 12) + human_bytes(fetched) + " read at " +
+                             human_bytes(static_cast<int64_t>(total_sec > 0 ? static_cast<double>(fetched) / total_sec
+                                                                            : 0)) +
+                             "/s; the source was never written to disk"}});
     emit(json{{"status", ""}});
 
     reg.invalidate();
@@ -2446,8 +2490,12 @@ bool finish_hf(const std::string & repo, const std::string & first, const std::s
         }
     }
     reg.invalidate();
-    if (!as.empty()) {
-        emit(json{{"status", as + " ready"}});
+    // A repository pulled under no name of its own is filed under the one
+    // derived from the file, and the caller has no other way to learn it.
+    if (as.empty()) {
+        emit(json{{"model", loose_name(first)}});
+    } else {
+        emit(json{{"status", as + " ready"}, {"model", as}});
     }
     return true;
 }
@@ -2899,7 +2947,7 @@ void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, 
     for (const auto & l : manifest.layers) {
         pulled += l.size;
     }
-    emit(json{{"status", name + " ready, " + human_bytes(pulled)}});
+    emit(json{{"status", name + " ready, " + human_bytes(pulled)}, {"model", name}});
 }
 
 // ======================================================== the API handlers

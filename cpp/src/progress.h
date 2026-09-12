@@ -36,9 +36,13 @@ private:
     ProgClock::time_point last_;
 };
 
+// What the two figures beside a bar count. Bytes get a rate; a count of
+// tensors or files gets the plain numbers and the time left.
+enum class ProgUnit { Bytes, Count };
+
 class ProgBar : public ProgState {
 public:
-    ProgBar(std::string message, int64_t max_value, int64_t initial = 0);
+    ProgBar(std::string message, int64_t max_value, int64_t initial = 0, ProgUnit unit = ProgUnit::Bytes);
 
     std::string str() override;
     void        set(int64_t value);
@@ -57,6 +61,7 @@ private:
     int64_t               max_value_;
     int64_t               initial_;
     int64_t               current_;
+    ProgUnit              unit_    = ProgUnit::Bytes;
     bool                  stopped_ = false;
     ProgClock::time_point started_;
     ProgClock::time_point stopped_at_;
