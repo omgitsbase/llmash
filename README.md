@@ -117,16 +117,58 @@ and come off where they do not.
 
 The source is the repository's Q8_0, read a block of rows at a time and
 dropped once quantized, so nothing but the result is written to disk and the
-whole conversion holds about 350 MB of memory. The picker shows both
-numbers, the bandwidth it costs and what it leaves behind:
+whole conversion holds about 350 MB of memory. That trade is put before the
+sizes, because it is the one that costs bandwidth and time:
+
+```
+  a custom build is quantized here from the repository's Q8_0, read a piece
+  at a time, so only the result is written to disk.
+
+                                       download    on disk
+  RCO-3.9       ████████████████████     2.2 GB     996 MB
+  IQ3_XS        ████████                 923 MB     923 MB
+
+  2.4x the download and a few minutes of this machine's CPU. What that
+  buys is a per-tensor mix rather than one type everywhere, so the same
+  disk space holds more of the model than any published build its size.
+
+Build one? [Y/n/a]
+```
+
+The row compared against is whichever published build is closest in size, so
+the two rows differ in what they cost, not in what they leave behind.
+Answering no falls through to the sizes, where the custom build is listed
+alongside them:
 
 ```
 qwen3-1.7b, which build?
-  advanced RCO-3.9         2.2 GB bandwidth,   996 MB finalized
+  custom   RCO-3.9         2.2 GB bandwidth,   996 MB finalized
   tiny     IQ3_XS          923 MB
   medium   Q4_K_M          1.1 GB
   large    Q8_0            2.2 GB
 ```
+
+A build runs in two phases, says which one it is in, and ends by saying where
+the time went. Llama-3.2-1B on an eight-core laptop:
+
+```
+  source      Llama-3.2-1B-Instruct-Q8_0.gguf  1.3 GB
+  imatrix     none published for this model; the bits are placed unweighted
+  measuring   113 tensors against 7 types, on 7 threads
+choosing bit widths 100%  ▕███████████████████▏   113/  113
+  chose       iq4_xs x66  q5_K x25  iq3_s x13  q6_K x8  iq3_xxs x1
+building at 3.9 bits 100%  ▕██████████████████▏ 610 MB
+
+  built       C:\Users\ekipp\.ollama\models\gguf\Llama-3.2-1B-Instruct-RCO-3.9.gguf
+              610 MB at 3.95 bpw, down from 1.3 GB
+              took 2:47: 0:14 choosing bit widths, 0:05 waiting on the download, 2:27 quantizing
+              1.3 GB read at 7.8 MB/s; the source was never written to disk
+```
+
+The three figures say what to change. Time in the download means a slower
+link than the machine can keep up with; time quantizing means the reverse,
+and `LLMASH_RCO_THREADS` is the lever. On this run the pipeline hid all but
+five seconds of a 1.3 GB fetch, so the conversion was bounded by the CPU.
 
 Against llama.cpp's own build of the same size, on technical problems at
 temperature 0 with the Q8_0 as the reference:
@@ -196,6 +238,8 @@ Optional. `local.json` next to the program, or environment variables.
 | `LLMASH_PIN` | comma-separated models never evicted |
 | `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`) |
 | `LLMASH_TUNE_OFF` | disable individual tuning: `cache-reuse,cache-ram,batch,prio` |
+| `LLMASH_RCO_THREADS` | cores a custom build may quantize on (default: all but one) |
+| `LLMASH_RCO_SAMPLE` | weights per tensor the bit-width search measures (default 131072; lower is faster and noisier) |
 
 `llmash serve --help` lists the rest. A `routes.json` beside the program
 configures fast routes (see `routes.example.json`); the C++ build reads it but

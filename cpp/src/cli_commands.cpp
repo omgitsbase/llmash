@@ -361,7 +361,10 @@ public:
         prog_.add(spinner_);
     }
 
-    void layer(const std::string & digest, int64_t completed, int64_t total) {
+    // `label` is what the bar says; a blob layer has none and is announced by
+    // its digest the way Ollama does it.
+    void layer(const std::string & digest, const std::string & label, ProgUnit unit, int64_t completed,
+               int64_t total) {
         std::string name = trim(digest);
         if (has_prefix(digest, "sha256:")) {
             name = trim(digest.substr(7));
@@ -376,7 +379,8 @@ public:
                 spinner_.reset();
                 last_status_.clear();
             }
-            auto bar = std::make_shared<ProgBar>("pulling " + name + "...", total, completed);
+            auto bar = std::make_shared<ProgBar>(label.empty() ? "pulling " + name + "..." : label, total, completed,
+                                                 unit);
             prog_.add(bar);
             it = bars_.emplace(digest, bar).first;
         }
@@ -392,15 +396,22 @@ private:
     std::map<std::string, std::shared_ptr<ProgBar>>      bars_;
 };
 
-void pull_stream(ApiClient & api, const json & body) {
+// The name the server filed the model under, which is not always the name that
+// was asked for: a Hugging Face repository has no name of its own until one is
+// derived from the file it wrote.
+std::string pull_stream(ApiClient & api, const json & body) {
     PullProgress p;
     std::string  failed;
     std::string  err;
+    std::string  stored;
     const bool   ok = api.stream("/api/pull", body, [&](const json & ev) {
         const std::string e = j_str(ev, "error");
         if (!e.empty()) {
             failed = e;
             return false;
+        }
+        if (const std::string m = j_str(ev, "model"); !m.empty()) {
+            stored = m;
         }
         const std::string digest = j_str(ev, "digest");
         if (!digest.empty()) {
@@ -408,7 +419,8 @@ void pull_stream(ApiClient & api, const json & body) {
             if (completed == 0) {
                 return true; // the server's size announcement, before any bytes
             }
-            p.layer(digest, completed, static_cast<int64_t>(j_num(ev, "total")));
+            const ProgUnit unit = j_str(ev, "unit") == "count" ? ProgUnit::Count : ProgUnit::Bytes;
+            p.layer(digest, j_str(ev, "label"), unit, completed, static_cast<int64_t>(j_num(ev, "total")));
             return true;
         }
         const std::string st = j_str(ev, "status");
@@ -425,6 +437,7 @@ void pull_stream(ApiClient & api, const json & body) {
     if (!ok) {
         die("Error: " + err);
     }
+    return stored;
 }
 
 // The server owns the model store, so it does the copying and quantizing;
@@ -479,17 +492,25 @@ bool is_rco(const std::string & name) {
 }
 
 // Asked before the sizes: a custom build is quantized on this machine from
-// the repository's best weights, so it costs minutes the others do not.
-// Answering no falls through to the three sizes.
-std::string choose_custom(const std::vector<QuantInfo> & rco) {
+// the repository's best weights, so it costs bandwidth and minutes the others
+// do not. Answering no falls through to the three sizes.
+std::string choose_custom(const std::vector<QuantInfo> & rco, const std::vector<QuantInfo> & plain) {
     if (rco.empty()) {
         return "";
     }
-    std::printf("\n  %sa custom build spends one size's bytes where they do the most good.%s\n", kDim, kReset);
-    std::printf("  %sThe repository's Q8_0 is read a piece at a time and quantized here,%s\n", kDim, kReset);
-    std::printf("  %sso only the result is kept. It takes a few minutes.%s\n\n", kDim, kReset);
-    std::printf("  %s\n\n", build_row("", rco.front()).c_str());
-    std::printf("Build one? [Y/n/a] ");
+    const QuantInfo * ref = nearest_by_size(plain, rco.front().size);
+
+    std::printf("\n  %sa custom build is quantized here from the repository's Q8_0, read a piece%s\n", kDim, kReset);
+    std::printf("  %sat a time, so only the result is written to disk.%s\n\n", kDim, kReset);
+    const std::vector<std::string> rows = tradeoff_rows(rco.front(), ref);
+    for (size_t i = 0; i < rows.size(); i++) {
+        std::printf("  %s%s%s\n", i == 1 ? kBold : kDim, rows[i].c_str(), kReset);
+    }
+    std::printf("\n");
+    for (const std::string & line : tradeoff_note(rco.front(), ref)) {
+        std::printf("  %s%s%s\n", kDim, line.c_str(), kReset);
+    }
+    std::printf("\nBuild one? [Y/n/a] ");
     for (;;) {
         const int k = read_pick([]() { return raw_getch(); });
         if (k == 'y' || k == 'Y' || k == kPickEnter) {
@@ -538,7 +559,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     // time; saying no falls through to the sizes.
     std::sort(custom.begin(), custom.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size > b.size; });
     if (quant.empty() && !custom.empty()) {
-        if (const std::string picked = choose_custom(custom); !picked.empty()) {
+        if (const std::string picked = choose_custom(custom, plain); !picked.empty()) {
             choice.quant = picked;
             return choice;
         }
@@ -554,8 +575,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     std::vector<Row> basic, full;
     if (!custom.empty()) {
         const QuantInfo & best = custom.front();
-        basic.push_back(Row{build_row("advanced", best),
-                            best.name, false});
+        basic.push_back(Row{build_row("custom", best), best.name, false});
     }
     if (plain.size() > 1) {
         const Tiers t = tiers_of(plain);
@@ -569,7 +589,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         }
     }
     for (const auto & q : quants) {
-        full.push_back(Row{build_row(is_rco(q.name) ? "advanced" : "", q), q.name, false});
+        full.push_back(Row{build_row(is_rco(q.name) ? "custom" : "", q), q.name, false});
     }
     if (registry_build) {
         const Row own{build_row("ollama", *registry_build), "", true};
@@ -679,10 +699,16 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
 
 // The local model behind a name, or nothing when the name is not backed by a
 // file on this machine.
-std::optional<Model> model_for(ApiClient & api, const std::string & name) {
+// `missing` separates a name the server has never heard of from one it knows
+// but cannot point at a file for. A pull that finished under a different name
+// hits the first case and must not be reported as a failure.
+std::optional<Model> model_for(ApiClient & api, const std::string & name, bool * missing = nullptr) {
     auto [info, code] = show_model(api, name);
     if (code != 200) {
-        die("Error: " + first_of({j_str(info, "error"), "model not found"}));
+        if (missing != nullptr) {
+            *missing = true;
+        }
+        return std::nullopt;
     }
     std::string gguf = j_str(info, "modelfile");
     if (has_prefix(gguf, "FROM ")) {
@@ -714,6 +740,25 @@ std::string install_draft_shown(const Model & m, const DraftCand & c, const Conf
     const std::string path = install_draft(m, c, cfg, [&](int64_t done) { bar->set(done); }, err);
     p.stop();
     return path;
+}
+
+// A pull files a model under a name derived from the file it wrote, which for
+// a Hugging Face repository is not the name that was typed. Saying both, with
+// the path, is the difference between a finished pull and a lost one.
+void say_where(ApiClient & api, const std::string & name) {
+    if (name.empty()) {
+        return;
+    }
+    bool                       missing = false;
+    const std::optional<Model> m       = model_for(api, name, &missing);
+    if (missing) {
+        return;
+    }
+    std::printf("\n  %s%s%s\n", kBold, name.c_str(), kReset);
+    if (m) {
+        std::printf("  %s%s%s\n", kDim, m->path.c_str(), kReset);
+    }
+    std::printf("  %s%s run %s%s\n", kDim, prog().c_str(), name.c_str(), kReset);
 }
 
 // Runs at the end of a pull, and says nothing when there is nothing to offer.
@@ -989,6 +1034,60 @@ ParsedArgs parse_simple(const std::vector<std::string> & args, const std::vector
 }
 
 // ------------------------------------------------------- pure logic units
+
+const QuantInfo * nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size) {
+    const QuantInfo * best = nullptr;
+    for (const QuantInfo & q : plain) {
+        if (best == nullptr || std::llabs(q.size - size) < std::llabs(best->size - size)) {
+            best = &q;
+        }
+    }
+    return best;
+}
+
+namespace {
+
+std::string bar_cells(int64_t value, int64_t of, int width) {
+    const int   n = of > 0 ? static_cast<int>(static_cast<double>(value) / static_cast<double>(of) * width) : 0;
+    std::string out;
+    for (int i = 0; i < width; i++) {
+        out += i < std::max(n, 1) ? "\xe2\x96\x88" : " ";
+    }
+    return out;
+}
+
+std::string tradeoff_row(const std::string & name, const std::string & bar, int64_t down, int64_t kept) {
+    return pad_to(name, 12, true) + "  " + bar + "  " + pad_to(human_bytes(down), 9, false) + "  " +
+           pad_to(human_bytes(kept), 9, false);
+}
+
+} // namespace
+
+std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref) {
+    // A published build downloads exactly what it keeps; a custom one reads a
+    // wider source and throws most of it away, so the bar is the download.
+    const int64_t     down = custom.fetch > 0 ? custom.fetch : custom.size;
+    const int64_t     top  = std::max(down, ref != nullptr ? ref->size : 0);
+    const std::string head = pad_to("", 12, true) + "  " + std::string(20, ' ') + "  " +
+                             pad_to("download", 9, false) + "  " + pad_to("on disk", 9, false);
+
+    std::vector<std::string> out{head, tradeoff_row(custom.name, bar_cells(down, top, 20), down, custom.size)};
+    if (ref != nullptr) {
+        out.push_back(tradeoff_row(ref->name, bar_cells(ref->size, top, 20), ref->size, ref->size));
+    }
+    return out;
+}
+
+std::vector<std::string> tradeoff_note(const QuantInfo & custom, const QuantInfo * ref) {
+    if (ref == nullptr || ref->size <= 0 || custom.fetch <= 0) {
+        return {};
+    }
+    char times[16];
+    std::snprintf(times, sizeof(times), "%.1f", static_cast<double>(custom.fetch) / static_cast<double>(ref->size));
+    return {std::string(times) + "x the download and a few minutes of this machine's CPU. What that",
+            "buys is a per-tensor mix rather than one type everywhere, so the same",
+            "disk space holds more of the model than any published build its size."};
+}
 
 double bits_of(const std::string & quant_name) {
     const std::string up = upper(quant_name);
@@ -1568,9 +1667,11 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
     if (!mtp.empty()) {
         body["mtp"] = mtp;
     }
-    pull_stream(api, body);
+    const std::string stored = pull_stream(api, body);
+    const std::string name   = first_of({stored, as, model});
+    say_where(api, name);
     if (offer && mtp.empty()) {
-        offer_draft(api, first_of({as, model}));
+        offer_draft(api, name);
     }
 }
 
@@ -1920,7 +2021,11 @@ int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg) {
         ApiClient    api(cfg);
         need_server(api);
 
-        const std::optional<Model> m = model_for(api, name);
+        bool                       missing = false;
+        const std::optional<Model> m       = model_for(api, name, &missing);
+        if (missing) {
+            die("Error: no model called " + name + " on this machine; `" + prog() + " list` shows what there is");
+        }
         if (!m) {
             die("Error: " + name + " is not a local GGUF, so there is nothing to pair a drafter with");
         }

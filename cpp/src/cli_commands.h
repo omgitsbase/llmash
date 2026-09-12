@@ -56,6 +56,18 @@ struct BuildChoice {
 
 double bits_of(const std::string & quant_name);
 Tiers  tiers_of(const std::vector<QuantInfo> & quants);
+
+// The published build closest in size to a custom one, which is the honest
+// thing to compare it against: same disk space, different download and mix.
+const QuantInfo * nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size);
+
+// The comparison the custom-build prompt draws, as plain lines: a heading,
+// the custom build, then `ref`. The caller styles whole lines.
+std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref);
+
+// What that comparison costs and buys, in prose. Empty when there is no
+// published build to measure it against.
+std::vector<std::string> tradeoff_note(const QuantInfo & custom, const QuantInfo * ref);
 // The quantisation tag embedded in a GGUF file name (pull.go's quantTag),
 // e.g. "Qwen3-8B-Q4_K_M-00001-of-00002.gguf" -> "Q4_K_M".
 std::string quant_tag(const std::string & file_name);

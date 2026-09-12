@@ -88,9 +88,9 @@ std::string ProgSpinner::str() {
 
 // ---------------------------------------------------------------------- bar
 
-ProgBar::ProgBar(std::string message, int64_t max_value, int64_t initial)
+ProgBar::ProgBar(std::string message, int64_t max_value, int64_t initial, ProgUnit unit)
     : message_(std::move(message)), max_value_(max_value), initial_(initial),
-      current_(initial), started_(ProgClock::now()) {
+      current_(initial), unit_(unit), started_(ProgClock::now()) {
     if (initial >= max_value && max_value > 0) {
         stopped_    = true;
         stopped_at_ = ProgClock::now();
@@ -148,15 +148,20 @@ std::string ProgBar::str() {
     std::snprintf(pct, sizeof(pct), "%3.0f%%", percent_locked());
     pre += pct;
 
+    const auto figure = [&](int64_t v) {
+        return unit_ == ProgUnit::Bytes ? human_bytes(v) : std::to_string(v);
+    };
     std::string suf;
     if (!stopped_) {
-        suf += pad_left(human_bytes(current_), 6) + "/" + pad_left(human_bytes(max_value_), 6);
+        suf += pad_left(figure(current_), 6) + "/" + pad_left(figure(max_value_), 6);
     } else {
-        suf += pad_left(human_bytes(max_value_), 6) + std::string(7, ' ');
+        suf += pad_left(figure(max_value_), 6) + std::string(7, ' ');
     }
     const double rate = rate_locked();
     if (!stopped_ && rate > 0) {
-        suf += "  " + pad_left(human_bytes(static_cast<int64_t>(rate)), 6) + "/s";
+        // A count of tensors per second tells no one anything; the time left does.
+        suf += unit_ == ProgUnit::Bytes ? "  " + pad_left(human_bytes(static_cast<int64_t>(rate)), 6) + "/s"
+                                        : std::string(9, ' ');
         suf += "  " + pad_left(format_duration(static_cast<double>(max_value_ - current_) / rate), 6);
     } else {
         suf += std::string(18, ' ');

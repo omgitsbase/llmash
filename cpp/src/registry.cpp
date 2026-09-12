@@ -48,7 +48,10 @@ const std::regex & first_shard_re() {
     return re;
 }
 const std::regex & quant_re() {
-    static const std::regex re(R"(-(?:i?q\d+(?:_[a-z0-9]+)*|f16|bf16|f32|mxfp4)$)", std::regex::icase);
+    // The trailing -RCO-3.9 of a build assembled here counts as a quantisation
+    // suffix too, or every custom build carries its bit width into its name.
+    static const std::regex re(R"(-(?:i?q\d+(?:_[a-z0-9]+)*|f16|bf16|f32|mxfp4|rco-\d+(?:\.\d+)?)$)",
+                               std::regex::icase);
     return re;
 }
 

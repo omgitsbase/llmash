@@ -222,6 +222,13 @@ std::vector<int> candidates_for(const Ggml & g, double bpw) {
 }
 
 
+// Widest first, by what the types actually weigh rather than by the order they
+// were listed in.
+std::vector<Cost> sorted_by_bytes(std::vector<Cost> out) {
+    std::sort(out.begin(), out.end(), [](const Cost & a, const Cost & b) { return a.bytes > b.bytes; });
+    return out;
+}
+
 std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int64_t n_per_row,
                           const std::vector<int> & types, const float * imatrix, int64_t sample_rows,
                           int nthread) {
@@ -243,57 +250,77 @@ std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int
     // the sample's error is divided by the sample's own weighted energy.
     // Absolute error instead made the objective bimodal: a tensor of large
     // weights was held at q8_0 and one of small weights dropped to two bits,
-    // and the model stopped answering.
+    // and the model stopped answering. Walked row by row because the flat form
+    // needed an integer modulo per weight to find the channel.
     double norm = 0;
-    for (int64_t i = 0; i < take * n_per_row; i++) {
-        const double w = imatrix != nullptr ? imatrix[i % n_per_row] : 1.0;
-        norm += w * static_cast<double>(sample[i]) * sample[i];
+    for (int64_t r = 0; r < take; r++) {
+        const float * row = sample.data() + r * n_per_row;
+        if (imatrix != nullptr) {
+            for (int64_t c = 0; c < n_per_row; c++) {
+                norm += static_cast<double>(imatrix[c]) * row[c] * row[c];
+            }
+        } else {
+            for (int64_t c = 0; c < n_per_row; c++) {
+                norm += static_cast<double>(row[c]) * row[c];
+            }
+        }
     }
     if (norm <= 0) {
         norm = 1;
     }
 
     out.resize(types.size());
-    const int workers = (std::max)(1, (std::min)(nthread, static_cast<int>(types.size())));
-    std::vector<std::thread> pool;
-    std::atomic<size_t>      next{0};
-    for (int w = 0; w < workers; w++) {
-        pool.emplace_back([&] {
-            std::vector<unsigned char> q;
-            std::vector<float>         back(static_cast<size_t>(take * n_per_row));
-            for (;;) {
-                const size_t k = next.fetch_add(1);
-                if (k >= types.size()) {
-                    return;
-                }
-                const int type = types[k];
-                q.assign(g.row_size(type, n_per_row) * static_cast<size_t>(take) + 64, 0);
-                g.quantize(type, sample.data(), q.data(), take, n_per_row, imatrix);
-                g.dequantize(type, q.data(), back.data(), take * n_per_row);
-                // Weighted by the imatrix: an error on a channel the model
-                // barely activates is not the same as one on a channel it
-                // leans on. Absolute, not relative to the tensor's own
-                // energy, since what the next layer sees is the absolute
-                // difference.
-                double e = 0;
-                for (int64_t i = 0; i < take * n_per_row; i++) {
-                    const double d = static_cast<double>(sample[i]) - back[i];
-                    e += (imatrix != nullptr ? imatrix[i % n_per_row] : 1.0) * d * d;
-                }
-                out[k].type  = type;
-                out[k].bits  = bits_of_type(g, type);
-                out[k].error = e / norm;
-                out[k].bytes = static_cast<int64_t>(g.row_size(type, n_per_row)) * nrows;
+    std::atomic<size_t> next{0};
+    // Weighted by the imatrix: an error on a channel the model barely
+    // activates is not the same as one on a channel it leans on.
+    const auto one = [&] {
+        std::vector<unsigned char> q;
+        std::vector<float>         back(static_cast<size_t>(take * n_per_row));
+        for (;;) {
+            const size_t k = next.fetch_add(1);
+            if (k >= types.size()) {
+                return;
             }
-        });
+            const int type = types[k];
+            q.assign(g.row_size(type, n_per_row) * static_cast<size_t>(take) + 64, 0);
+            g.quantize(type, sample.data(), q.data(), take, n_per_row, imatrix);
+            g.dequantize(type, q.data(), back.data(), take * n_per_row);
+            double e = 0;
+            for (int64_t r = 0; r < take; r++) {
+                const float * a = sample.data() + r * n_per_row;
+                const float * b = back.data() + r * n_per_row;
+                if (imatrix != nullptr) {
+                    for (int64_t c = 0; c < n_per_row; c++) {
+                        const double d = static_cast<double>(a[c]) - b[c];
+                        e += static_cast<double>(imatrix[c]) * d * d;
+                    }
+                } else {
+                    for (int64_t c = 0; c < n_per_row; c++) {
+                        const double d = static_cast<double>(a[c]) - b[c];
+                        e += d * d;
+                    }
+                }
+            }
+            out[k].type  = type;
+            out[k].bits  = bits_of_type(g, type);
+            out[k].error = e / norm;
+            out[k].bytes = static_cast<int64_t>(g.row_size(type, n_per_row)) * nrows;
+        }
+    };
+
+    const int workers = (std::max)(1, (std::min)(nthread, static_cast<int>(types.size())));
+    if (workers == 1) {
+        one(); // the caller is already parallel over tensors
+        return sorted_by_bytes(std::move(out));
+    }
+    std::vector<std::thread> pool;
+    for (int w = 0; w < workers; w++) {
+        pool.emplace_back(one);
     }
     for (auto & t : pool) {
         t.join();
     }
-    // Widest first, by what the types actually weigh rather than by the
-    // order they were listed in.
-    std::sort(out.begin(), out.end(), [](const Cost & a, const Cost & b) { return a.bytes > b.bytes; });
-    return out;
+    return sorted_by_bytes(std::move(out));
 }
 
 int pick(const Measured & m, double lambda) {
