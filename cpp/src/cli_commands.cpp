@@ -488,44 +488,32 @@ bool is_rco(const std::string & name) {
     return u.rfind("RCO", 0) == 0;
 }
 
-// Asked before the sizes: a custom build is quantized on this machine from
-// the repository's best weights, so it costs bandwidth and minutes the others
-// do not. Answering no falls through to the three sizes.
-std::string choose_custom(const std::vector<QuantInfo> & rco, const std::vector<QuantInfo> & plain) {
-    if (rco.empty()) {
-        return "";
-    }
-    const QuantInfo * ref = nearest_by_size(plain, rco.front().size);
+// Asked after a custom build is picked out of the list, because it is the one
+// choice that costs bandwidth and minutes. No goes back to the list.
+bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain) {
+    const QuantInfo * ref = nearest_by_size(plain, custom.size);
 
-    std::printf("\n  %sa custom build is quantized here from the repository's Q8_0, read a piece%s\n", kDim, kReset);
-    std::printf("  %sat a time, so only the result is written to disk.%s\n\n", kDim, kReset);
-    const std::vector<std::string> rows = tradeoff_rows(rco.front(), ref);
+    std::printf("\n  %s%s is quantized here from the repository's Q8_0, read a piece at%s\n", kDim, custom.name.c_str(),
+                kReset);
+    std::printf("  %sa time, so only the result is written to disk.%s\n\n", kDim, kReset);
+    const std::vector<std::string> rows = tradeoff_rows(custom, ref);
     for (size_t i = 0; i < rows.size(); i++) {
         std::printf("  %s%s%s\n", i == 1 ? kBold : kDim, rows[i].c_str(), kReset);
     }
     std::printf("\n");
-    for (const std::string & line : tradeoff_note(rco.front(), ref)) {
+    for (const std::string & line : tradeoff_note(custom, ref)) {
         std::printf("  %s%s%s\n", kDim, line.c_str(), kReset);
     }
-    std::printf("\nBuild one? [Y/n/a] ");
     for (;;) {
+        std::printf("\nBuild it? [Y/n] ");
         const int k = read_pick([]() { return raw_getch(); });
         if (k == 'y' || k == 'Y' || k == kPickEnter) {
             std::printf("yes\n");
-            return rco.front().name;
+            return true;
         }
         if (k == 'n' || k == 'N' || k == kPickEsc) {
-            std::printf("no\n");
-            return "";
-        }
-        if (k == 'a' || k == 'A') {
-            std::printf("choose\n");
-            std::vector<std::string> rows;
-            for (const QuantInfo & q : rco) {
-                rows.push_back(build_row("", q));
-            }
-            const int n = pick_menu("custom builds:", rows, 0, kArrows + " move   enter choose", "");
-            return n < 0 ? std::string() : rco[static_cast<size_t>(n)].name;
+            std::printf("no\n\n");
+            return false;
         }
     }
 }
@@ -552,44 +540,39 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     choice.quant = quant;
 
-    // The custom build is offered first, since it is the one that costs
-    // time; saying no falls through to the sizes.
     std::sort(custom.begin(), custom.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size > b.size; });
-    if (quant.empty() && !custom.empty()) {
-        if (const std::string picked = choose_custom(custom, plain); !picked.empty()) {
-            choice.quant = picked;
-            return choice;
-        }
-    }
 
-    // One list: the assembled build on top, the three sizes, and for a
-    // registry model its own build at the bottom.
+    // One list, ordered by what each leaves on disk, so it reads as a ladder
+    // with the custom build sitting at its own size rather than above them
+    // all. A registry model's own build goes at the bottom.
     struct Row {
         std::string text;
         std::string quant;
+        int64_t     size     = 0;
         bool        registry = false;
     };
     std::vector<Row> basic, full;
     if (!custom.empty()) {
         const QuantInfo & best = custom.front();
-        basic.push_back(Row{build_row("custom", best), best.name, false});
+        basic.push_back(Row{build_row("custom", best), best.name, best.size, false});
     }
     if (plain.size() > 1) {
         const Tiers t = tiers_of(plain);
         for (const auto & [label, idx] : {std::pair{"tiny", t.tiny}, {"medium", t.medium}, {"large", t.large}}) {
-            basic.push_back(Row{build_row(label, plain[static_cast<size_t>(idx)]),
-                                plain[static_cast<size_t>(idx)].name, false});
+            const QuantInfo & q = plain[static_cast<size_t>(idx)];
+            basic.push_back(Row{build_row(label, q), q.name, q.size, false});
         }
     } else {
         for (const auto & q : plain) {
-            basic.push_back(Row{build_row("", q), q.name, false});
+            basic.push_back(Row{build_row("", q), q.name, q.size, false});
         }
     }
+    std::stable_sort(basic.begin(), basic.end(), [](const Row & a, const Row & b) { return a.size < b.size; });
     for (const auto & q : quants) {
-        full.push_back(Row{build_row(is_rco(q.name) ? "custom" : "", q), q.name, false});
+        full.push_back(Row{build_row(is_rco(q.name) ? "custom" : "", q), q.name, q.size, false});
     }
     if (registry_build) {
-        const Row own{build_row("ollama", *registry_build), "", true};
+        const Row own{build_row("ollama", *registry_build), "", registry_build->size, true};
         basic.push_back(own);
         full.push_back(own);
     }
@@ -632,8 +615,19 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             cursor               = std::max(find_row(showing_all ? full : basic, at), 0);
             continue;
         }
-        choice.quant    = rows[static_cast<size_t>(n)].quant;
-        choice.registry = rows[static_cast<size_t>(n)].registry;
+        const Row & picked = rows[static_cast<size_t>(n)];
+        // The one row that costs more than a download is confirmed where it
+        // is chosen, and saying no puts the list back rather than ending it.
+        if (is_rco(picked.quant)) {
+            const auto it = std::find_if(custom.begin(), custom.end(),
+                                         [&](const QuantInfo & q) { return equal_fold(q.name, picked.quant); });
+            if (it != custom.end() && !confirm_custom(*it, plain)) {
+                cursor = n;
+                continue;
+            }
+        }
+        choice.quant    = picked.quant;
+        choice.registry = picked.registry;
         break;
     }
     if (choice.registry) {
