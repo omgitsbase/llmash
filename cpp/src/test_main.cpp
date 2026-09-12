@@ -20,6 +20,13 @@ void check(bool ok, const char * what) {
     }
 }
 
+void eq(const std::string & got, const std::string & want, const char * what) {
+    check(got == want, what);
+    if (got != want) {
+        std::printf("      got  [%s]\n      want [%s]\n", got.c_str(), want.c_str());
+    }
+}
+
 // A GGUF header with one metadata key and one tensor, enough to be read.
 void write_gguf(const fs::path & p, const std::string & arch, const char * tensor) {
     std::ofstream out(p, std::ios::binary);
@@ -70,8 +77,18 @@ int main() {
     check(nail && nail->has_mtp, "an mtp head in the weights is seen");
     check(nail && nail->arch == "qwen35moe", "the architecture is read from the header");
 
+    // The Ollama library writes the quantisation into the tag, underscores
+    // kept: llama3.2:1b-instruct-q8_0. Dropping it gave two builds one name.
+    check(nail && nail->name == "nail-a3b:gguf", "no quantisation in the file name leaves the gguf tag");
+    eq(loose_name("D:/m/Qwen3-8B-Q8_0.gguf"), "qwen3-8b:q8_0", "the quantisation is the tag");
+    eq(loose_name("D:/m/Llama-3.2-1B-Instruct-RCO-3.9.gguf"), "llama-3.2-1b-instruct:rco-3.9",
+       "a build assembled here is tagged by its width");
+    eq(loose_name("D:/m/Qwen3-8B-Q4_K_M-00001-of-00002.gguf"), "qwen3-8b:q4_k_m", "shards resolve to one name");
+    eq(loose_name("D:/m/Some_Model.gguf"), "some-model:gguf", "underscores in the name become dashes");
+
     const std::optional<Model> qwen = reg.find("qwen3-8b");
     check(qwen.has_value(), "a model at the top level is found");
+    check(qwen && qwen->name == "qwen3-8b:q8_0", "and it is listed under its quantisation");
     check(qwen && !qwen->has_mtp, "a model without an mtp head is not claimed to have one");
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");
 
