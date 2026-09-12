@@ -377,8 +377,7 @@ void test_show_info() {
 
 // ------------------------------------------------------------------- prog
 
-// Display columns: every UTF-8 lead byte is one cell here, which is true of
-// everything these rows are made of.
+// Display columns: every UTF-8 lead byte is one cell in these rows.
 size_t cols(const std::string & s) {
     size_t n = 0;
     for (const unsigned char c : s) {
@@ -404,15 +403,12 @@ void test_tradeoff() {
           "the heading names both figures");
     check(rows[1].rfind("RCO-3.9", 0) == 0, "the custom build comes first");
     check(rows[2].rfind("IQ3_XS", 0) == 0, "the published build comes second");
-    // The custom build downloads more than it keeps; the published one does not.
     check(rows[1].find("2.2 GB") != std::string::npos && rows[1].find("996 MB") != std::string::npos,
           "the custom row shows the download and what is kept");
     check(rows[2].find("923 MB") != std::string::npos, "the published row shows one figure twice");
     check(rows[1].find("\xe2\x96\x88") != std::string::npos && rows[2].find("\xe2\x96\x88") != std::string::npos,
           "both rows carry a bar");
-    // Columns, not bytes: a filled bar cell is three bytes and a blank one is one.
     check(cols(rows[0]) == cols(rows[1]) && cols(rows[1]) == cols(rows[2]), "the rows line up");
-    check(cols(rows[1]) - cols(rows[2]) == 0, "a fuller bar does not push the figures over");
 
     const std::vector<std::string> note = tradeoff_note(custom, ref);
     check(!note.empty() && note[0].rfind("2.4x", 0) == 0, "the note leads with the download multiple");

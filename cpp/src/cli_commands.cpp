@@ -361,8 +361,6 @@ public:
         prog_.add(spinner_);
     }
 
-    // `label` is what the bar says; a blob layer has none and is announced by
-    // its digest the way Ollama does it.
     void layer(const std::string & digest, const std::string & label, ProgUnit unit, int64_t completed,
                int64_t total) {
         std::string name = trim(digest);
@@ -396,9 +394,8 @@ private:
     std::map<std::string, std::shared_ptr<ProgBar>>      bars_;
 };
 
-// The name the server filed the model under, which is not always the name that
-// was asked for: a Hugging Face repository has no name of its own until one is
-// derived from the file it wrote.
+// Returns the name the server filed the model under, which for a Hugging Face
+// repository is not the name that was asked for.
 std::string pull_stream(ApiClient & api, const json & body) {
     PullProgress p;
     std::string  failed;
@@ -699,9 +696,8 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
 
 // The local model behind a name, or nothing when the name is not backed by a
 // file on this machine.
-// `missing` separates a name the server has never heard of from one it knows
-// but cannot point at a file for. A pull that finished under a different name
-// hits the first case and must not be reported as a failure.
+// `missing` tells a name the server never heard of from one it cannot point at
+// a file for. Neither exits: a pull filed under another name hits the first.
 std::optional<Model> model_for(ApiClient & api, const std::string & name, bool * missing = nullptr) {
     auto [info, code] = show_model(api, name);
     if (code != 200) {
@@ -742,9 +738,6 @@ std::string install_draft_shown(const Model & m, const DraftCand & c, const Conf
     return path;
 }
 
-// A pull files a model under a name derived from the file it wrote, which for
-// a Hugging Face repository is not the name that was typed. Saying both, with
-// the path, is the difference between a finished pull and a lost one.
 void say_where(ApiClient & api, const std::string & name) {
     if (name.empty()) {
         return;
@@ -1064,8 +1057,7 @@ std::string tradeoff_row(const std::string & name, const std::string & bar, int6
 } // namespace
 
 std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref) {
-    // A published build downloads exactly what it keeps; a custom one reads a
-    // wider source and throws most of it away, so the bar is the download.
+    // A published build downloads what it keeps; a custom one does not.
     const int64_t     down = custom.fetch > 0 ? custom.fetch : custom.size;
     const int64_t     top  = std::max(down, ref != nullptr ? ref->size : 0);
     const std::string head = pad_to("", 12, true) + "  " + std::string(20, ' ') + "  " +

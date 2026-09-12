@@ -222,13 +222,6 @@ std::vector<int> candidates_for(const Ggml & g, double bpw) {
 }
 
 
-// Widest first, by what the types actually weigh rather than by the order they
-// were listed in.
-std::vector<Cost> sorted_by_bytes(std::vector<Cost> out) {
-    std::sort(out.begin(), out.end(), [](const Cost & a, const Cost & b) { return a.bytes > b.bytes; });
-    return out;
-}
-
 std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int64_t n_per_row,
                           const std::vector<int> & types, const float * imatrix, int64_t sample_rows,
                           int nthread) {
@@ -311,16 +304,19 @@ std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int
     const int workers = (std::max)(1, (std::min)(nthread, static_cast<int>(types.size())));
     if (workers == 1) {
         one(); // the caller is already parallel over tensors
-        return sorted_by_bytes(std::move(out));
+    } else {
+        std::vector<std::thread> pool;
+        for (int w = 0; w < workers; w++) {
+            pool.emplace_back(one);
+        }
+        for (auto & t : pool) {
+            t.join();
+        }
     }
-    std::vector<std::thread> pool;
-    for (int w = 0; w < workers; w++) {
-        pool.emplace_back(one);
-    }
-    for (auto & t : pool) {
-        t.join();
-    }
-    return sorted_by_bytes(std::move(out));
+    // Widest first, by what the types actually weigh rather than by the
+    // order they were listed in.
+    std::sort(out.begin(), out.end(), [](const Cost & a, const Cost & b) { return a.bytes > b.bytes; });
+    return out;
 }
 
 int pick(const Measured & m, double lambda) {

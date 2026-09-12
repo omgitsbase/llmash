@@ -159,7 +159,6 @@ std::string ProgBar::str() {
     }
     const double rate = rate_locked();
     if (!stopped_ && rate > 0) {
-        // A count of tensors per second tells no one anything; the time left does.
         suf += unit_ == ProgUnit::Bytes ? "  " + pad_left(human_bytes(static_cast<int64_t>(rate)), 6) + "/s"
                                         : std::string(9, ' ');
         suf += "  " + pad_left(format_duration(static_cast<double>(max_value_ - current_) / rate), 6);
