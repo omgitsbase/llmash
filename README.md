@@ -29,14 +29,11 @@ On Linux:
 curl -fsSL https://raw.githubusercontent.com/omgitsbase/llmash/main/install.sh | sh
 ```
 
-That one installs the binary, fetches a llama.cpp build, finds the models an
-existing Ollama already has, and runs llmash under systemd. llama.cpp has no
-Linux CUDA release, so a machine with an NVIDIA or AMD card gets the Vulkan
-build and everything else gets the CPU one; `--runtime` overrides the choice.
-It is earlier than the Windows build in one way that matters: `pull` is not
-implemented yet, so models have to already be on disk. Pass `--dry-run` to see
-what it would do, `--user` to keep it inside your home directory, or
-`--uninstall` to take it back off.
+Same idea, under systemd, finding any models an existing Ollama has. `pull` is
+not implemented there yet, so models have to already be on disk. llama.cpp
+publishes no Linux CUDA build, so a GPU gets Vulkan and everything else gets
+CPU; `--runtime` overrides that, `--user` keeps it in your home directory and
+`--uninstall` removes it.
 
 ## Models you already have
 
@@ -47,11 +44,9 @@ or LM Studio is one command away:
 llmash models set D:\models
 ```
 
-It reads the folder where it is, subfolders included, and says how many
-models it found. Nothing is copied, downloaded or deleted, and `rm` will not
-touch it. `llmash models` shows what is being read. It is the same setting
-as `OLLAMA_MODELS`, which llmash takes the way Ollama does, pointed at
-either kind of folder.
+It reads that folder in place, subfolders included. Nothing is copied or
+deleted, and `rm` will not touch it. `llmash models` shows what is being read.
+This is the same setting as `OLLAMA_MODELS`.
 
 ## Speed
 
@@ -109,74 +104,31 @@ when the card has room, raised process priority, and DirectIO loading.
 
 ## Custom builds
 
-`pull` offers to build a model for this machine before it offers the
-published sizes. Every tensor is quantized at each candidate type on a sample
-of its rows and scored by importance-weighted error, then one type per tensor
-is chosen under a total size budget: the bits go where they change the answer
-and come off where they do not.
-
-These builds are tagged RCO. `RCO-3.9` means a per-tensor mixture averaging
-3.9 bits a weight, so the number is the target rather than the name of a
-type, and a finished build reports the width it actually landed on. Nothing
-else in llama.cpp's naming carries a target, which is why the tag is its own.
-
-The source is the repository's Q8_0, read a block of rows at a time and
-dropped once quantized, so nothing but the result is written to disk and the
-whole conversion holds about 350 MB of memory. That trade is put before the
-sizes, because it is the one that costs bandwidth and time:
-
-```
-  a custom build is quantized here from the repository's Q8_0, read a piece
-  at a time, so only the result is written to disk.
-
-                                       download    on disk
-  RCO-3.9       ████████████████████     2.2 GB     996 MB
-  IQ3_XS        ████████                 923 MB     923 MB
-
-  2.4x the download and a few minutes of this machine's CPU. What that
-  buys is a per-tensor mix rather than one type everywhere, so the same
-  disk space holds more of the model than any published build its size.
-
-Build one? [Y/n/a]
-```
-
-The row compared against is whichever published build is closest in size, so
-the two rows differ in what they cost, not in what they leave behind.
-Answering no falls through to the sizes, where the custom build is listed
-alongside them:
+`pull` lists a build assembled here beside the published ones. Every tensor is
+measured at each candidate type and given the one that buys the most accuracy
+per byte under a size budget, so the bits go where they change the answer. The
+tag is the target width: `RCO-3.9` averages 3.9 bits a weight.
 
 ```
 qwen3-1.7b, which build?
-  custom   RCO-3.9         2.2 GB bandwidth,   996 MB finalized
   tiny     IQ3_XS          923 MB
+  custom   RCO-3.9         2.2 GB bandwidth,   996 MB finalized
   medium   Q4_K_M          1.1 GB
   large    Q8_0            2.2 GB
 ```
 
-A build runs in two phases, says which one it is in, and ends by saying where
-the time went. Llama-3.2-1B on an eight-core laptop:
+Picking it shows what it costs against the published build nearest its size,
+then asks:
 
 ```
-  source      Llama-3.2-1B-Instruct-Q8_0.gguf  1.3 GB
-  imatrix     none published for this model; the bits are placed unweighted
-  measuring   113 tensors against 7 types, on 7 threads
-choosing bit widths 100%  ▕███████████████████▏   113/  113
-  chose       iq4_xs x66  q5_K x25  iq3_s x13  q6_K x8  iq3_xxs x1
-building at 3.9 bits 100%  ▕██████████████████▏ 610 MB
-
-  built       C:\Users\ekipp\.ollama\models\gguf\Llama-3.2-1B-Instruct-RCO-3.9.gguf
-              610 MB at 3.95 bpw, down from 1.3 GB
-              took 2:47: 0:14 choosing bit widths, 0:05 waiting on the download, 2:27 quantizing
-              1.3 GB read at 7.8 MB/s; the source was never written to disk
+                                       download    on disk
+  RCO-3.9       ████████████████████     2.2 GB     996 MB
+  IQ3_XS        ████████                 923 MB     923 MB
 ```
 
-The three figures say what to change. Time in the download means a slower
-link than the machine can keep up with; time quantizing means the reverse,
-and `LLMASH_RCO_THREADS` is the lever. On this run the pipeline hid all but
-five seconds of a 1.3 GB fetch, so the conversion was bounded by the CPU.
-
-Against llama.cpp's own build of the same size, on technical problems at
-temperature 0 with the Q8_0 as the reference:
+Twice the download and a few minutes of CPU. Against llama.cpp's own build of
+the same size, on technical problems at temperature 0 with the Q8_0 as the
+reference:
 
 | build | size | correct |
 |---|---|---|
@@ -184,9 +136,12 @@ temperature 0 with the Q8_0 as the reference:
 | IQ3_XS | 0.90 GB | 4/6 |
 | RCO-3.9 | 0.93 GB | 5/6 |
 
-Qwen3.6-35B-A3B, a mixture of experts, goes from 37 GB of Q8_0 to 17 GB in
-17 minutes and answers 5 of the same 6, holding 438 MB of memory while it
-works.
+The source is the repository's Q8_0, read a block at a time and dropped once
+quantized, so nothing but the result reaches disk and the conversion holds
+about 350 MB. Qwen3.6-35B-A3B goes from 37 GB to 17 GB in 17 minutes. A
+finished build reports how long it spent choosing widths, waiting on the
+download and quantizing, which is what says whether more cores or a faster
+link would change anything.
 
 It needs ggml, which comes with the llama.cpp runtime beside `llama-server`.
 
