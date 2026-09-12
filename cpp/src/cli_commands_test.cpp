@@ -410,12 +410,6 @@ void test_tradeoff() {
           "both rows carry a bar");
     check(cols(rows[0]) == cols(rows[1]) && cols(rows[1]) == cols(rows[2]), "the rows line up");
 
-    const std::vector<std::string> note = tradeoff_note(custom, ref);
-    check(!note.empty() && note[0].rfind("2.4x", 0) == 0, "the note leads with the download multiple");
-    check(tradeoff_note(custom, nullptr).empty(), "no comparison, no note");
-
-    QuantInfo published = Q("Q4_K_M", 1100LL * 1000 * 1000);
-    check(tradeoff_note(published, ref).empty(), "a build that downloads what it keeps has nothing to trade");
 }
 
 void test_prog() {

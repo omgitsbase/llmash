@@ -61,7 +61,6 @@ Tiers  tiers_of(const std::vector<QuantInfo> & quants);
 // closest to it in size, as plain lines the caller styles whole.
 const QuantInfo *        nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size);
 std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref);
-std::vector<std::string> tradeoff_note(const QuantInfo & custom, const QuantInfo * ref);
 // The quantisation tag embedded in a GGUF file name (pull.go's quantTag),
 // e.g. "Qwen3-8B-Q4_K_M-00001-of-00002.gguf" -> "Q4_K_M".
 std::string quant_tag(const std::string & file_name);

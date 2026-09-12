@@ -450,6 +450,12 @@ int free_port() {
 
 bool can_offload() { return can_offload_with(guess_llama_bin()); }
 
+bool has_thinking_block(const std::string & chat_template) {
+    const std::string t = lower(chat_template);
+    return t.find("<think>") != std::string::npos || t.find("enable_thinking") != std::string::npos ||
+           t.find("reasoning_content") != std::string::npos;
+}
+
 // The cores worth giving inference threads, and a mask with one bit per
 // core.
 #ifdef _WIN32
@@ -782,15 +788,17 @@ std::vector<std::string> drop_overridden(const std::vector<std::string> & tuned,
 std::vector<std::string> Instance::args() {
     std::vector<std::string> a{cfg_->llama_bin, "-m", model.path, "--host", "127.0.0.1", "--port", std::to_string(port)};
 
-    if (can_offload_with(cfg_->llama_bin)) {
-        a.insert(a.end(), {"-ngl", "999"});
-    } else if (const auto tm = cpu_threads_and_mask(); tm.first > 0) {
-        // nothing to offload to, so the thread count is the whole game
-        a.insert(a.end(), {"-t", std::to_string(tm.first), "-tb", std::to_string(tm.first)});
-        if (tm.second != 0) {
-            std::ostringstream hex;
-            hex << std::hex << tm.second;
-            a.insert(a.end(), {"-C", hex.str(), "--cpu-strict", "1"});
+    // -ngl is left unset: llama.cpp defaults it to auto and fits what it can on
+    // the card, keeping the rest in RAM. Naming a number takes that away.
+    if (!can_offload_with(cfg_->llama_bin)) {
+        if (const auto tm = cpu_threads_and_mask(); tm.first > 0) {
+            // nothing to offload to, so the thread count is the whole game
+            a.insert(a.end(), {"-t", std::to_string(tm.first), "-tb", std::to_string(tm.first)});
+            if (tm.second != 0) {
+                std::ostringstream hex;
+                hex << std::hex << tm.second;
+                a.insert(a.end(), {"-C", hex.str(), "--cpu-strict", "1"});
+            }
         }
     }
 
@@ -1160,6 +1168,11 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
 }
 
 int Manager::fit_ctx(const Model & m, int ctx) {
+    // Reasoning fills the window and stays in the cache, so taking the window
+    // away costs these models more than it looks. Layers go instead.
+    if (has_thinking_block(m.tmpl)) {
+        return ctx;
+    }
     const double weights = static_cast<double>(m.size) / static_cast<double>(1ull << 30);
     const int    parallel = cfg_.parallel > 0 ? cfg_.parallel : 1;
     const double want    = weights * (1.0 + static_cast<double>(ctx) * parallel / kCtxTrainNative);

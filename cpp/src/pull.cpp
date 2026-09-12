@@ -1980,11 +1980,9 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         return "";
     }
 
-    // Measure every tensor on a sample of its rows, so what this costs does not
-    // grow with the model, then bisect the multiplier until the total lands on
-    // the budget. The sample is counted in weights rather than rows: what
-    // decides a type is the ratio between the types' errors over a few hundred
-    // superblocks, which a wide tensor reaches in fewer rows than a narrow one.
+    // Measure every tensor on a sample of its rows, then bisect the multiplier
+    // until the total lands on the budget. The sample is counted in weights
+    // rather than rows, which a wide tensor reaches in fewer of them.
     const int64_t          sample_weights = (std::max<int64_t>)(4096, env_int("LLMASH_RCO_SAMPLE", 128 * 1024));
     const std::vector<int> types          = rco::candidates_for(ggml, bpw);
 
@@ -2032,8 +2030,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     m.name       = t.name;
                     m.elements   = t.dims[0] * rows;
                     m.floor_bits = rco::floor_bits(t.name);
-                    // A tensor held above a floor cannot be given the types
-                    // below it, and those are the slowest to measure.
+                    // The types below a tensor's floor are also the slowest.
                     std::vector<int> mine;
                     for (const int ty : types) {
                         if (rco::bits_of_type(ggml, ty) >= m.floor_bits) {
@@ -2073,26 +2070,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     }
     const std::map<std::string, int> chosen = rco::allocate(measured, budget);
 
-    const std::string dump = env_str("LLMASH_RCO_DUMP");
-    if (dump == "costs") {
-        // The table each tensor chose from: why one was given more bits.
-        const double lambda = rco::solve_lambda(measured, budget);
-        char         lam[64];
-        std::snprintf(lam, sizeof(lam), "%.6g", lambda);
-        log_line(std::string("price ") + lam + " error per byte; each tensor takes its lowest error + price * bytes");
-        for (const rco::Measured & m : measured) {
-            std::string line = m.name;
-            for (const rco::Cost & c : m.costs) {
-                char cell[96];
-                std::snprintf(cell, sizeof(cell), "  %s err=%.3e MB=%.2f v=%.3e", ggml.name(c.type), c.error,
-                              static_cast<double>(c.bytes) / 1e6,
-                              c.error + lambda * static_cast<double>(c.bytes));
-                line += cell;
-            }
-            log_line(line);
-        }
-    }
-    if (!dump.empty()) {
+    if (!env_str("LLMASH_RCO_DUMP").empty()) {
         for (const ggufio::TensorEntry & t : layout.tensors) {
             const auto it = chosen.find(t.name);
             if (it != chosen.end()) {
