@@ -121,7 +121,7 @@ struct DeleteOutcome {
 // The file-system half of apiDelete: given the model apiDelete already
 // resolved (404 before this point if it did not), removes its file and any
 // shard siblings, or reports why it would not.
-DeleteOutcome run_delete(const Model & m);
+DeleteOutcome run_delete(const Model & m, const Config & cfg);
 
 // -------------------------------------------------------------- cli cache
 

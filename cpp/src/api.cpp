@@ -256,7 +256,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
     // ------------------------------------------------------------ delete
 
-    mount(srv, "/api/delete", [&mgr, &reg, st](const Request & req, Response & res) {
+    mount(srv, "/api/delete", [&cfg, &mgr, &reg, st](const Request & req, Response & res) {
         const json    body = read_body(req);
         std::string                name  = first_of(jstr(body, "model"), jstr(body, "name"));
         const std::optional<Model> found = reg.find(name);
@@ -266,7 +266,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
         }
         const Model m = *found;
         mgr.unload(m.name);
-        DeleteOutcome out = run_delete(m);
+        DeleteOutcome out = run_delete(m, cfg);
         reg.invalidate();
         st->cli.invalidate();
         write_json(res, out.status, out.body);

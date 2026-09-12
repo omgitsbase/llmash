@@ -432,6 +432,10 @@ int main() {
 
     // ---------------------------------------------------------------- delete
     {
+        Config dcfg   = cfg;
+        dcfg.gguf_dir = (dir / "pulls").string();
+        fs::create_directories(dcfg.gguf_dir);
+
         const fs::path ddir = dir / "del";
         fs::create_directories(ddir);
         write_file(ddir / "Shardy-00001-of-00002.gguf", "a");
@@ -442,14 +446,14 @@ int main() {
         Model sharded  = m;
         sharded.name   = "shardy:gguf";
         sharded.path   = (ddir / "Shardy-00001-of-00002.gguf").string();
-        const DeleteOutcome ok = run_delete(sharded);
+        const DeleteOutcome ok = run_delete(sharded, dcfg);
         check(ok.status == 200, "delete: a loose model is removed");
         eq(ok.body.value("status", ""), "success", "delete: status success");
         check(ok.body["removed"].size() == 3, "delete: every shard and the projector went with it");
         check(!fs::exists(ddir / "Shardy-00002-of-00002.gguf"), "delete: the second shard is gone");
         check(fs::exists(ddir / "Other.gguf"), "delete: an unrelated model is untouched");
 
-        const DeleteOutcome again = run_delete(sharded);
+        const DeleteOutcome again = run_delete(sharded, dcfg);
         check(again.status == 409, "delete: nothing left to delete is a 409");
         eq(again.body.value("error", ""),
            "found shardy:gguf but nothing to delete. Its file is at " + sharded.path +
@@ -459,12 +463,23 @@ int main() {
         Model lib      = m;
         lib.name       = "readonly:gguf";
         lib.in_library = true;
-        const DeleteOutcome ro = run_delete(lib);
+        const DeleteOutcome ro = run_delete(lib, dcfg);
         check(ro.status == 409, "delete: a library model is refused");
         eq(ro.body.value("error", ""),
            "readonly:gguf is read from " + lib.path + ", a folder llmash only reads; delete the file yourself",
            "delete: the library message");
         check(fs::exists(lib.path), "delete: the library file is still there");
+
+        // The folder pulls land in is read in place like any other, so it is
+        // marked in_library too. rm has to undo a pull all the same.
+        Model pulled      = m;
+        pulled.name       = "pulled:gguf";
+        pulled.path       = (fs::path(dcfg.gguf_dir) / "Pulled-RCO-3.9.gguf").string();
+        pulled.in_library = true;
+        write_file(pulled.path, "weights");
+        const DeleteOutcome pd = run_delete(pulled, dcfg);
+        check(pd.status == 200, "delete: a model llmash pulled is removed even though it is in_library");
+        check(!fs::exists(pulled.path), "delete: the pulled file is gone");
     }
 
     // An Ollama-store model: a manifest naming blobs with no .gguf extension.
@@ -493,7 +508,7 @@ int main() {
         sm.manifest   = (mdir / "3.8b").string();
         sm.store_root = store.string();
 
-        const DeleteOutcome d = run_delete(sm);
+        const DeleteOutcome d = run_delete(sm, cfg);
         check(d.status == 200, "delete: a model in the Ollama store is removed");
         check(!fs::exists(mdir / "3.8b"), "delete: its manifest is gone");
         check(!fs::exists(blobs / own), "delete: the blob only it used is gone");

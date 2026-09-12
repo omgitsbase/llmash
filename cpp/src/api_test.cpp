@@ -105,7 +105,7 @@ void run_copy(const Config &, const Model &, const std::string & destination, co
     emit(json{{"status", "success"}});
 }
 
-DeleteOutcome run_delete(const Model &) { return DeleteOutcome{}; } // STUB
+DeleteOutcome run_delete(const Model &, const Config &) { return DeleteOutcome{}; } // STUB
 
 std::string CliTextCache::get(const std::string & kind, double, const std::function<std::string()> & build) {
     (void)kind;

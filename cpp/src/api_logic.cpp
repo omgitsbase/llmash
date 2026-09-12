@@ -751,12 +751,12 @@ DeleteOutcome delete_from_store(const Model & m) {
     return out;
 }
 
-DeleteOutcome run_delete(const Model & m) {
+DeleteOutcome run_delete(const Model & m, const Config & cfg) {
     DeleteOutcome out;
-    // Go compares the file's folder against the loose-GGUF folder; the only
-    // read-only marker a Model carries here is in_library, which covers the
-    // case that message is about.
-    if (m.in_library) {
+    // in_library covers every folder read in place, and one of them is the
+    // folder pulls are written to. Refusing there means rm can never undo a
+    // pull, so only the folders llmash did not write are protected.
+    if (m.in_library && !same_dir(fs::path(m.path).parent_path().string(), loose_dir(cfg))) {
         out.status = 409;
         out.body   = error_obj(m.name + " is read from " + m.path +
                              ", a folder llmash only reads; delete the file yourself");
