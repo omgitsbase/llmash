@@ -95,7 +95,16 @@ if [ "$DOWNLOAD" = 0 ]; then
 else
 URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
       | sed -n 's/.*"browser_download_url": *"\([^"]*'"$ASSET"'\)".*/\1/p' | head -1)
-[ -n "$URL" ] || die "the latest release of $REPO has no $ASSET"
+if [ -z "$URL" ]; then
+    # A release may ship the Windows build alone. Sorted by the tag in the
+    # download path, because /releases is ordered by when a release was
+    # created and these are drafted well before they are published.
+    URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" \
+          | sed -n 's/.*"browser_download_url": *"\(https:[^"]*'"$ASSET"'\)".*/\1/p' \
+          | sort -t/ -k8,8 -V | tail -1)
+    [ -n "$URL" ] && warn "the latest release has no $ASSET; taking the newest that has one"
+fi
+[ -n "$URL" ] || die "no release of $REPO has $ASSET"
 
 curl -fsSL --progress-bar "$URL" -o "$TMP/$ASSET" || die 'download failed'
 $SUDO mkdir -p "$BIN" "$LIB" "$ROOT"
