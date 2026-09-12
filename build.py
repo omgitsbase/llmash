@@ -12,6 +12,7 @@ BUILD = CPP / "build-release"
 ASSETS = HERE / "assets"
 OUT = HERE / "dist" / "llmash"
 ZIP = HERE / "dist" / "llmash-win-x64.zip"
+TGZ = HERE / "dist" / "llmash-linux-x64.tar.gz"
 
 
 def version() -> str:
@@ -86,6 +87,30 @@ def install_here() -> None:
     print(f"running {HERE} on the build; the tray is up and it starts the server")
 
 
+def build_linux() -> None:
+    """The Linux tarball, built in the container from cpp/Dockerfile.test.
+
+    A release that ships only the zip leaves Linux on whatever version last
+    had one; 0.4.11 through 0.4.15 went out Windows-only that way.
+    """
+    if shutil.which("docker") is None:
+        print("  no docker, skipping the linux build")
+        return
+    image = "llmash-linux-test:latest"
+    have = subprocess.run(["docker", "image", "inspect", image],
+                          capture_output=True).returncode == 0
+    if not have:
+        print(f"  no {image}, skipping the linux build")
+        return
+    r = subprocess.run(["docker", "run", "--rm", "-v", f"{HERE}:/src", image,
+                        "bash", "/src/cpp/build-linux.sh"], capture_output=True, text=True)
+    if r.returncode != 0 or not TGZ.exists():
+        print("  linux build failed:")
+        print("   ", (r.stderr or r.stdout).strip().splitlines()[-1:] or "")
+        return
+    print(f"  linux {TGZ.stat().st_size / 1e6:.1f} MB -> {TGZ}")
+
+
 def main() -> int:
     t0 = time.time()
     if OUT.exists():
@@ -99,6 +124,8 @@ def main() -> int:
     unpacked = sum(p.stat().st_size for p in OUT.rglob("*") if p.is_file())
     print(f"llmash {version()}: {unpacked / 1e6:.1f} MB unpacked, "
           f"{ZIP.stat().st_size / 1e6:.1f} MB zipped, {time.time() - t0:.0f}s -> {ZIP}")
+    if "--no-linux" not in sys.argv:
+        build_linux()
     if "--here" in sys.argv:
         install_here()
     return 0
