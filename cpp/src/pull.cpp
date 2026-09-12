@@ -3100,7 +3100,7 @@ json api_quants(const std::string & repo_arg) {
         }
         // Sized off the build it is made from, whose width is known.
         const double ref = bits_of_quant(quant_tag(src.front().name));
-        for (const double b : {rco::DEFAULT_BPW, 3.0, 2.75}) {
+        for (const double b : {rco::DEFAULT_BPW, 5.0, 4.4, 3.4, 3.0, 2.75}) {
             const int64_t size = ref > 0 ? static_cast<int64_t>(static_cast<double>(src_bytes) * b / ref) : 0;
             quants.push_back(QuantInfo{rco_quant_name(b), size, 1, src_bytes});
         }

@@ -16,6 +16,7 @@
 #include "cli_win.h"
 #include "draft.h"
 #include "gguf.h"
+#include "rco.h"
 
 #include <subprocess.h>
 
@@ -518,6 +519,32 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
     }
 }
 
+// A custom build is a target width rather than one build, so choosing it opens
+// the widths. Escape goes back to the sizes, and declining one comes back here.
+std::string choose_width(const std::vector<QuantInfo> & custom, const std::vector<QuantInfo> & plain,
+                         const std::string & start) {
+    std::vector<QuantInfo> rungs = custom;
+    std::sort(rungs.begin(), rungs.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size < b.size; });
+    std::vector<std::string> rows;
+    int                      cursor = 0;
+    for (size_t i = 0; i < rungs.size(); i++) {
+        rows.push_back(build_row("", rungs[i]));
+        if (equal_fold(rungs[i].name, start)) {
+            cursor = static_cast<int>(i);
+        }
+    }
+    for (;;) {
+        const int n = pick_menu("how small?", rows, cursor, kArrows + " move   enter choose   esc back", "");
+        if (n < 0) {
+            return "";
+        }
+        cursor = n;
+        if (confirm_custom(rungs[static_cast<size_t>(n)], plain)) {
+            return rungs[static_cast<size_t>(n)].name;
+        }
+    }
+}
+
 BuildChoice choose_build(ApiClient & api, const std::string & model, std::string quant,
                           const std::optional<QuantInfo> & registry_build, const std::string & title) {
     BuildChoice     choice;
@@ -540,7 +567,17 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     choice.quant = quant;
 
-    std::sort(custom.begin(), custom.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size > b.size; });
+    // The width the sizes offer, with the rest behind it. The list comes back
+    // sorted by size, so the default is found by name rather than position.
+    std::optional<QuantInfo> offered;
+    for (const QuantInfo & q : custom) {
+        if (equal_fold(q.name, rco_quant_name(rco::DEFAULT_BPW))) {
+            offered = q;
+        }
+    }
+    if (!offered && !custom.empty()) {
+        offered = custom[custom.size() / 2];
+    }
 
     // One list, ordered by what each leaves on disk, so it reads as a ladder
     // with the custom build sitting at its own size rather than above them
@@ -552,9 +589,8 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         bool        registry = false;
     };
     std::vector<Row> basic, full;
-    if (!custom.empty()) {
-        const QuantInfo & best = custom.front();
-        basic.push_back(Row{build_row("custom", best), best.name, best.size, false});
+    if (offered) {
+        basic.push_back(Row{build_row("custom", *offered), offered->name, offered->size, false});
     }
     if (plain.size() > 1) {
         const Tiers t = tiers_of(plain);
@@ -616,15 +652,15 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             continue;
         }
         const Row & picked = rows[static_cast<size_t>(n)];
-        // The one row that costs more than a download is confirmed where it
-        // is chosen, and saying no puts the list back rather than ending it.
-        if (is_rco(picked.quant)) {
-            const auto it = std::find_if(custom.begin(), custom.end(),
-                                         [&](const QuantInfo & q) { return equal_fold(q.name, picked.quant); });
-            if (it != custom.end() && !confirm_custom(*it, plain)) {
+        if (is_rco(picked.quant) && !custom.empty()) {
+            const std::string width = choose_width(custom, plain, picked.quant);
+            if (width.empty()) {
                 cursor = n;
                 continue;
             }
+            choice.quant    = width;
+            choice.registry = false;
+            break;
         }
         choice.quant    = picked.quant;
         choice.registry = picked.registry;
