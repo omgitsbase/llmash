@@ -45,7 +45,10 @@ def crt_dlls() -> list:
 
 def build() -> None:
     cm = cmake()
-    if not (BUILD / "CMakeCache.txt").exists():
+    # CMake reads VERSION when it configures, not when it builds, so a bumped
+    # VERSION with a warm cache ships a binary reporting the old number.
+    cache = BUILD / "CMakeCache.txt"
+    if not cache.exists() or (HERE / "VERSION").stat().st_mtime > cache.stat().st_mtime:
         subprocess.run([cm, "-S", str(CPP), "-B", str(BUILD), "-G", "Visual Studio 17 2022", "-A", "x64"],
                        check=True)
     subprocess.run([cm, "--build", str(BUILD), "--config", "Release", "--target", "llmash", "llmashw"],
