@@ -1243,6 +1243,20 @@ int64_t dl_block() {
     return n;
 }
 
+// Hugging Face answers 429 when too many ranged requests are in flight, and it
+// stays cross for longer than an ordinary hiccup. The custom-build stream already
+// waits this long; a plain download used to give up after four tries inside ten
+// seconds and fail the whole pull partway through a file.
+bool rate_limited(int status) { return status == 429 || status == 503; }
+
+void back_off(int status, int attempt) {
+    if (rate_limited(status)) {
+        std::this_thread::sleep_for(std::chrono::seconds(3 + attempt * 7));
+    } else {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500 * (attempt + 1)));
+    }
+}
+
 bool already_have(const std::string & dest, int64_t total) {
     std::error_code ec;
     if (!fs::is_regular_file(dest, ec)) {
@@ -1320,8 +1334,10 @@ bool fetch_blocks(const std::string & url, const std::string & tmp, int64_t tota
                     end = total;
                 }
                 std::string last_err;
-                for (int attempt = 0; attempt < 4; attempt++) {
+                int         last_status = 0;
+                for (int attempt = 0; attempt < 7; attempt++) {
                     last_err.clear();
+                    last_status = 0;
                     char range[64];
                     std::snprintf(range, sizeof(range), "bytes=%lld-%lld", static_cast<long long>(start),
                                   static_cast<long long>(end - 1));
@@ -1329,7 +1345,11 @@ bool fetch_blocks(const std::string & url, const std::string & tmp, int64_t tota
                     if (!open_stream(url, "GET", range, {}, stm, last_err)) {
                         // last_err carries the reason
                     } else if (stm.status != 200 && stm.status != 206) {
-                        last_err = "HTTP " + std::to_string(stm.status);
+                        last_status = stm.status;
+                        last_err    = rate_limited(stm.status)
+                                       ? "Hugging Face is rate-limiting this download (HTTP " +
+                                             std::to_string(stm.status) + "); waiting"
+                                       : "HTTP " + std::to_string(stm.status);
                     } else {
                         int64_t off = start;
                         size_t  got = 0;
@@ -1362,7 +1382,7 @@ bool fetch_blocks(const std::string & url, const std::string & tmp, int64_t tota
                             break;
                         }
                     }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1500 * (attempt + 1)));
+                    back_off(last_status, attempt);
                 }
                 if (!last_err.empty()) {
                     std::lock_guard<std::mutex> lk(mu);
@@ -1442,8 +1462,10 @@ bool fetch_ranges(const std::string & dest, const std::vector<RangeJob> & jobs, 
                     b = blocks[next++];
                 }
                 std::string last_err;
-                for (int attempt = 0; attempt < 4; attempt++) {
+                int         last_status = 0;
+                for (int attempt = 0; attempt < 7; attempt++) {
                     last_err.clear();
+                    last_status = 0;
                     char range[64];
                     std::snprintf(range, sizeof(range), "bytes=%lld-%lld", static_cast<long long>(b.from),
                                   static_cast<long long>(b.from + b.bytes - 1));
@@ -1451,7 +1473,11 @@ bool fetch_ranges(const std::string & dest, const std::vector<RangeJob> & jobs, 
                     if (!open_stream(b.url, "GET", range, {}, stm, last_err)) {
                         // last_err carries the reason
                     } else if (stm.status != 200 && stm.status != 206) {
-                        last_err = "HTTP " + std::to_string(stm.status);
+                        last_status = stm.status;
+                        last_err    = rate_limited(stm.status)
+                                       ? "Hugging Face is rate-limiting this download (HTTP " +
+                                             std::to_string(stm.status) + "); waiting"
+                                       : "HTTP " + std::to_string(stm.status);
                     } else {
                         int64_t off  = b.into;
                         int64_t left = b.bytes;
@@ -1489,7 +1515,7 @@ bool fetch_ranges(const std::string & dest, const std::vector<RangeJob> & jobs, 
                             last_err = "the connection ended early";
                         }
                     }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1500 * (attempt + 1)));
+                    back_off(last_status, attempt);
                 }
                 if (!last_err.empty()) {
                     std::lock_guard<std::mutex> lk(mu);
