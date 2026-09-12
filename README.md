@@ -115,6 +115,11 @@ of its rows and scored by importance-weighted error, then one type per tensor
 is chosen under a total size budget: the bits go where they change the answer
 and come off where they do not.
 
+These builds are tagged RCO. `RCO-3.9` means a per-tensor mixture averaging
+3.9 bits a weight, so the number is the target rather than the name of a
+type, and a finished build reports the width it actually landed on. Nothing
+else in llama.cpp's naming carries a target, which is why the tag is its own.
+
 The source is the repository's Q8_0, read a block of rows at a time and
 dropped once quantized, so nothing but the result is written to disk and the
 whole conversion holds about 350 MB of memory. That trade is put before the
