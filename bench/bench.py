@@ -159,15 +159,18 @@ def table():
     out = []
     for label, backends in data["models"].items():
         out.append(f"**{label}**\n")
-        out.append("| backend | conversation | coding | thinking |")
-        out.append("|---|--:|--:|--:|")
+        # the build is a column because the backends are not on the same one:
+        # llmash runs what it assembles, the others run the fp8 it starts from
+        out.append("| backend | build | conversation | coding | thinking |")
+        out.append("|---|---|--:|--:|--:|")
         for key, name in order:
             if key not in backends:
                 continue
             w = backends[key]["workloads"]
             bold = "**" if key == "llmash" else ""
             cells = " | ".join(f"{bold}{w[c]:.1f}{bold}" if c in w else "-" for c in cols)
-            out.append(f"| {bold}{name}{bold} | {cells} |")
+            build = backends[key].get("build", "") or "-"
+            out.append(f"| {bold}{name}{bold} | {build} | {cells} |")
         out.append("")
     out.append("Tokens per second while generating, median of three runs, "
                "excluding model load and prompt processing.")

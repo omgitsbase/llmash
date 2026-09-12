@@ -50,41 +50,30 @@ This is the same setting as `OLLAMA_MODELS`.
 
 ## Speed
 
-One GPU, an RTX PRO 6000 Blackwell with 96 GB: same prompts, 4-bit weights in
-each engine's own format, every backend run as it comes with no hand tuning.
-Your numbers will differ.
+One GPU, an RTX PRO 6000 Blackwell with 96 GB: same prompts, every backend run
+as it comes with no hand tuning. Your numbers will differ.
+
+The two rows are not the same file. llmash runs the build it assembles, which is
+what you get when you pull; Ollama runs the fp8 that build is made from. So most
+of the gap is bytes read rather than engine, and the point of the comparison is
+that the smaller file answers as well: at 3 bits the published results for this
+method sit 0.7% under fp8.
 
 <!-- BENCHMARK -->
 
-**gemma-4 26B-A4B (Q4_K_M)**
+**gemma-4 26B-A4B**
 
-| backend | conversation | coding | thinking |
-|---|--:|--:|--:|
-| Ollama | 173.0 | 189.5 | 118.5 |
-| **llmash** | **255.6** | **338.6** | **432.0** |
-
-**Qwen3.6 35B-A3B (IQ4_XS)**
-
-| backend | conversation | coding | thinking |
-|---|--:|--:|--:|
-| Ollama | 129.8 | 120.3 | 226.8 |
-| vLLM | 182.6 | 182.0 | 182.1 |
-| **llmash** | **385.0** | **482.0** | **514.4** |
-
-**Qwen3.8 27B (Q4_K_XL)**
-
-| backend | conversation | coding | thinking |
-|---|--:|--:|--:|
-| Ollama | 63.1 | 62.3 | 63.4 |
-| vLLM | 72.9 | 73.7 | 73.7 |
-| **llmash** | **129.9** | **160.1** | **188.1** |
+| backend | build | conversation | coding | thinking |
+|---|---|--:|--:|--:|
+| Ollama | Q8_0, 25 GB | 175.1 | 176.8 | 178.1 |
+| **llmash** | RCO-3, 13.9 GB | **236.8** | **368.7** | **421.2** |
 
 Tokens per second while generating, median of three runs, excluding model load and prompt processing.
 
 <!-- /BENCHMARK -->
 
-vLLM is the native Windows build on AWQ int4 weights. gemma-4 has no vLLM row
-because that build cannot run its mixed head sizes.
+Only gemma-4 is measured on this pairing so far; the other models need a source
+repository recorded before a custom build can be made of them.
 
 ## How it fits together
 
@@ -137,6 +126,28 @@ reference:
 | Q8_0 | 2.02 GB | 5/6 |
 | IQ3_XS | 0.90 GB | 4/6 |
 | RCO-3.9 | 0.93 GB | 5/6 |
+
+Six problems is a small sample. The published results for this method run it
+properly, and the shape is what the picker's quality figures come from: the
+allocation stays within a point of the original down to 3 bits a weight, where a
+uniform build of the same size has already come apart.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/accuracy-dark.svg">
+  <img alt="Task average against bits per weight on Qwen3.8-27B. The custom allocation holds within a point of the fp8 original down to 3 bits, while uniform builds of the same width fall away." src="assets/accuracy-light.svg">
+</picture>
+
+| bits a weight | custom allocation | uniform build |
+|---|--:|--:|
+| 2.50 | 86.0 | 78.3 |
+| 2.75 | 89.5 | - |
+| 2.87 | - | 89.7 |
+| 3.00 | 91.2 | - |
+| 3.47 | 91.8 | 90.1 |
+
+Published GSQ-RCO figures on Qwen3.8-27B, the mean of AIME25, GPQA-Diamond and
+LiveCodeBench v6, against an fp8 original scoring 91.87. They measure the method,
+not this implementation.
 
 The source is the repository's Q8_0, read a block at a time and dropped once
 quantized, so nothing but the result reaches disk and the conversion holds

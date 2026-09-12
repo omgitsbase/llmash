@@ -1,80 +1,24 @@
 {
   "models": {
-    "gemma-4 26B-A4B (Q4_K_M)": {
-      "llmash": {
-        "measured": "2026-09-07",
-        "model_id": "gemma4:26b",
-        "workloads": {
-          "conversation": 255.6,
-          "coding": 338.6,
-          "thinking": 432.0
-        }
-      },
+    "gemma-4 26B-A4B": {
       "ollama": {
-        "measured": "2026-09-06",
-        "model_id": "bench-gemma4:26b",
+        "measured": "2026-09-13",
+        "model_id": "bench-gemma4-q8",
+        "build": "Q8_0, 25 GB",
         "workloads": {
-          "conversation": 173.0,
-          "coding": 189.5,
-          "thinking": 118.5
+          "conversation": 175.1,
+          "coding": 176.8,
+          "thinking": 178.1
         }
-      }
-    },
-    "Qwen3.6 35B-A3B (IQ4_XS)": {
+      },
       "llmash": {
-        "measured": "2026-09-07",
-        "model_id": "nail-qwen3.6-35b-a3b-mtp-ud:gguf",
+        "measured": "2026-09-13",
+        "model_id": "gemma-4-26b-a4b-it:rco-3",
+        "build": "RCO-3, 13.9 GB",
         "workloads": {
-          "conversation": 385.0,
-          "coding": 482.0,
-          "thinking": 514.4
-        }
-      },
-      "ollama": {
-        "measured": "2026-09-06",
-        "model_id": "bench-qwen36:a3b",
-        "workloads": {
-          "conversation": 129.8,
-          "coding": 120.3,
-          "thinking": 226.8
-        }
-      },
-      "vllm": {
-        "measured": "2026-09-06",
-        "model_id": "qwen36",
-        "workloads": {
-          "conversation": 182.6,
-          "coding": 182.0,
-          "thinking": 182.1
-        }
-      }
-    },
-    "Qwen3.8 27B (Q4_K_XL)": {
-      "llmash": {
-        "measured": "2026-09-07",
-        "model_id": "dirk:gguf",
-        "workloads": {
-          "conversation": 129.9,
-          "coding": 160.1,
-          "thinking": 188.1
-        }
-      },
-      "ollama": {
-        "measured": "2026-09-06",
-        "model_id": "bench-qwen38:27b",
-        "workloads": {
-          "conversation": 63.1,
-          "coding": 62.3,
-          "thinking": 63.4
-        }
-      },
-      "vllm": {
-        "measured": "2026-09-06",
-        "model_id": "qwen38",
-        "workloads": {
-          "conversation": 72.9,
-          "coding": 73.7,
-          "thinking": 73.7
+          "conversation": 236.8,
+          "coding": 368.7,
+          "thinking": 421.2
         }
       }
     }
