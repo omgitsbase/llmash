@@ -262,6 +262,9 @@ Flags:
 A Hugging Face repository is written hf.co/<org>/<repo>. Without --quant, the
 builds it offers are listed and one is chosen; hf.co/<org>/<repo>@<quant> names
 one directly. Files come down over several connections at once.
+
+RCO-<bits> asks for a build assembled here at that many bits a weight. The
+list offers a ladder of widths; --quant takes any of them, RCO-4.2 included.
 )HELP";
 
 const std::string k_push_help = R"HELP(Push a model to a registry

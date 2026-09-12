@@ -117,8 +117,10 @@ qwen3-1.7b, which build?
   large    Q8_0            2.2 GB
 ```
 
-Picking it shows what it costs against the published build nearest its size,
-then asks:
+Picking it opens the widths, since the target is a number rather than a fixed
+build: 2.75, 3, 3.4, 3.9, 4.4 and 5 bits a weight, each with what it leaves on
+disk. Choosing one shows what it costs against the published build nearest its
+size, then asks:
 
 ```
                                        download    on disk
