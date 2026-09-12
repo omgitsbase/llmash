@@ -74,6 +74,26 @@ def stop_running(root: pathlib.Path) -> None:
     time.sleep(1.0)
 
 
+def installed_root() -> pathlib.Path:
+    """Where the installer put llmash, so --here can say when it is stale."""
+    return pathlib.Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "llmash"
+
+
+def warn_if_install_is_older() -> None:
+    """--here runs the build from the repository; the installed copy keeps the
+    port. A CLI talking to an older server silently gets the older behaviour,
+    which is how a pull asking for RCO-3 came back with the plain Q8_0."""
+    root = installed_root()
+    vf = root / "VERSION"
+    if not vf.exists():
+        return
+    there = vf.read_text(encoding="utf-8").strip()
+    if there != version():
+        print(f"  note: {root} is {there}, this build is {version()}")
+        print("  the installed copy owns port 11434, so `llmash` on PATH still")
+        print(f"  answers as {there}; copy this build over it to test the new behaviour")
+
+
 def install_here() -> None:
     stop_running(HERE)
     for name in ("llmash.exe", "llmashw.exe", "VERSION", "llmash.ico", "llmash.png"):
@@ -85,6 +105,7 @@ def install_here() -> None:
                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print(f"running {HERE} on the build; the tray is up and it starts the server")
+    warn_if_install_is_older()
 
 
 def build_linux() -> None:
