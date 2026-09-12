@@ -470,8 +470,7 @@ int main() {
            "delete: the library message");
         check(fs::exists(lib.path), "delete: the library file is still there");
 
-        // The folder pulls land in is read in place like any other, so it is
-        // marked in_library too. rm has to undo a pull all the same.
+        // The folder pulls land in is read in place, so it is in_library too.
         Model pulled      = m;
         pulled.name       = "pulled:gguf";
         pulled.path       = (fs::path(dcfg.gguf_dir) / "Pulled-RCO-3.9.gguf").string();

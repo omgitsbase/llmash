@@ -753,9 +753,8 @@ DeleteOutcome delete_from_store(const Model & m) {
 
 DeleteOutcome run_delete(const Model & m, const Config & cfg) {
     DeleteOutcome out;
-    // in_library covers every folder read in place, and one of them is the
-    // folder pulls are written to. Refusing there means rm can never undo a
-    // pull, so only the folders llmash did not write are protected.
+    // in_library covers every folder read in place, pulls land in one of them,
+    // and rm has to be able to undo a pull. Only the rest are protected.
     if (m.in_library && !same_dir(fs::path(m.path).parent_path().string(), loose_dir(cfg))) {
         out.status = 409;
         out.body   = error_obj(m.name + " is read from " + m.path +

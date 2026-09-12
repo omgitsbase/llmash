@@ -489,8 +489,7 @@ bool is_rco(const std::string & name) {
     return u.rfind("RCO", 0) == 0;
 }
 
-// Asked after a custom build is picked out of the list, because it is the one
-// choice that costs bandwidth and minutes. No goes back to the list.
+// The one choice that costs bandwidth and minutes, so it is confirmed.
 bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain) {
     const QuantInfo * ref = nearest_by_size(plain, custom.size);
 
@@ -501,9 +500,10 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
     for (size_t i = 0; i < rows.size(); i++) {
         std::printf("  %s%s%s\n", i == 1 ? kBold : kDim, rows[i].c_str(), kReset);
     }
-    std::printf("\n");
-    for (const std::string & line : tradeoff_note(custom, ref)) {
-        std::printf("  %s%s%s\n", kDim, line.c_str(), kReset);
+    if (ref != nullptr && ref->size > 0 && custom.fetch > 0) {
+        std::printf("\n  %s%.1fx the download and a few minutes of this machine's CPU, for a file that%s\n", kDim,
+                    static_cast<double>(custom.fetch) / static_cast<double>(ref->size), kReset);
+        std::printf("  %sholds more of the model than any published build its size.%s\n", kDim, kReset);
     }
     for (;;) {
         std::printf("\nBuild it? [Y/n] ");
@@ -519,8 +519,7 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
     }
 }
 
-// A custom build is a target width rather than one build, so choosing it opens
-// the widths. Escape goes back to the sizes, and declining one comes back here.
+// A custom build is a target width, not one build, so choosing it opens them.
 std::string choose_width(const std::vector<QuantInfo> & custom, const std::vector<QuantInfo> & plain,
                          const std::string & start) {
     std::vector<QuantInfo> rungs = custom;
@@ -579,9 +578,8 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         offered = custom[custom.size() / 2];
     }
 
-    // One list, ordered by what each leaves on disk, so it reads as a ladder
-    // with the custom build sitting at its own size rather than above them
-    // all. A registry model's own build goes at the bottom.
+    // One list ordered by what each leaves on disk, so it reads as a ladder
+    // with the custom build at its own size. A registry build goes last.
     struct Row {
         std::string text;
         std::string quant;
@@ -1079,11 +1077,6 @@ std::string bar_cells(int64_t value, int64_t of, int width) {
     return out;
 }
 
-std::string tradeoff_row(const std::string & name, const std::string & bar, int64_t down, int64_t kept) {
-    return pad_to(name, 12, true) + "  " + bar + "  " + pad_to(human_bytes(down), 9, false) + "  " +
-           pad_to(human_bytes(kept), 9, false);
-}
-
 } // namespace
 
 std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref) {
@@ -1093,9 +1086,13 @@ std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo
     const std::string head = pad_to("", 12, true) + "  " + std::string(20, ' ') + "  " +
                              pad_to("download", 9, false) + "  " + pad_to("on disk", 9, false);
 
-    std::vector<std::string> out{head, tradeoff_row(custom.name, bar_cells(down, top, 20), down, custom.size)};
+    const auto row = [&](const std::string & name, int64_t bytes, int64_t kept) {
+        return pad_to(name, 12, true) + "  " + bar_cells(bytes, top, 20) + "  " + pad_to(human_bytes(bytes), 9, false) +
+               "  " + pad_to(human_bytes(kept), 9, false);
+    };
+    std::vector<std::string> out{head, row(custom.name, down, custom.size)};
     if (ref != nullptr) {
-        out.push_back(tradeoff_row(ref->name, bar_cells(ref->size, top, 20), ref->size, ref->size));
+        out.push_back(row(ref->name, ref->size, ref->size));
     }
     return out;
 }

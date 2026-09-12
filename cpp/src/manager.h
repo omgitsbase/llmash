@@ -87,5 +87,6 @@ Tuning auto_tune();
 int  free_port();
 bool can_offload();
 std::pair<int, uint64_t> cpu_threads_and_mask();
+bool has_thinking_block(const std::string & chat_template);
 
 } // namespace llmash
