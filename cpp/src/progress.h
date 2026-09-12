@@ -36,8 +36,7 @@ private:
     ProgClock::time_point last_;
 };
 
-// What the two figures beside a bar count. Bytes get a rate; a count of
-// tensors or files gets the plain numbers and the time left.
+// What the figures beside a bar count. Only bytes get a rate.
 enum class ProgUnit { Bytes, Count };
 
 class ProgBar : public ProgState {
