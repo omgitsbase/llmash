@@ -980,10 +980,10 @@ bool parse_hf_siblings(const std::string & body, std::vector<HfFile> & out) {
         HfFile h;
         h.name = j_str(f, "rfilename");
         h.size = j_int(f, "size");
-        // .imatrix is the other thing worth listing: llama.cpp's older
-        // importance files carry that extension rather than .gguf.
+        // The importance file is the other thing worth listing, and it has no
+        // one extension: .imatrix, a GGUF, or unsloth's imatrix_unsloth.dat.
         const std::string low = lower(h.name);
-        if (ends_with(low, ".gguf") || ends_with(low, ".imatrix")) {
+        if (ends_with(low, ".gguf") || contains(low, "imatrix")) {
             out.push_back(std::move(h));
         }
     }
@@ -1982,12 +1982,9 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
 
     // Measure every tensor on a sample of its rows, so what this costs does not
     // grow with the model, then bisect the multiplier until the total lands on
-    // the budget.
-    //
-    // The sample is counted in weights, not rows. What decides a type is the
-    // ratio between the types' errors over a few hundred superblocks, and a
-    // 4096-wide tensor reaches that in a quarter of the rows a 1024-wide one
-    // needs. Sizing by rows measured the wide tensors four times over.
+    // the budget. The sample is counted in weights rather than rows: what
+    // decides a type is the ratio between the types' errors over a few hundred
+    // superblocks, which a wide tensor reaches in fewer rows than a narrow one.
     const int64_t          sample_weights = (std::max<int64_t>)(4096, env_int("LLMASH_RCO_SAMPLE", 128 * 1024));
     const std::vector<int> types          = rco::candidates_for(ggml, bpw);
 
@@ -2035,8 +2032,8 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     m.name       = t.name;
                     m.elements   = t.dims[0] * rows;
                     m.floor_bits = rco::floor_bits(t.name);
-                    // A tensor held above a floor can never be given the types
-                    // below it, and those are the slowest ones to measure.
+                    // A tensor held above a floor cannot be given the types
+                    // below it, and those are the slowest to measure.
                     std::vector<int> mine;
                     for (const int ty : types) {
                         if (rco::bits_of_type(ggml, ty) >= m.floor_bits) {
@@ -2076,7 +2073,26 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     }
     const std::map<std::string, int> chosen = rco::allocate(measured, budget);
 
-    if (!env_str("LLMASH_RCO_DUMP").empty()) {
+    const std::string dump = env_str("LLMASH_RCO_DUMP");
+    if (dump == "costs") {
+        // The table each tensor chose from: why one was given more bits.
+        const double lambda = rco::solve_lambda(measured, budget);
+        char         lam[64];
+        std::snprintf(lam, sizeof(lam), "%.6g", lambda);
+        log_line(std::string("price ") + lam + " error per byte; each tensor takes its lowest error + price * bytes");
+        for (const rco::Measured & m : measured) {
+            std::string line = m.name;
+            for (const rco::Cost & c : m.costs) {
+                char cell[96];
+                std::snprintf(cell, sizeof(cell), "  %s err=%.3e MB=%.2f v=%.3e", ggml.name(c.type), c.error,
+                              static_cast<double>(c.bytes) / 1e6,
+                              c.error + lambda * static_cast<double>(c.bytes));
+                line += cell;
+            }
+            log_line(line);
+        }
+    }
+    if (!dump.empty()) {
         for (const ggufio::TensorEntry & t : layout.tensors) {
             const auto it = chosen.find(t.name);
             if (it != chosen.end()) {
@@ -2176,8 +2192,6 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     for (size_t k = 0; k < static_cast<size_t>(depth) && k < blocks.size(); k++) {
         job[k] = start_fetch(k, k);
     }
-    // Split between the two things this loop does, because which one dominates
-    // depends on the link and the machine and decides what is worth tuning.
     double wait_sec = 0;
 
     for (size_t i = 0; i < blocks.size(); i++) {
@@ -2237,9 +2251,8 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                             return;
                         }
                         const Run & r = runs[k];
-                        // Expanded inside the worker, not in one pass before
-                        // it: that pass ran on a single core, and these rows
-                        // are still in cache when the quantizer reads them.
+                        // Expanded here, not in one pass first: that pass ran
+                        // on one core, and these rows stay in cache.
                         ggml.dequantize(static_cast<int>(t.type), data.data() + src_row * static_cast<size_t>(r.from),
                                         fbuf.data() + r.from * n_per, r.rows * n_per);
                         ggml.quantize(ty, fbuf.data() + r.from * n_per,
@@ -2490,8 +2503,7 @@ bool finish_hf(const std::string & repo, const std::string & first, const std::s
         }
     }
     reg.invalidate();
-    // A repository pulled under no name of its own is filed under the one
-    // derived from the file, and the caller has no other way to learn it.
+    // Filed under a name derived from the file, which the caller cannot guess.
     if (as.empty()) {
         emit(json{{"model", loose_name(first)}});
     } else {
