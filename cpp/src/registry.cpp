@@ -214,14 +214,21 @@ std::string find_projector_for(const std::string & path) {
 
 } // namespace
 
-// registry.go's looseName without the alias: shard and quantisation
-// suffixes off, lower case, underscores to dashes, and a :gguf tag.
+// The quantisation goes in the tag, the way the Ollama library writes it:
+// llama3.2:1b-instruct-q8_0, underscores and all. Dropping it named a 610 MB
+// 3.9-bit build and a 1.3 GB Q8_0 of the same weights the same thing.
+// Files with no quantisation in the name keep the :gguf tag.
 std::string loose_name(const std::string & path) {
     std::string stem = std::regex_replace(stem_of(path), shard_re(), "");
-    stem             = std::regex_replace(stem, quant_re(), "");
-    stem             = lower(stem);
+    std::string tag  = "gguf";
+    std::smatch q;
+    if (std::regex_search(stem, q, quant_re())) {
+        tag  = lower(q.str(0).substr(1));
+        stem = stem.substr(0, static_cast<size_t>(q.position(0)));
+    }
+    stem = lower(stem);
     std::replace(stem.begin(), stem.end(), '_', '-');
-    return stem + ":gguf";
+    return stem + ":" + tag;
 }
 
 std::vector<std::string> walk_gguf(const std::string & dir) {
@@ -484,25 +491,14 @@ void Registry::scan() {
     for (const auto & d : library_dirs()) {
         scan_library(d, found);
     }
-    // Two files that strip to the same name: the first keeps it, the next is
-    // told apart by its quantisation, or by a counter when it has none.
+    // The quantisation is already in the tag, so a clash now means two files
+    // of the same name and the same build. A counter is all that is left.
     std::set<std::string> taken;
     for (auto & m : found) {
         if (taken.count(m.name) != 0) {
-            const std::string stem = std::regex_replace(stem_of(m.path), shard_re(), "");
-            std::string       base = m.name;
-            if (ends_with(base, ":gguf")) {
-                base = base.substr(0, base.size() - 5);
-            }
             std::string name = m.name;
-            std::smatch q;
-            if (std::regex_search(stem, q, quant_re()) && ends_with(m.name, ":gguf")) {
-                std::string tag = lower(q.str(0).substr(1));
-                std::replace(tag.begin(), tag.end(), '_', '-');
-                name = base + ":" + tag;
-            }
             for (int n = 2; taken.count(name) != 0; n++) {
-                name = base + ":gguf-" + std::to_string(n);
+                name = m.name + "-" + std::to_string(n);
             }
             m.name = name;
         }
@@ -557,7 +553,23 @@ std::optional<Model> Registry::find(const std::string & name) {
         if (std::optional<Model> m = exact(want + ":latest")) {
             return m;
         }
-        return exact(want + ":gguf");
+        if (std::optional<Model> m = exact(want + ":gguf")) {
+            return m;
+        }
+        // A loose file is tagged with its quantisation now, so a bare name has
+        // no fixed tag to try. One match is the answer; several are ambiguous
+        // and the caller is better off naming one.
+        std::optional<Model> only;
+        for (const auto & m : cache_) {
+            if (m.name.rfind(want + ":", 0) != 0) {
+                continue;
+            }
+            if (only) {
+                return std::nullopt;
+            }
+            only = m;
+        }
+        return only;
     }
     return exact(want);
 }
