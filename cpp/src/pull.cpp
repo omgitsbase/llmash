@@ -1802,7 +1802,12 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out
 // they are 2-D and block-aligned like any other, so going by shape alone
 // requantized the router and the model answered "the the the".
 bool quantizable(const ggufio::TensorEntry & t, const rco::Ggml & g) {
-    return t.dims.size() > 1 && t.dims[0] % 256 == 0 && t.rows() > 0 && g.quantized(static_cast<int>(t.type));
+    // A row only has to divide the narrowest block, not the widest. Demanding
+    // 256 skipped every expert tensor in gemma-4, whose rows are 704 and 2112:
+    // 8.3 GB, over half the model, stayed at the source's Q8_0 in a build asked
+    // for 3 bits. Which types a row can actually take is settled per tensor by
+    // rco::candidates_for_row.
+    return t.dims.size() > 1 && t.dims[0] % 32 == 0 && t.rows() > 0 && g.quantized(static_cast<int>(t.type));
 }
 
 // One run of rows out of one tensor: what is fetched, quantized and written
@@ -2056,9 +2061,10 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     m.name       = t.name;
                     m.elements   = t.dims[0] * rows;
                     m.floor_bits = rco::floor_bits(t.name);
-                    // The types below a tensor's floor are also the slowest.
+                    // The types below a tensor's floor are also the slowest, and a
+                    // row that does not divide 256 can only take a 32-block type.
                     std::vector<int> mine;
-                    for (const int ty : types) {
+                    for (const int ty : rco::candidates_for_row(ggml, types, t.dims[0])) {
                         if (rco::bits_of_type(ggml, ty) >= m.floor_bits) {
                             mine.push_back(ty);
                         }
@@ -2231,6 +2237,9 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
             // tensor has one expert, and quantizing it on a single thread
             // was most of the time this used to take.
             const int64_t per_expert = (std::max<int64_t>)(1, t.rows() / (std::max<int64_t>)(t.experts(), 1));
+            // Per tensor, not per build: the GPU carries some of the types and
+            // leaves the rest, and the ones it leaves still want the pool.
+            const bool on_gpu = ggml.is_gpu(ty, n_per, weights(t.name, n_per, 0) != nullptr);
             struct Run {
                 int64_t from, rows, expert;
             };
@@ -2239,7 +2248,10 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                 const int64_t abs  = b.from + at;
                 const int64_t e    = abs / per_expert;
                 const int64_t left = (std::min)(b.rows - at, per_expert - abs % per_expert);
-                const int64_t step = (std::max<int64_t>)(1, (left + nthread - 1) / nthread);
+                // Slicing a run across the pool is what parallelises the CPU
+                // quantizer; the GPU one serialises internally, so cutting it
+                // up only pays for more round trips.
+                const int64_t step = on_gpu ? left : (std::max<int64_t>)(1, (left + nthread - 1) / nthread);
                 for (int64_t k = 0; k < left; k += step) {
                     runs.push_back(Run{at + k, (std::min)(step, left - k), e});
                 }
@@ -2247,26 +2259,52 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
             }
             std::atomic<size_t>      nr{0};
             std::vector<std::thread> pool;
-            for (int w = 0; w < nthread; w++) {
-                pool.emplace_back([&] {
-                    for (;;) {
-                        const size_t k = nr.fetch_add(1);
-                        if (k >= runs.size()) {
-                            return;
+            if (on_gpu) {
+                // Expanding still belongs to the cores, in slices of its own,
+                // and only then does the whole run go over at once.
+                const int64_t slice = (std::max<int64_t>)(1, (b.rows + nthread - 1) / nthread);
+                for (int w = 0; w < nthread; w++) {
+                    pool.emplace_back([&, w] {
+                        const int64_t from = w * slice;
+                        const int64_t rows = from >= b.rows ? 0 : (std::min)(slice, b.rows - from);
+                        if (rows > 0) {
+                            ggml.dequantize(static_cast<int>(t.type),
+                                            data.data() + src_row * static_cast<size_t>(from),
+                                            fbuf.data() + from * n_per, rows * n_per);
                         }
-                        const Run & r = runs[k];
-                        // Expanded here, not in one pass first: that pass ran
-                        // on one core, and these rows stay in cache.
-                        ggml.dequantize(static_cast<int>(t.type), data.data() + src_row * static_cast<size_t>(r.from),
-                                        fbuf.data() + r.from * n_per, r.rows * n_per);
-                        ggml.quantize(ty, fbuf.data() + r.from * n_per,
-                                      qbuf.data() + dst_row * static_cast<size_t>(r.from), r.rows, n_per,
-                                      weights(t.name, n_per, r.expert));
-                    }
-                });
-            }
-            for (auto & p : pool) {
-                p.join();
+                    });
+                }
+                for (auto & p : pool) {
+                    p.join();
+                }
+                for (const Run & r : runs) {
+                    ggml.quantize(ty, fbuf.data() + r.from * n_per,
+                                  qbuf.data() + dst_row * static_cast<size_t>(r.from), r.rows, n_per,
+                                  weights(t.name, n_per, r.expert));
+                }
+            } else {
+                for (int w = 0; w < nthread; w++) {
+                    pool.emplace_back([&] {
+                        for (;;) {
+                            const size_t k = nr.fetch_add(1);
+                            if (k >= runs.size()) {
+                                return;
+                            }
+                            const Run & r = runs[k];
+                            // Expanded here, not in one pass first: that pass
+                            // ran on one core, and these rows stay in cache.
+                            ggml.dequantize(static_cast<int>(t.type),
+                                            data.data() + src_row * static_cast<size_t>(r.from),
+                                            fbuf.data() + r.from * n_per, r.rows * n_per);
+                            ggml.quantize(ty, fbuf.data() + r.from * n_per,
+                                          qbuf.data() + dst_row * static_cast<size_t>(r.from), r.rows, n_per,
+                                          weights(t.name, n_per, r.expert));
+                        }
+                    });
+                }
+                for (auto & p : pool) {
+                    p.join();
+                }
             }
             const int64_t qbytes = static_cast<int64_t>(ggml.row_size(ty, n_per)) * b.rows;
             out.write(reinterpret_cast<const char *>(qbuf.data()), qbytes);
