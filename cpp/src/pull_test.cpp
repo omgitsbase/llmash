@@ -503,6 +503,88 @@ void test_gguf_reader() {
     check(cut.partial, "it is marked partial");
 }
 
+void test_rco_source_pick() {
+    section("rco: which build to quantize from, and reading one off disk");
+
+    std::vector<HfFile> files = {
+        HfFile{"M-Q8_0.gguf", 29000000000},
+        HfFile{"M-Q6_K.gguf", 22000000000},
+        HfFile{"M-Q4_K_M.gguf", 16000000000},
+        HfFile{"M-IQ4_XS.gguf", 15000000000},
+        HfFile{"imatrix_unsloth.gguf", 100},
+        HfFile{"M-Q8_0.mmproj.gguf", 1000},
+    };
+
+    const auto first_name = [](const std::vector<HfFile> & v) {
+        return v.empty() ? std::string("<none>") : v.front().name;
+    };
+
+    // Three bits clears Q6_K's 6.56, so it takes the smaller download.
+    std::vector<HfFile> got = pick_rco_source(files, 3.0);
+    check_eq(got.size(), size_t(1), "one source for an unsharded repo");
+    check_eq(first_name(got), std::string("M-Q6_K.gguf"), "a 3-bit build reads the Q6_K, not the Q8_0");
+
+    // Five bits does not, so it goes wider.
+    got = pick_rco_source(files, 5.0);
+    check_eq(first_name(got), std::string("M-Q8_0.gguf"), "a 5-bit build needs the Q8_0");
+
+    // Q4 is not a source at any width: there is nothing in it to spend.
+    std::vector<HfFile> thin = {HfFile{"M-Q4_K_M.gguf", 16000000000},
+                                HfFile{"imatrix_unsloth.gguf", 100}};
+    check(pick_rco_source(thin, 3.0).empty(), "a repo holding only a Q4 build has no source to quantize from");
+
+    check(pick_rco_source({HfFile{"imatrix_unsloth.gguf", 100}}, 3.0).empty(),
+          "a repo with no weights at all has no source");
+    check(pick_rco_source({HfFile{"M-Q8_0.mmproj.gguf", 1000}}, 3.0).empty(), "a projector is never a source");
+
+    // The local seam: a file:// url is read with a seek, not a request.
+    const fs::path dir = fs::temp_directory_path() / "llmash_rco_local_test";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path f = dir / "span.bin";
+    {
+        std::ofstream out(f, std::ios::binary);
+        for (int i = 0; i < 4096; i++) {
+            out.put(static_cast<char>(i & 0xff));
+        }
+    }
+    const std::string url = "file://" + f.string();
+    std::string       err;
+    std::string       got_bytes(256, '\0');
+    check(fetch_span(url, 1000, 256, &got_bytes[0], nullptr, err, 0), "fetch_span reads a local span");
+    check_eq(static_cast<int>(static_cast<unsigned char>(got_bytes[0])), 1000 & 0xff,
+             "starting at the offset it was asked for");
+    check_eq(static_cast<int>(static_cast<unsigned char>(got_bytes[255])), 1255 & 0xff, "and ending where it should");
+
+    check(!fetch_span(url, 4000, 256, &got_bytes[0], nullptr, err, 0), "a span past the end fails");
+    check(!err.empty(), "and says so");
+
+    std::string head, herr;
+    check(read_head(url, 100, head, herr), "read_head takes the front of a local file");
+    check_eq(head.size(), size_t(100), "exactly as many bytes as asked");
+    check(!read_head("file://" + (dir / "nope.bin").string(), 100, head, herr), "a missing file is an error");
+
+    // The repo a build names, out of its own metadata.
+    GgufBuilder b;
+    b.kv_string("general.architecture", "qwen3");
+    b.kv_string("general.repo_url", "https://huggingface.co/unsloth");
+    b.kv_string("quantize.imatrix.file", "Qwen3.8-27B-GGUF/imatrix_unsloth.gguf");
+    b.tensor("a", {32});
+    const ggufio::Layout l = ggufio::layout_from(b.bytes());
+    check_eq(kv_string(l, "general.architecture"), std::string("qwen3"), "kv_string reads a string value");
+    check_eq(kv_string(l, "not.there"), std::string(""), "and an absent key is empty");
+    check_eq(source_repo_of(l), std::string("unsloth/Qwen3.8-27B-GGUF"),
+             "the source repo is the org plus the imatrix path's first segment");
+
+    GgufBuilder bare;
+    bare.kv_string("general.architecture", "qwen3");
+    bare.tensor("a", {32});
+    check_eq(source_repo_of(ggufio::layout_from(bare.bytes())), std::string(""),
+             "a build that names neither has no recoverable repo");
+
+    fs::remove_all(dir);
+}
+
 void test_pairs() {
     section("pairs: does this drafter fit these weights");
 
@@ -640,6 +722,7 @@ int main() {
     test_quant_tag();
     test_kind_of();
     test_hf_parsing_and_pickers();
+    test_rco_source_pick();
     test_already_have();
     test_block_map_resume();
     test_refs_and_paths();

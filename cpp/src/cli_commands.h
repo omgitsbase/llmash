@@ -109,6 +109,7 @@ int cmd_rm(const std::vector<std::string> & args, ApiClient & api);
 int cmd_stop(const std::vector<std::string> & args, ApiClient & api);
 int cmd_pull(const std::vector<std::string> & args, ApiClient & api);
 int cmd_create(const std::vector<std::string> & args, ApiClient & api);
+int cmd_rco(const std::vector<std::string> & args, ApiClient & api);
 int cmd_cp(const std::vector<std::string> & args, ApiClient & api);
 int cmd_push();
 int cmd_signin();
