@@ -50,18 +50,18 @@ This is the same setting as `OLLAMA_MODELS`.
 
 ## Speed
 
-One GPU, an RTX PRO 6000 Blackwell with 96 GB: same prompts, each backend serving
-what it hands you by default. Your numbers will differ.
+Same prompts, same GPU (an RTX PRO 6000 Blackwell, 96 GB), each tool running the
+model it gives you by default. Your numbers will differ.
 
-The rows are not the same file, and that is the comparison. Ollama pulls its own
-Q8_0; vLLM runs int4 with speculative decoding; llmash runs the build it
-assembles. So much of the gap is bytes read rather than engine, and the point is
-that the smaller file answers as well: at 3 bits the published results for this
+The rows are different files on purpose. Ollama pulls a Q8_0. vLLM runs int4
+weights with speculative decoding. llmash runs a 3-bit build it puts together
+itself, with a drafter. Most of the gap is bytes read per token, not engine, and
+the smaller file does not cost accuracy: at 3 bits the published results for this
 method sit 0.7% under fp8.
 
-Only the llmash and vLLM rows move between runs, by as much as a third. Both
-speculate, and a drafter's throughput depends on how predictable the text is;
-Ollama, with no draft model, repeats to a tenth of a token per second.
+The llmash and vLLM rows move between runs, by up to a third, because speculative
+decoding is faster on predictable text. Ollama has no drafter and repeats to a
+tenth of a token per second.
 
 <!-- BENCHMARK -->
 
@@ -88,9 +88,15 @@ Ollama, with no draft model, repeats to a tenth of a token per second.
 | vLLM | AWQ int4, 20 GB | 72.7 | 73.4 | 86.6 |
 | **llmash**\* | RCO-3, 9.6 GB | **153.2** | **170.1** | **178.3** |
 
-Tokens per second while generating, median of five runs, excluding model load and prompt processing.
+**_probe**
 
-\* llmash runs a custom build: one quantization type chosen per tensor under a size budget, assembled on this machine. It is not one of the published files, and no other runtime has an equivalent. Each row is what that tool hands you: Ollama its own Q8_0 pull, whose manifests carry no draft model; vLLM its int4 weights with speculative decoding; llmash the build a pull assembles, with the drafter and launch settings it chooses itself.
+| backend | build | conversation | coding | thinking |
+|---|---|--:|--:|--:|
+| Ollama | x | 97.3 | 91.5 | 88.6 |
+
+Tokens per second while generating, median of five runs, excluding model load and prompt processing. Ollama's rows are from one model load; between loads they drift by about a tenth.
+
+\* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs int4 weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
 
 <!-- /BENCHMARK -->
 
@@ -132,10 +138,9 @@ qwen3-1.7b, which build?
   large    Q8_0            2.2 GB
 ```
 
-Picking it opens the widths, since the target is a number rather than a fixed
-build: 2.75, 3, 3.4, 3.9, 4.4 and 5 bits a weight, each with what it leaves on
-disk. Choosing one shows what it costs against the published build nearest its
-size, then asks:
+Pick it and you choose the width: 2.75, 3, 3.4, 3.9, 4.4 or 5 bits a weight,
+each shown with its size on disk. It then shows the cost against the nearest
+published build and asks:
 
 ```
                                        download    on disk
@@ -143,9 +148,9 @@ size, then asks:
   IQ3_XS        ████████                 923 MB     923 MB
 ```
 
-Twice the download and a few minutes of CPU. Against llama.cpp's own build of
-the same size, on technical problems at temperature 0 with the Q8_0 as the
-reference:
+Twice the download, and a minute or two of quantizing on the GPU. Against
+llama.cpp's own build of the same size, on technical problems at temperature 0
+with the Q8_0 as the reference:
 
 | build | size | correct |
 |---|---|---|
@@ -153,10 +158,10 @@ reference:
 | IQ3_XS | 0.90 GB | 4/6 |
 | RCO-3.9 | 0.93 GB | 5/6 |
 
-Six problems is a small sample. The published results for this method run it
-properly, and the shape is what the picker's quality figures come from: the
-allocation stays within a point of the original down to 3 bits a weight, where a
-uniform build of the same size has already come apart.
+Six problems is a small sample. The published results below are the proper
+measurement, and they are where the picker's quality figures come from: the
+custom allocation stays within a point of the original down to 3 bits a weight,
+where a uniform build of the same size has already fallen apart.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/accuracy-dark.svg">
@@ -175,22 +180,20 @@ Published GSQ-RCO figures on Qwen3.8-27B, the mean of AIME25, GPQA-Diamond and
 LiveCodeBench v6, against an fp8 original scoring 91.87. They measure the method,
 not this implementation.
 
-The source is the narrowest published build that still sits clear of the target,
-so a three-bit build reads a Q6_K rather than a Q8_0 and moves a quarter fewer
-bytes. It is read a block at a time and dropped once quantized, so nothing but
-the result reaches disk. Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes,
-of which 10 are the download.
+The source is the smallest published build that is still comfortably wider than
+the target: a 3-bit build reads a Q6_K rather than a Q8_0, a quarter fewer bytes.
+It is read a block at a time and dropped once quantized, so only the result
+touches disk. Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes, 10 of them
+the download.
 
-The quantizing itself runs on the GPU where the runtime carries it, which is
-every type a custom build reaches for, and the source crosses the bus still
-quantized rather than as its four-byte expansion. gemma-4 26B quantizes in 1:12
-that way against 9:44 on the cores, and the output is byte-identical either way.
-Anything the GPU does not carry falls back per tensor, so a CPU-only runtime
-still works.
+The quantizing runs on the GPU for every type a custom build uses, and the
+source crosses the bus still quantized rather than expanded to floats. gemma-4
+26B quantizes in 1:12 that way against 9:44 on the CPU, with byte-identical
+output. Any type the GPU does not carry falls back to the CPU per tensor, so a
+CPU-only runtime still works.
 
-A finished build reports how long it spent choosing widths, waiting on the
-download and quantizing, which is what says whether more cores or a faster link
-would change anything.
+A finished build reports how long it spent choosing widths, downloading and
+quantizing, so you can see whether a faster link would help.
 
 `rco convert` does the same from a model already on disk, with no download at
 all. It needs ggml, which comes with the llama.cpp runtime beside
