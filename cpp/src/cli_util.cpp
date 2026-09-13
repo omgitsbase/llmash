@@ -531,4 +531,5 @@ std::string prog_name() {
 }
 
 } // namespace clidoc
+
 } // namespace llmash

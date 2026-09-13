@@ -17,6 +17,9 @@ constexpr const char * kGreen  = "\x1b[38;5;42m";
 constexpr const char * kCyan   = "\x1b[38;5;44m";
 
 bool is_console_stdin();
+
+// Whether an agent harness or CI is driving rather than a person.
+bool driven_by_agent();
 bool is_console_stdout();
 
 // _getch(): one raw key, no echo. Real console input only; not called by

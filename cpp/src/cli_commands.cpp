@@ -1674,9 +1674,34 @@ namespace {
 
 // One bar per layer and a spinner for every other status, the way
 // `ollama pull` draws them.
+// Every build of a repo, one per line, for a caller that cannot be asked.
+void list_builds(ApiClient & api, const std::string & repo) {
+    ApiResult  r;
+    const json d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(repo), nullptr, 120, r);
+    if (!r.ok || r.status != 200) {
+        return;
+    }
+    const std::vector<json> quants = j_list(d, "quants");
+    if (quants.empty()) {
+        return;
+    }
+    std::printf("builds of %s, --quant takes any of these:\n", repo.c_str());
+    for (const auto & q : quants) {
+        const std::string name = j_str(q, "name");
+        const int64_t     size = static_cast<int64_t>(j_num(q, "size"));
+        std::printf("  %-12s %10s%s\n", name.c_str(), human_bytes(size).c_str(),
+                    is_rco(name) ? "   assembled here" : "");
+    }
+    for (const auto & h : j_list(d, "heads")) {
+        std::printf("  --mtp %s\n", j_str(h, "name").c_str());
+    }
+    std::printf("\n");
+}
+
 void do_pull(ApiClient & api, const std::string & model, std::string quant, bool offer, bool yes) {
     need_server(api);
-    const bool  interactive = !yes && is_console_stdin() && is_console_stdout();
+    const bool  agent       = driven_by_agent();
+    const bool  interactive = !yes && !agent && is_console_stdin() && is_console_stdout();
     std::string repo, as, mtp;
     bool        picked = false;
     if (is_hf_ref(model)) {
@@ -1716,6 +1741,11 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
         const BuildChoice c = choose_build(api, repo, quant, std::nullopt, repo + ", which build?");
         quant               = c.quant;
         mtp                 = c.mtp;
+    }
+    // Nothing here can answer a prompt, so the builds go out as data and the
+    // default is taken. Naming one is a re-run with --quant.
+    if (!repo.empty() && agent && quant.empty() && repo.find('@') == std::string::npos) {
+        list_builds(api, repo);
     }
     json body = json{{"model", first_of({repo, model})}};
     if (!quant.empty()) {
