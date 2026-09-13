@@ -1642,14 +1642,21 @@ std::string pad_right(const std::string & s, size_t n) {
 // What to requantize FROM, in order of preference. Q8_0 first: its rounding
 // error is far under what 4 bits introduces, and it is a third of the
 // download a 16-bit build would be.
+// Narrowest first. A source only has to sit clear of the target to be worth
+// requantizing from, and the narrower one is a smaller download.
 const std::vector<std::string> & source_preference() {
-    static const std::vector<std::string> pref = {"q8_0", "bf16", "f16", "q6_k", "q5_k_m"};
+    static const std::vector<std::string> pref = {"q6_k", "q8_0", "bf16", "f16", "q5_k_m"};
     return pref;
 }
 
-// The highest-quality build in the repo, which is what gets requantized.
-std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files) {
-    for (const std::string & want : source_preference()) {
+// How far above the target a source has to be. Q6_K carries 6.56 bits, so a
+// three-bit build reads one where it would otherwise pull a 33% larger Q8_0.
+constexpr double kSourceMargin = 2.0;
+
+// The narrowest build in the repo that still sits clear of the target, and
+// failing that the widest there is.
+std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files, double bpw) {
+    const auto shards_of = [&files](const std::string & want) {
         std::vector<HfFile> cand;
         for (const HfFile & f : files) {
             const std::string low = lower(f.name);
@@ -1658,9 +1665,6 @@ std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files) {
                 cand.push_back(f);
             }
         }
-        if (cand.empty()) {
-            continue;
-        }
         std::vector<HfFile> shards;
         for (const HfFile & f : cand) {
             if (contains(f.name, "-of-")) {
@@ -1668,11 +1672,27 @@ std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files) {
             }
         }
         if (!shards.empty()) {
-            std::sort(shards.begin(), shards.end(), [](const HfFile & a, const HfFile & b) { return a.name < b.name; });
+            std::sort(shards.begin(), shards.end(),
+                      [](const HfFile & a, const HfFile & b) { return a.name < b.name; });
             return shards;
         }
         std::sort(cand.begin(), cand.end(), [](const HfFile & a, const HfFile & b) { return a.size < b.size; });
-        return {cand.back()};
+        return cand.empty() ? cand : std::vector<HfFile>{cand.back()};
+    };
+
+    for (const std::string & want : source_preference()) {
+        if (bits_of_quant(want) < bpw + kSourceMargin) {
+            continue;
+        }
+        if (std::vector<HfFile> got = shards_of(want); !got.empty()) {
+            return got;
+        }
+    }
+    // Nothing clears the margin: take the widest there is.
+    for (const std::string & want : source_preference()) {
+        if (std::vector<HfFile> got = shards_of(want); !got.empty()) {
+            return got;
+        }
     }
     return {};
 }
@@ -1691,8 +1711,31 @@ std::string find_imatrix(const std::vector<HfFile> & files) {
 // `min_piece` keeps the pieces large: throughput is (requests in flight) x
 // (bytes each), but it is the number of requests that trips a rate limiter,
 // so the same overlap is bought with fewer, bigger ones.
+// A source already here, spelled as a URL so one path covers both.
+bool is_local_url(const std::string & url) { return url.rfind("file://", 0) == 0; }
+
+std::string local_path_of(const std::string & url) { return url.substr(7); }
+
 bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out, const ProgressFn & progress,
                 std::string & err, int64_t min_piece = 0) {
+    if (is_local_url(url)) {
+        std::ifstream in(local_path_of(url), std::ios::binary);
+        if (!in) {
+            err = "could not open " + local_path_of(url);
+            return false;
+        }
+        in.seekg(from, std::ios::beg);
+        in.read(out, bytes);
+        if (in.gcount() != bytes) {
+            err = local_path_of(url) + ": wanted " + std::to_string(bytes) + " bytes at " + std::to_string(from) +
+                  ", got " + std::to_string(static_cast<int64_t>(in.gcount()));
+            return false;
+        }
+        if (progress) {
+            progress(bytes);
+        }
+        return true;
+    }
     struct Block {
         int64_t from, bytes, into;
     };
@@ -1878,6 +1921,28 @@ bool cache_file(const std::string & repo, const std::string & rel, const Config 
     return true;
 }
 
+// The front of a source, which is where the GGUF header lives.
+bool read_head(const std::string & url, int64_t bytes, std::string & out, std::string & err) {
+    if (is_local_url(url)) {
+        std::ifstream in(local_path_of(url), std::ios::binary);
+        if (!in) {
+            err = "could not open " + local_path_of(url);
+            return false;
+        }
+        out.assign(static_cast<size_t>(bytes), 0);
+        in.read(&out[0], bytes);
+        out.resize(static_cast<size_t>(in.gcount()));
+        return !out.empty();
+    }
+    const HttpResult r = http_request(url, "GET", "bytes=0-" + std::to_string(bytes - 1));
+    if (r.status != 200 && r.status != 206) {
+        err = r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error;
+        return false;
+    }
+    out = r.body;
+    return true;
+}
+
 std::string rco_quant_name(double bpw) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.2f", bpw);
@@ -1911,45 +1976,41 @@ double rco_bpw_of_quant(const std::string & quant) {
     }
 }
 
-std::string rco_pull(const std::string & repo, double bpw, const std::string & as, const Config & cfg,
-                     Registry & reg, const Emit & emit) {
+// Where a custom build reads its weights, one shard per entry.
+struct RcoSource {
+    std::vector<std::string> urls;    // http(s), or file:// for a local source
+    std::vector<std::string> names;
+    std::vector<int64_t>     sizes;
+    std::string              imatrix; // a path here, or empty
+    bool                     local = false;
+};
+
+std::string rco_build(const RcoSource & src, double bpw, const std::string & as, const Config & cfg,
+                      Registry & reg, const Emit & emit) {
     const auto        t0       = std::chrono::steady_clock::now();
     const std::string dest_dir = loose_dir(cfg);
     std::error_code   ec;
     fs::create_directories(dest_dir, ec);
 
-    emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
-    std::string               ferr;
-    const std::vector<HfFile> files = hf_files(repo, &ferr);
-    if (files.empty()) {
-        emit(error_obj(ferr.empty() ? "no GGUF files in " + repo : ferr));
+    constexpr int64_t kHeadBytes = 48 * 1024 * 1024;
+    std::string       head0, perr;
+    if (!read_head(src.urls.front(), kHeadBytes, head0, perr)) {
+        emit(error_obj("could not read " + base_name(src.names.front()) + ": " + perr));
         return "";
     }
-    const std::vector<HfFile> src = pick_rco_source(files);
-    if (src.empty()) {
-        emit(error_obj("no high-quality build in " + repo + " to quantize from"));
-        return "";
-    }
-
-    const HttpResult probe = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-50331647");
-    if (probe.status != 200 && probe.status != 206) {
-        emit(error_obj("could not read " + base_name(src.front().name) + ": " +
-                       (probe.error.empty() ? "HTTP " + std::to_string(probe.status) : probe.error)));
-        return "";
-    }
-    ggufio::Layout layout = ggufio::layout_from(probe.body);
+    ggufio::Layout layout = ggufio::layout_from(head0);
     if (!layout.error.empty()) {
-        emit(error_obj(base_name(src.front().name) + ": " + layout.error));
+        emit(error_obj(base_name(src.names.front()) + ": " + layout.error));
         return "";
     }
-    for (size_t i = 1; i < src.size(); i++) {
-        const HttpResult p = http_request(hf_download_url(repo, src[i].name), "GET", "bytes=0-50331647");
-        if (p.status != 200 && p.status != 206) {
-            emit(error_obj("could not read " + base_name(src[i].name) + ": HTTP " + std::to_string(p.status)));
+    for (size_t i = 1; i < src.urls.size(); i++) {
+        std::string part, e2;
+        if (!read_head(src.urls[i], kHeadBytes, part, e2)) {
+            emit(error_obj("could not read " + base_name(src.names[i]) + ": " + e2));
             return "";
         }
-        if (!ggufio::append_part(layout, p.body)) {
-            emit(error_obj(base_name(src[i].name) + ": " + layout.error));
+        if (!ggufio::append_part(layout, part)) {
+            emit(error_obj(base_name(src.names[i]) + ": " + layout.error));
             return "";
         }
     }
@@ -1964,24 +2025,21 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     }
 
     int64_t src_bytes = 0;
-    for (const HfFile & f : src) {
-        src_bytes += f.size;
+    for (const int64_t n : src.sizes) {
+        src_bytes += n;
     }
     emit(json{{"status", ""}});
-    emit(json{{"status", "  " + pad_right("source", 12) + base_name(src.front().name) + "  " +
+    emit(json{{"status", "  " + pad_right("source", 12) + base_name(src.names.front()) + "  " +
                              human_bytes(src_bytes) +
-                             (src.size() > 1 ? ", " + std::to_string(src.size()) + " shards" : "")}});
+                             (src.names.size() > 1 ? ", " + std::to_string(src.names.size()) + " shards" : "")}});
 
     // The importance matrix: what the quantizer spends its bits on.
-    std::string  imatrix_path, cerr;
     rco::Imatrix imatrix;
-    if (const std::string in_repo = find_imatrix(files); !in_repo.empty()) {
-        if (cache_file(repo, in_repo, cfg, imatrix_path, cerr)) {
-            std::string ierr;
-            if (imatrix.load(imatrix_path, ierr)) {
-                emit(json{{"status", "  " + pad_right("imatrix", 12) + base_name(imatrix_path) + "  " +
-                                         std::to_string(imatrix.size()) + " tensors"}});
-            }
+    if (!src.imatrix.empty()) {
+        std::string ierr;
+        if (imatrix.load(src.imatrix, ierr)) {
+            emit(json{{"status", "  " + pad_right("imatrix", 12) + base_name(src.imatrix) + "  " +
+                                     std::to_string(imatrix.size()) + " tensors"}});
         }
     }
     if (imatrix.empty()) {
@@ -2047,7 +2105,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                     const int64_t bytes = static_cast<int64_t>(ggml.row_size(
                                           static_cast<int>(t.type), t.dims[0])) * take;
                     std::string raw(static_cast<size_t>(bytes), '\0'), ferr2;
-                    if (!fetch_span(hf_download_url(repo, src[t.part].name), layout.file_offset(t), bytes,
+                    if (!fetch_span(src.urls[t.part], layout.file_offset(t), bytes,
                                     &raw[0], nullptr, ferr2)) {
                         std::lock_guard<std::mutex> lk(emu);
                         if (merr.empty()) {
@@ -2125,7 +2183,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         emit(json{{"status", ""}});
     }
 
-    std::string stem = strip_shard(stem_of(src.front().name));
+    std::string stem = strip_shard(stem_of(src.names.front()));
     for (const std::string & q : source_preference()) {
         const std::string up = upper(q);
         const size_t      at = lower(stem).find(lower("-" + up));
@@ -2187,7 +2245,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     const auto start_fetch = [&](size_t i, size_t slot) {
         buf[slot].assign(static_cast<size_t>(block_bytes(blocks[i])), '\0');
         return std::async(std::launch::async, [&, i, slot] {
-            return fetch_span(hf_download_url(repo, src[layout.tensors[blocks[i].tensor].part].name),
+            return fetch_span(src.urls[layout.tensors[blocks[i].tensor].part],
                               block_from(blocks[i]), block_bytes(blocks[i]), &buf[slot][0], nullptr, job_err[slot],
                               PIECE_BYTES);
         });
@@ -2341,8 +2399,27 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     }
     out.close();
 
-    fs::rename(tmp, dest, ec);
+    // A scanner opening the file behind us fails the rename with a sharing
+    // violation, and an unchecked one reported "-1 B at -0.00 bpw" for a build
+    // that was sitting there finished.
+    for (int attempt = 0; attempt < 20; attempt++) {
+        ec.clear();
+        fs::rename(tmp, dest, ec);
+        if (!ec) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    if (ec) {
+        emit(error_obj("built " + base_name(tmp) + " but could not rename it to " + base_name(dest) + ": " +
+                       ec.message()));
+        return "";
+    }
     const int64_t out_bytes = static_cast<int64_t>(fs::file_size(dest, ec));
+    if (ec || out_bytes <= 0) {
+        emit(error_obj("wrote " + dest + " but could not read its size back: " + ec.message()));
+        return "";
+    }
     int64_t       params    = 0;
     for (const ggufio::TensorEntry & t : layout.tensors) {
         if (quantizable(t, ggml)) {
@@ -2360,12 +2437,13 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     const double plan_sec  = std::chrono::duration<double>(t_planned - t0).count();
     const double total_sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     emit(json{{"status", "  " + pad_right("", 12) + "took " + mmss(total_sec) + ": " + mmss(plan_sec) +
-                             " choosing bit widths, " + mmss(wait_sec) + " waiting on the download, " +
+                             " choosing bit widths, " + mmss(wait_sec) +
+                             (src.local ? " waiting on the disk, " : " waiting on the download, ") +
                              mmss((std::max)(0.0, total_sec - plan_sec - wait_sec)) + " quantizing"}});
     emit(json{{"status", "  " + pad_right("", 12) + human_bytes(fetched) + " read at " +
                              human_bytes(static_cast<int64_t>(total_sec > 0 ? static_cast<double>(fetched) / total_sec
                                                                             : 0)) +
-                             "/s; the source was never written to disk"}});
+                             "/s" + (src.local ? "" : "; the source was never written to disk")}});
     emit(json{{"status", ""}});
 
     reg.invalidate();
@@ -2373,6 +2451,141 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
         emit(json{{"status", loose_name(dest) + " ready, " + human_bytes(out_bytes)}});
     }
     return dest;
+}
+
+// A string value out of a header entry: key, type tag, then the value.
+std::string kv_string(const ggufio::Layout & l, const std::string & key) {
+    for (const ggufio::KvEntry & e : l.kv) {
+        if (e.key != key || e.raw.size() < 8) {
+            continue;
+        }
+        uint64_t klen = 0;
+        std::memcpy(&klen, e.raw.data(), 8);
+        size_t at = 8 + static_cast<size_t>(klen);
+        if (at + 4 + 8 > e.raw.size()) {
+            return "";
+        }
+        uint32_t type = 0;
+        std::memcpy(&type, e.raw.data() + at, 4);
+        if (type != 8) { // GGUF_TYPE_STRING
+            return "";
+        }
+        at += 4;
+        uint64_t vlen = 0;
+        std::memcpy(&vlen, e.raw.data() + at, 8);
+        at += 8;
+        if (at + static_cast<size_t>(vlen) > e.raw.size()) {
+            return "";
+        }
+        return e.raw.substr(at, static_cast<size_t>(vlen));
+    }
+    return "";
+}
+
+// The repo a build came from: general.repo_url gives the org, and the first
+// segment of quantize.imatrix.file gives the repository.
+std::string source_repo_of(const ggufio::Layout & l) {
+    const std::string org  = kv_string(l, "general.repo_url");
+    const std::string imat = kv_string(l, "quantize.imatrix.file");
+    if (org.empty() || imat.empty()) {
+        return "";
+    }
+    const size_t slash = imat.find('/');
+    if (slash == std::string::npos) {
+        return "";
+    }
+    const size_t last = org.find_last_of('/');
+    if (last == std::string::npos || last + 1 >= org.size()) {
+        return "";
+    }
+    return org.substr(last + 1) + "/" + imat.substr(0, slash);
+}
+
+std::string rco_convert(const std::string & path, double bpw, const std::string & imatrix_from, const Config & cfg,
+                        Registry & reg, const Emit & emit) {
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) {
+        emit(error_obj(path + " is not a file"));
+        return "";
+    }
+
+    RcoSource src;
+    src.local = true;
+    src.urls.push_back("file://" + path);
+    src.names.push_back(base_name(path));
+    src.sizes.push_back(static_cast<int64_t>(fs::file_size(path, ec)));
+
+    const auto   bits_text = [](double b) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%.3g", b);
+        return std::string(buf);
+    };
+    const double have = bits_of_quant(quant_tag(base_name(path)));
+    if (have > 0 && have < bpw + kSourceMargin) {
+        emit(error_obj(base_name(path) + " carries about " + bits_text(have) + " bits a weight; a " +
+                       bits_text(bpw) + "-bit build wants at least " + bits_text(bpw + kSourceMargin) +
+                       " to quantize from. Pull a wider build of it instead."));
+        return "";
+    }
+
+    std::string head, herr;
+    if (!read_head(src.urls.front(), 48 * 1024 * 1024, head, herr)) {
+        emit(error_obj("could not read " + base_name(path) + ": " + herr));
+        return "";
+    }
+    const ggufio::Layout probe = ggufio::layout_from(head);
+    if (!probe.error.empty()) {
+        emit(error_obj(base_name(path) + ": " + probe.error));
+        return "";
+    }
+
+    const std::string from = imatrix_from.empty() ? source_repo_of(probe) : imatrix_from;
+    if (!from.empty() && fs::is_regular_file(from, ec)) {
+        src.imatrix = from;
+    } else if (!from.empty()) {
+        emit(json{{"status", "looking up " + from + " on Hugging Face"}});
+        std::string               ferr;
+        const std::vector<HfFile> files = hf_files(from, &ferr);
+        if (const std::string in_repo = find_imatrix(files); !in_repo.empty()) {
+            std::string cerr;
+            cache_file(from, in_repo, cfg, src.imatrix, cerr);
+        }
+    }
+    if (src.imatrix.empty()) {
+        emit(error_obj(base_name(path) + " names no imatrix and none was given. The bits would be placed "
+                                         "unweighted, which measures every tensor alike and gives back a "
+                                         "uniform build. Pass one with --imatrix <file or repo>."));
+        return "";
+    }
+    return rco_build(src, bpw, "", cfg, reg, emit);
+}
+
+std::string rco_pull(const std::string & repo, double bpw, const std::string & as, const Config & cfg,
+                     Registry & reg, const Emit & emit) {
+    emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
+    std::string               ferr;
+    const std::vector<HfFile> files = hf_files(repo, &ferr);
+    if (files.empty()) {
+        emit(error_obj(ferr.empty() ? "no GGUF files in " + repo : ferr));
+        return "";
+    }
+    const std::vector<HfFile> want = pick_rco_source(files, bpw);
+    if (want.empty()) {
+        emit(error_obj("no build in " + repo + " wide enough to quantize from"));
+        return "";
+    }
+
+    RcoSource src;
+    for (const HfFile & f : want) {
+        src.urls.push_back(hf_download_url(repo, f.name));
+        src.names.push_back(f.name);
+        src.sizes.push_back(f.size);
+    }
+    if (const std::string in_repo = find_imatrix(files); !in_repo.empty()) {
+        std::string cerr;
+        cache_file(repo, in_repo, cfg, src.imatrix, cerr);
+    }
+    return rco_build(src, bpw, as, cfg, reg, emit);
 }
 
 std::string hf_pull(const std::string & repo, const std::string & quant, const std::string & as, const Config & cfg,
@@ -3038,6 +3251,34 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
     const std::string as    = j_str(body, "as");
     const std::string mtp   = j_str(body, "mtp");
 
+    // A build made from a file already here rather than one downloaded.
+    if (const std::string from = j_str(body, "convert"); !from.empty()) {
+        const double bpw = rco_bpw_of_quant(quant.empty() ? std::string("RCO-3") : quant);
+        if (bpw <= 0) {
+            emit(error_obj("convert wants a custom width, like RCO-3; got '" + quant + "'"));
+            return;
+        }
+        std::string     path = from;
+        std::error_code ec;
+        if (!fs::is_regular_file(path, ec)) {
+            const std::optional<Model> m = reg.find(from);
+            if (!m) {
+                emit(error_obj("no model called " + from + ", and no file at that path"));
+                return;
+            }
+            if (m->incomplete) {
+                emit(error_obj(from + " is a download that did not finish"));
+                return;
+            }
+            path = m->path;
+        }
+        const std::string made = rco_convert(path, bpw, j_str(body, "imatrix"), cfg, reg, emit);
+        if (!made.empty()) {
+            emit(json{{"status", "success"}, {"model", loose_name(made)}});
+        }
+        return;
+    }
+
     for (const auto & p : hf_prefixes()) {
         if (!starts_with(ref, p)) {
             continue;
@@ -3131,7 +3372,7 @@ json api_quants(const std::string & repo_arg) {
     // Assembled here rather than downloaded, so it is offered whenever an
     // allocation exists for this architecture.
     std::string arch;
-    if (const std::vector<HfFile> src = pick_rco_source(files); !src.empty()) {
+    if (const std::vector<HfFile> src = pick_rco_source(files, rco::DEFAULT_BPW); !src.empty()) {
         const HttpResult p = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-4194303");
         std::istringstream in(p.body, std::ios::binary);
         const HeaderMeta   meta = read_header_meta(in);

@@ -239,6 +239,11 @@ nlohmann::json api_resolve(const std::string & ref, const Config & cfg);
 // A quality llmash assembles rather than downloads.
 std::string rco_quant_name(double bpw);
 double      rco_bpw_of_quant(const std::string & quant);
+// From a GGUF already here. `imatrix_from` is a file or repo, or empty to read
+// it off the source's own metadata.
+std::string rco_convert(const std::string & path, double bpw, const std::string & imatrix_from, const Config & cfg,
+                        Registry & reg, const Emit & emit);
+
 std::string rco_pull(const std::string & repo, double bpw, const std::string & as, const Config & cfg,
                      Registry & reg, const Emit & emit);
 

@@ -794,8 +794,8 @@ void say_where(ApiClient & api, const std::string & name) {
 }
 
 // Runs at the end of a pull, and says nothing when there is nothing to offer.
-void offer_draft(ApiClient & api, const std::string & name) {
-    if (!is_console_stdin() || !is_console_stdout()) {
+void offer_draft(ApiClient & api, const std::string & name, bool yes) {
+    if (!yes && (!is_console_stdin() || !is_console_stdout())) {
         return;
     }
     const Config               cfg = load_config();
@@ -827,7 +827,7 @@ void offer_draft(ApiClient & api, const std::string & name) {
     for (size_t i = 0; i < fit.size(); i++) {
         std::printf("    %2d. %-56s %s\n", static_cast<int>(i + 1), fit[i].repo.c_str(), fit[i].note.c_str());
     }
-    const int n = ask_number("  Install one? (0 for none)", 1, static_cast<int>(fit.size()));
+    const int n = yes ? 1 : ask_number("  Install one? (0 for none)", 1, static_cast<int>(fit.size()));
     if (n <= 0) {
         std::printf("  skipped. `%s pulldraft %s` does it later.\n", prog().c_str(), name.c_str());
         return;
@@ -1674,9 +1674,9 @@ namespace {
 
 // One bar per layer and a spinner for every other status, the way
 // `ollama pull` draws them.
-void do_pull(ApiClient & api, const std::string & model, std::string quant, bool offer) {
+void do_pull(ApiClient & api, const std::string & model, std::string quant, bool offer, bool yes) {
     need_server(api);
-    const bool  interactive = is_console_stdin() && is_console_stdout();
+    const bool  interactive = !yes && is_console_stdin() && is_console_stdout();
     std::string repo, as, mtp;
     bool        picked = false;
     if (is_hf_ref(model)) {
@@ -1731,7 +1731,7 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
     const std::string name   = first_of({stored, as, model});
     say_where(api, name);
     if (offer && mtp.empty()) {
-        offer_draft(api, name);
+        offer_draft(api, name, yes);
     }
 }
 
@@ -1740,16 +1740,49 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
 void pull_model(const std::string & name) {
     const Config cfg = load_config();
     ApiClient    api(cfg);
-    do_pull(api, name, "", true);
+    do_pull(api, name, "", true, false);
 }
 
 int cmd_pull(const std::vector<std::string> & args, ApiClient & api) {
     try {
-        const ParsedArgs o = parse_simple(args, {"--insecure", "--draft", "--no-draft"}, {"--quant", "-q"});
+        const ParsedArgs o =
+            parse_simple(args, {"--insecure", "--draft", "--no-draft", "--yes", "-y"}, {"--quant", "-q"});
         if (o.pos.empty()) {
             die("Error: requires at least 1 arg(s), only received 0");
         }
-        do_pull(api, o.pos[0], first_of({o.val("--quant"), o.val("-q")}), !o.has_flag("--no-draft"));
+        do_pull(api, o.pos[0], first_of({o.val("--quant"), o.val("-q")}), !o.has_flag("--no-draft"),
+                o.has_flag("--yes") || o.has_flag("-y"));
+        return 0;
+    } catch (const CliExit & e) {
+        return e.code;
+    }
+}
+
+int cmd_rco(const std::vector<std::string> & args, ApiClient & api) {
+    try {
+        const ParsedArgs o = parse_simple(args, {}, {"--quant", "-q", "--imatrix"});
+        if (o.pos.empty() || o.pos[0] != "convert") {
+            std::fprintf(stderr,
+                         "Usage: %s rco convert <model|file> [--quant RCO-3] [--imatrix <file|repo>]\n"
+                         "\n"
+                         "Assembles a custom build from a model already on this machine instead of\n"
+                         "downloading one. The source has to be wider than the build being asked for.\n",
+                         prog().c_str());
+            return 1;
+        }
+        if (o.pos.size() < 2) {
+            die("Error: requires a model or a .gguf to convert");
+        }
+        need_server(api);
+        const std::string quant = first_of({o.val("--quant"), o.val("-q"), "RCO-3"});
+        json              body  = {{"convert", o.pos[1]}, {"quant", quant}, {"stream", true}};
+        if (const std::string im = o.val("--imatrix"); !im.empty()) {
+            body["imatrix"] = im;
+        }
+        const std::string made = pull_stream(api, body);
+        if (made.empty()) {
+            return 1;
+        }
         return 0;
     } catch (const CliExit & e) {
         return e.code;
@@ -2182,6 +2215,10 @@ bool dispatch(const std::string & cmd, const std::vector<std::string> & args, Co
     }
     if (name == "ps") {
         exit_code = cmd_ps(args, api, cfg);
+        return true;
+    }
+    if (name == "rco") {
+        exit_code = cmd_rco(args, api);
         return true;
     }
     if (name == "show") {

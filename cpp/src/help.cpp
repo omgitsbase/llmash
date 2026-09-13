@@ -54,6 +54,7 @@ Available Commands:
   ps           List running models
   cp           Copy a model
   rm           Remove a model
+  rco convert  Assemble a custom build from a model already here
   launch       Launch the Ollama menu or an integration
   link         Expose the server publicly over Tailscale Funnel
   unlink       Take the public API back down
@@ -256,6 +257,7 @@ Usage:
 Flags:
   -h, --help       help for pull
   -q, --quant Q    which build of a Hugging Face repository to take (Q4_K_M, IQ4_XS, Q8_0 ...)
+  -y, --yes        ask nothing: take the default build and the best drafter
       --insecure   Use an insecure registry
       --no-draft   do not offer to fetch a draft model afterwards
 
@@ -265,6 +267,26 @@ one directly. Files come down over several connections at once.
 
 RCO-<bits> asks for a build assembled here at that many bits a weight. The
 list offers a ladder of widths; --quant takes any of them, RCO-4.2 included.
+It is quantized from the narrowest published build that still sits clear of
+the target, so a three-bit build reads a Q6_K rather than a Q8_0.
+
+`rco convert` makes the same build from a model already on this machine.
+)HELP";
+
+const std::string k_rco_help = R"HELP(Assemble a custom build from a model already here
+
+Usage:
+  ollama rco convert MODEL [flags]
+
+Flags:
+  -h, --help          help for rco
+  -q, --quant Q       the width to build, RCO-3 by default
+      --imatrix X     a .gguf or .dat of importance weights, or the repo holding one
+
+MODEL is a name from `list` or a path to a .gguf. The source has to be wider
+than the build being asked for, by two bits: a Q6_K converts to RCO-3, a Q4_K_M
+does not. Nothing is downloaded except the importance matrix, which is read off
+the source's own metadata when it records where it came from.
 )HELP";
 
 const std::string k_push_help = R"HELP(Push a model to a registry
@@ -424,6 +446,7 @@ const std::unordered_map<std::string, std::string> & command_help_map() {
         {"run", k_run_help + k_host_env},
         {"stop", k_stop_help + k_host_env},
         {"pull", k_pull_help + k_host_env},
+        {"rco", k_rco_help + k_host_env},
         {"push", k_push_help + k_host_env},
         {"signin", k_signin_help},
         {"signout", k_signout_help},
