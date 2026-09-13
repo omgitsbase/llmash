@@ -9,6 +9,22 @@
 namespace llmash {
 
 bool is_console_stdin() { return stdin_is_terminal(); }
+
+bool driven_by_agent() {
+    // What the harnesses put in the environment. AI_AGENT is the generic one;
+    // the rest are the tools seen setting something of their own.
+    static const char * const markers[] = {
+        "AI_AGENT",      "CLAUDECODE",       "CLAUDE_CODE_ENTRYPOINT", "CURSOR_TRACE_ID",
+        "AIDER_MODEL",   "GITHUB_COPILOT_AGENT", "OPENAI_AGENT",       "CODEX_SANDBOX",
+        "REPLIT_AGENT",  "DEVIN_SESSION_ID", "CI",
+    };
+    for (const char * m : markers) {
+        if (const char * v = std::getenv(m); v != nullptr && *v != '\0' && std::string(v) != "0") {
+            return true;
+        }
+    }
+    return false;
+}
 bool is_console_stdout() { return stdout_is_terminal(); }
 
 int raw_getch() { return raw_key(); }
