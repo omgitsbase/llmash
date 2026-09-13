@@ -204,6 +204,40 @@ has_gpu() {
 }
 has_vulkan() { ldconfig -p 2>/dev/null | grep -q 'libvulkan\.so\.1'; }
 
+# The runtime is llama.cpp, whose licence has to travel with the binaries.
+runtime_notice() {
+    [ -d "$1" ] || return 0
+    $SUDO tee "$1/LICENSE.llama.cpp.txt" >/dev/null <<'NOTICE'
+The llama-server binary and the ggml libraries in this directory are llama.cpp,
+used by llmash under the licence below. llmash itself is MIT; see the LICENSE
+file in its install root.
+
+Upstream: https://github.com/ggml-org/llama.cpp
+
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+NOTICE
+}
+
 runtime_asset() {
     if [ "$ARCH" = arm64 ]; then cpu=ubuntu-arm64; vk=ubuntu-vulkan-arm64
     else                         cpu=ubuntu-x64;   vk=ubuntu-vulkan-x64; fi
@@ -244,6 +278,7 @@ else
         $SUDO mkdir -p "$LIB/runtime"
         $SUDO cp -a "$(dirname "$src")/." "$LIB/runtime/"
         $SUDO chmod +x "$LIB/runtime/llama-server"
+        runtime_notice "$LIB/runtime"
         say "$(basename "$url")"
 
         lmiss=$(ldd "$LIB/runtime/llama-server" 2>/dev/null | awk '/not found/{print $1}')

@@ -505,6 +505,14 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
                     static_cast<double>(custom.fetch) / static_cast<double>(ref->size), kReset);
         std::printf("  %sholds more of the model than any published build its size.%s\n", kDim, kReset);
     }
+    if (const double gap = rco_quality_gap(rco_bpw_of_quant(custom.name)); gap >= 0.05) {
+        std::printf("\n  %sExpect about %.1f%% below the fp8 original on reasoning, maths and code,%s\n", kDim, gap,
+                    kReset);
+        std::printf("  %sfrom the published results for this method at this width.%s\n", kDim, kReset);
+    } else {
+        std::printf("\n  %sAt this width the published results for this method sit level with the%s\n", kDim, kReset);
+        std::printf("  %sfp8 original on reasoning, maths and code.%s\n", kDim, kReset);
+    }
     for (;;) {
         std::printf("\nBuild it? [Y/n] ");
         const int k = read_pick([]() { return raw_getch(); });
@@ -527,7 +535,10 @@ std::string choose_width(const std::vector<QuantInfo> & custom, const std::vecto
     std::vector<std::string> rows;
     int                      cursor = 0;
     for (size_t i = 0; i < rungs.size(); i++) {
-        rows.push_back(build_row("", rungs[i]));
+        // every rung is read from the same source, so the bandwidth is the same
+        // on all of them; what separates them is the size kept and the quality
+        rows.push_back(pad_to(rungs[i].name, 12, true) + " " + pad_to(human_bytes(rungs[i].size), 8, false) +
+                       "   " + rco_quality_text(rco_bpw_of_quant(rungs[i].name)));
         if (equal_fold(rungs[i].name, start)) {
             cursor = static_cast<int>(i);
         }
@@ -1055,6 +1066,36 @@ ParsedArgs parse_simple(const std::vector<std::string> & args, const std::vector
 }
 
 // ------------------------------------------------------- pure logic units
+
+double rco_quality_gap(double bpw) {
+    // bits a weight against percent below the fp8 original
+    static constexpr double kPts[][2] = {{2.50, 6.4}, {2.75, 2.6}, {3.00, 0.7}, {3.47, 0.1}};
+    static constexpr size_t kN        = sizeof(kPts) / sizeof(kPts[0]);
+
+    if (bpw >= kPts[kN - 1][0]) {
+        return 0.0;
+    }
+    if (bpw <= kPts[0][0]) {
+        return kPts[0][1];
+    }
+    for (size_t i = 1; i < kN; i++) {
+        if (bpw <= kPts[i][0]) {
+            const double t = (bpw - kPts[i - 1][0]) / (kPts[i][0] - kPts[i - 1][0]);
+            return kPts[i - 1][1] + t * (kPts[i][1] - kPts[i - 1][1]);
+        }
+    }
+    return 0.0;
+}
+
+std::string rco_quality_text(double bpw) {
+    const double gap = rco_quality_gap(bpw);
+    if (gap < 0.05) {
+        return "matches fp8";
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f%% under fp8", gap);
+    return buf;
+}
 
 const QuantInfo * nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size) {
     const QuantInfo * best = nullptr;
