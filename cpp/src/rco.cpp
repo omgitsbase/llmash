@@ -44,6 +44,7 @@ using row_fn    = size_t (*) (int, int64_t);
 using blck_fn   = int64_t (*) (int);
 using tsize_fn  = size_t (*) (int);
 using takes_fn  = bool (*) (int, int64_t, bool);
+using requant_fn = size_t (*) (int, const void *, int, void *, int64_t, int64_t, const float *);
 
 void * open_lib(const std::string & path) {
 #ifdef _WIN32
@@ -153,12 +154,14 @@ bool Ggml::load(const Config & cfg, std::string & err) {
         cuda_ = open_lib(fs::absolute(cu, ec).string());
         if (cuda_ != nullptr) {
             cuda_quant_ = symbol(cuda_, "ggml_cuda_quantize_chunk");
-            cuda_takes_ = symbol(cuda_, "ggml_cuda_quantize_supported");
+            cuda_takes_   = symbol(cuda_, "ggml_cuda_quantize_supported");
+            cuda_requant_ = symbol(cuda_, "ggml_cuda_requantize_chunk");
             if (cuda_quant_ == nullptr || cuda_takes_ == nullptr) {
                 close_lib(cuda_);
                 cuda_       = nullptr;
                 cuda_quant_ = nullptr;
-                cuda_takes_ = nullptr;
+                cuda_takes_   = nullptr;
+                cuda_requant_ = nullptr;
             }
         }
     }
@@ -184,6 +187,14 @@ bool Ggml::is_gpu(int type, int64_t n_per_row, bool has_imatrix) const {
         return false;
     }
     return reinterpret_cast<takes_fn>(cuda_takes_)(type, n_per_row, has_imatrix);
+}
+
+size_t Ggml::requantize(int src_type, const void * src, int dst_type, void * dst, int64_t nrows, int64_t n_per_row,
+                        const float * imatrix) const {
+    if (cuda_requant_ == nullptr) {
+        return 0;
+    }
+    return reinterpret_cast<requant_fn>(cuda_requant_)(src_type, src, dst_type, dst, nrows, n_per_row, imatrix);
 }
 
 size_t Ggml::quantize(int type, const float * src, void * dst, int64_t nrows, int64_t n_per_row,

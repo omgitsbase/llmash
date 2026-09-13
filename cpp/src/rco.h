@@ -45,6 +45,11 @@ public:
 
     size_t quantize(int type, const float * src, void * dst, int64_t nrows, int64_t n_per_row,
                     const float * imatrix) const;
+
+    // Straight from the source's own bytes, expanded on the device. Returns 0
+    // when the runtime has no such path and the caller should dequantize.
+    size_t requantize(int src_type, const void * src, int dst_type, void * dst, int64_t nrows, int64_t n_per_row,
+                      const float * imatrix) const;
     void   dequantize(int type, const void * src, float * dst, int64_t n) const;
 
 private:
@@ -57,6 +62,7 @@ private:
     void * cuda_       = nullptr;
     void * cuda_quant_ = nullptr;
     void * cuda_takes_ = nullptr;
+    void * cuda_requant_ = nullptr;
 };
 
 // The types a search may assign, widest first.

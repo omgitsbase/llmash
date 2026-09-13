@@ -1621,12 +1621,15 @@ namespace {
 // (190 MB) this keeps the whole conversion near 350 MB; the largest single
 // tensor in that model is 2 GB as float, so whole-tensor buffers were never
 // an option.
-constexpr int64_t BLOCK_BYTES = 16ll << 20;
+// Tunable because the right size depends on the line: throughput is the bytes
+// in flight over the round trip, and a range request costs about a second
+// before its first byte whatever its size.
+int64_t block_bytes() { return (std::max<int64_t>)(1, env_int("LLMASH_RCO_BLOCK_MB", 48)) << 20; }
 
 // One request per half block. Eight small pieces per block put forty
-// requests in flight and Hugging Face refused them; ten large ones move the
-// same bytes.
-constexpr int64_t PIECE_BYTES = 8ll << 20;
+// requests in flight and Hugging Face refused them; the same bytes in fewer,
+// larger pieces do not.
+int64_t piece_bytes() { return (std::max<int64_t>)(1, env_int("LLMASH_RCO_PIECE_MB", 24)) << 20; }
 
 std::string mmss(double seconds) {
     const int s = static_cast<int>(seconds);
@@ -1873,7 +1876,7 @@ std::vector<RowBlock> plan_blocks(const ggufio::Layout & l, const rco::Ggml & g,
             continue;
         }
         const int64_t src_row = static_cast<int64_t>(g.row_size(static_cast<int>(t.type), t.dims[0]));
-        int64_t       step    = src_row > 0 ? BLOCK_BYTES / src_row : rows;
+        int64_t       step    = src_row > 0 ? block_bytes() / src_row : rows;
         step                  = (std::max<int64_t>)(1, (std::min)(step, rows));
         for (int64_t at = 0; at < rows; at += step) {
             out.push_back(RowBlock{i, at, (std::min)(step, rows - at)});
@@ -2121,9 +2124,14 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
                     m.floor_bits = rco::floor_bits(t.name);
                     // The types below a tensor's floor are also the slowest, and a
                     // row that does not divide 256 can only take a 32-block type.
+                    // Nothing wider than the source either: the information is
+                    // not there to keep, and a Q6_K source was being written
+                    // back out as q8_0 for 36 of its tensors.
+                    const double have = rco::bits_of_type(ggml, static_cast<int>(t.type));
                     std::vector<int> mine;
                     for (const int ty : rco::candidates_for_row(ggml, types, t.dims[0])) {
-                        if (rco::bits_of_type(ggml, ty) >= m.floor_bits) {
+                        const double bits = rco::bits_of_type(ggml, ty);
+                        if (bits >= m.floor_bits && (have <= 0 || bits <= have)) {
                             mine.push_back(ty);
                         }
                     }
@@ -2247,7 +2255,7 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
         return std::async(std::launch::async, [&, i, slot] {
             return fetch_span(src.urls[layout.tensors[blocks[i].tensor].part],
                               block_from(blocks[i]), block_bytes(blocks[i]), &buf[slot][0], nullptr, job_err[slot],
-                              PIECE_BYTES);
+                              piece_bytes());
         });
     };
 
@@ -2260,7 +2268,7 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
     for (size_t k = 0; k < static_cast<size_t>(depth) && k < blocks.size(); k++) {
         job[k] = start_fetch(k, k);
     }
-    double wait_sec = 0;
+    double wait_sec = 0, deq_sec = 0, quant_sec = 0, write_sec = 0;
 
     for (size_t i = 0; i < blocks.size(); i++) {
         const size_t     slot = i % static_cast<size_t>(depth);
@@ -2288,7 +2296,6 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
             const int64_t n_per   = t.dims[0];
             const size_t  src_row = ggml.row_size(static_cast<int>(t.type), n_per);
             const size_t  dst_row = ggml.row_size(ty, n_per);
-            fbuf.resize(static_cast<size_t>(b.rows * n_per));
             qbuf.assign(dst_row * static_cast<size_t>(b.rows) + 64, 0);
 
             // Every thread takes a run of rows inside one expert: a dense
@@ -2298,6 +2305,10 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
             // Per tensor, not per build: the GPU carries some of the types and
             // leaves the rest, and the ones it leaves still want the pool.
             const bool on_gpu = ggml.is_gpu(ty, n_per, weights(t.name, n_per, 0) != nullptr);
+            // Four bytes a weight, and only the CPU path ever reads it.
+            if (!on_gpu) {
+                fbuf.resize(static_cast<size_t>(b.rows * n_per));
+            }
             struct Run {
                 int64_t from, rows, expert;
             };
@@ -2317,7 +2328,28 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
             }
             std::atomic<size_t>      nr{0};
             std::vector<std::thread> pool;
+            const auto t_stage = std::chrono::steady_clock::now();
+            // Sending the source as it stands is a quarter of the bus traffic
+            // of sending its expansion, and leaves the cores out of it.
+            bool done_on_device = false;
             if (on_gpu) {
+                done_on_device = true;
+                for (const Run & r : runs) {
+                    if (ggml.requantize(static_cast<int>(t.type), data.data() + src_row * static_cast<size_t>(r.from),
+                                        ty, qbuf.data() + dst_row * static_cast<size_t>(r.from), r.rows, n_per,
+                                        weights(t.name, n_per, r.expert)) == 0) {
+                        done_on_device = false;
+                        break;
+                    }
+                }
+                if (done_on_device) {
+                    quant_sec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_stage).count();
+                }
+            }
+            if (done_on_device) {
+                // nothing left to do for this block
+            } else if (on_gpu) {
+                fbuf.resize(static_cast<size_t>(b.rows * n_per));
                 // Expanding still belongs to the cores, in slices of its own,
                 // and only then does the whole run go over at once.
                 const int64_t slice = (std::max<int64_t>)(1, (b.rows + nthread - 1) / nthread);
@@ -2335,11 +2367,14 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
                 for (auto & p : pool) {
                     p.join();
                 }
+                const auto t_deq = std::chrono::steady_clock::now();
+                deq_sec += std::chrono::duration<double>(t_deq - t_stage).count();
                 for (const Run & r : runs) {
                     ggml.quantize(ty, fbuf.data() + r.from * n_per,
                                   qbuf.data() + dst_row * static_cast<size_t>(r.from), r.rows, n_per,
                                   weights(t.name, n_per, r.expert));
                 }
+                quant_sec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_deq).count();
             } else {
                 for (int w = 0; w < nthread; w++) {
                     pool.emplace_back([&] {
@@ -2363,10 +2398,13 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
                 for (auto & p : pool) {
                     p.join();
                 }
+                quant_sec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_stage).count();
             }
-            const int64_t qbytes = static_cast<int64_t>(ggml.row_size(ty, n_per)) * b.rows;
+            const auto    t_write = std::chrono::steady_clock::now();
+            const int64_t qbytes  = static_cast<int64_t>(ggml.row_size(ty, n_per)) * b.rows;
             out.write(reinterpret_cast<const char *>(qbuf.data()), qbytes);
             written += qbytes;
+            write_sec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_write).count();
         }
         if (!out) {
             emit(error_obj("could not write " + tmp));
@@ -2440,6 +2478,8 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
                              " choosing bit widths, " + mmss(wait_sec) +
                              (src.local ? " waiting on the disk, " : " waiting on the download, ") +
                              mmss((std::max)(0.0, total_sec - plan_sec - wait_sec)) + " quantizing"}});
+    emit(json{{"status", "  " + pad_right("", 12) + "of which " + mmss(deq_sec) + " expanding the source, " +
+                             mmss(quant_sec) + " quantizing, " + mmss(write_sec) + " writing"}});
     emit(json{{"status", "  " + pad_right("", 12) + human_bytes(fetched) + " read at " +
                              human_bytes(static_cast<int64_t>(total_sec > 0 ? static_cast<double>(fetched) / total_sec
                                                                             : 0)) +
