@@ -165,6 +165,7 @@ int main() {
     check(e["size"] == 4661000000ULL, "tagEntry: size in bytes");
     eq(e.value("digest", ""), "abc123", "tagEntry: the sha256: prefix is stripped");
     check(e["loadable"] == true, "tagEntry: loadable flag");
+    check(e["incomplete"] == false, "tagEntry: a finished model is not incomplete");
     check(e["capabilities"] == json::array({"completion", "tools"}), "tagEntry: capabilities");
     const json d = e["details"];
     eq(d.value("parent_model", "x"), "", "tagEntry.details: parent_model empty");
@@ -177,7 +178,7 @@ int main() {
     check(d["expert_count"] == 128, "tagEntry.details: expert_count");
     check(d["expert_used_count"] == 8, "tagEntry.details: expert_used_count");
     check(d.size() == 9, "tagEntry.details: no extra fields");
-    check(e.size() == 8, "tagEntry: no extra fields");
+    check(e.size() == 9, "tagEntry: no extra fields");
     {
         Model plain = m;
         plain.caps.clear();
@@ -479,6 +480,18 @@ int main() {
         const DeleteOutcome pd = run_delete(pulled, dcfg);
         check(pd.status == 200, "delete: a model llmash pulled is removed even though it is in_library");
         check(!fs::exists(pulled.path), "delete: the pulled file is gone");
+
+        // The sweep below matches `.gguf`, which a `.part` is not, so a
+        // stopped download needs its own branch or rm finds nothing to do.
+        Model half       = m;
+        half.name        = "half:rco-3.partial";
+        half.path        = (fs::path(dcfg.gguf_dir) / "Half-RCO-3.gguf.part").string();
+        half.in_library  = true;
+        half.incomplete  = true;
+        write_file(half.path, "half the weights");
+        const DeleteOutcome hd = run_delete(half, dcfg);
+        check(hd.status == 200, "delete: a stopped download is removed");
+        check(!fs::exists(half.path), "delete: the .part file is gone");
     }
 
     // An Ollama-store model: a manifest naming blobs with no .gguf extension.

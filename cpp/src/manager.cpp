@@ -1210,6 +1210,10 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         err = "missing from disk";
         return nullptr;
     }
+    if (m->incomplete) {
+        err = name + " is a download that did not finish; pull it again, or rm it to free the space";
+        return nullptr;
+    }
     if (ctx <= 0) {
         ctx = cfg_.ctx > 0 ? cfg_.ctx : 8192;
     }

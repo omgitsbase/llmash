@@ -58,7 +58,11 @@ std::string render_list(const std::vector<json> & rows) {
     const double now = seconds_now();
     Table        t({"NAME", "ID", "SIZE", "MODIFIED"});
     for (const auto & m : rows) {
-        t.add({field(m, "name"), first12(field(m, "digest")),
+        const auto        inc = m.find("incomplete");
+        const bool        partial = inc != m.end() && inc->is_boolean() && inc->get<bool>();
+        // A half-written file has no digest worth printing, so the column says
+        // what it is instead.
+        t.add({field(m, "name"), partial ? "incomplete" : first12(field(m, "digest")),
                human_bytes(static_cast<int64_t>(number(m, "size"))),
                human_time_iso(field(m, "modified_at"), "Never", now)});
     }

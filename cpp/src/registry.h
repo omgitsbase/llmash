@@ -19,6 +19,7 @@ struct Model {
     uint64_t    size = 0;
     bool        has_mtp = false;
     bool        in_library = false;   // read-only: never deleted from
+    bool        incomplete = false;   // a `.part` file: listed and removable, never loaded
     std::string mtp_path;             // a sidecar drafter, when there is one
     // An Ollama-store model is a manifest plus shared blobs, so `path` alone
     // cannot delete it. Empty for a loose GGUF.
@@ -67,6 +68,12 @@ private:
 
 // Subfolders included, hidden folders and links skipped.
 std::vector<std::string> walk_gguf(const std::string & dir);
+
+// The `<name>.gguf.part` files a stopped pull left behind.
+std::vector<std::string> walk_partials(const std::string & dir);
+
+// loose_name with `.partial` appended to the tag.
+std::string partial_name(const std::string & path);
 
 // The display name a loose file gets when nothing else names it.
 std::string loose_name(const std::string & path);
