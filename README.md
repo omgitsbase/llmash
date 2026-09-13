@@ -88,12 +88,6 @@ tenth of a token per second.
 | vLLM | AWQ int4, 20 GB | 72.7 | 73.4 | 86.6 |
 | **llmash**\* | RCO-3, 9.6 GB | **153.2** | **170.1** | **178.3** |
 
-**_probe**
-
-| backend | build | conversation | coding | thinking |
-|---|---|--:|--:|--:|
-| Ollama | x | 97.3 | 91.5 | 88.6 |
-
 Tokens per second while generating, median of five runs, excluding model load and prompt processing. Ollama's rows are from one model load; between loads they drift by about a tenth.
 
 \* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs int4 weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
