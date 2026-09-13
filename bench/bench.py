@@ -147,8 +147,13 @@ def load_results():
 def save(args, rows):
     data = load_results()
     model = data["models"].setdefault(args.label or args.model, {})
-    model[args.backend] = {"measured": time.strftime("%Y-%m-%d"), "model_id": args.model,
-                           "workloads": {r["workload"]: r["tok_s"] for r in rows}}
+    entry = {"measured": time.strftime("%Y-%m-%d"), "model_id": args.model,
+             "workloads": {r["workload"]: r["tok_s"] for r in rows}}
+    if args.build:
+        entry["build"] = args.build
+    elif "build" in model.get(args.backend, {}):
+        entry["build"] = model[args.backend]["build"]
+    model[args.backend] = entry
     RESULTS.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -170,10 +175,19 @@ def table():
             bold = "**" if key == "llmash" else ""
             cells = " | ".join(f"{bold}{w[c]:.1f}{bold}" if c in w else "-" for c in cols)
             build = backends[key].get("build", "") or "-"
-            out.append(f"| {bold}{name}{bold} | {build} | {cells} |")
+            star = "\*" if key == "llmash" else ""
+            out.append(f"| {bold}{name}{bold}{star} | {build} | {cells} |")
         out.append("")
-    out.append("Tokens per second while generating, median of three runs, "
+    out.append("Tokens per second while generating, median of five runs, "
                "excluding model load and prompt processing.")
+    out.append("")
+    out.append("\\* llmash runs a custom build: one quantization type chosen per tensor "
+               "under a size budget, assembled on this machine. It is not one of the "
+               "published files, and no other runtime has an equivalent. Each row is what "
+               "that tool hands you: Ollama its own Q8_0 pull, whose manifests carry no "
+               "draft model; vLLM its int4 weights with speculative decoding; llmash the "
+               "build a pull assembles, with the drafter and launch settings it chooses "
+               "itself.")
     return "\n".join(out)
 
 
@@ -197,6 +211,7 @@ def main():
                         "openai: /v1 streamed, timed between first and last token.")
     p.add_argument("--model")
     p.add_argument("--label", help="how the model is named in the table")
+    p.add_argument("--build", help="the file this row ran, e.g. \"RCO-3, 9.6 GB\"")
     p.add_argument("--max-tokens", type=int, default=600)
     p.add_argument("--min-tokens", type=int, default=64)
     p.add_argument("--temperature", type=float, default=0.0)

@@ -3,23 +3,87 @@
     "gemma-4 26B-A4B": {
       "ollama": {
         "measured": "2026-09-13",
-        "model_id": "bench-gemma4-q8",
-        "build": "Q8_0, 25 GB",
+        "model_id": "gemma4:26b-a4b-it-q8_0",
         "workloads": {
-          "conversation": 175.1,
-          "coding": 176.8,
-          "thinking": 178.1
-        }
+          "conversation": 198.6,
+          "coding": 199.1,
+          "thinking": 197.5
+        },
+        "build": "Q8_0, 28.1 GB"
       },
       "llmash": {
         "measured": "2026-09-13",
         "model_id": "gemma-4-26b-a4b-it:rco-3",
-        "build": "RCO-3, 13.9 GB",
         "workloads": {
-          "conversation": 236.8,
-          "coding": 368.7,
-          "thinking": 421.2
-        }
+          "conversation": 333.2,
+          "coding": 449.5,
+          "thinking": 445.5
+        },
+        "build": "RCO-3, 8.9 GB"
+      }
+    },
+    "Qwen3.6 35B-A3B": {
+      "ollama": {
+        "measured": "2026-09-13",
+        "model_id": "qwen3.6:35b-a3b-q8_0",
+        "workloads": {
+          "conversation": 204.5,
+          "coding": 204.6,
+          "thinking": 207.2
+        },
+        "build": "Q8_0, 38.7 GB"
+      },
+      "vllm": {
+        "measured": "2026-09-13",
+        "model_id": "qwen36",
+        "workloads": {
+          "conversation": 344.6,
+          "coding": 382.5,
+          "thinking": 538.6
+        },
+        "build": "AWQ int4, 24 GB"
+      },
+      "llmash": {
+        "measured": "2026-09-13",
+        "model_id": "qwen3.6-35b-a3b-ud-xl:rco-3",
+        "workloads": {
+          "conversation": 455.0,
+          "coding": 534.3,
+          "thinking": 569.3
+        },
+        "build": "RCO-3, 12.5 GB"
+      }
+    },
+    "Qwen3.8 27B": {
+      "ollama": {
+        "measured": "2026-09-13",
+        "model_id": "qwen3.8:27b-q8_0",
+        "workloads": {
+          "conversation": 50.1,
+          "coding": 50.1,
+          "thinking": 50.0
+        },
+        "build": "Q8_0, 29.0 GB"
+      },
+      "vllm": {
+        "measured": "2026-09-13",
+        "model_id": "qwen38",
+        "workloads": {
+          "conversation": 72.7,
+          "coding": 73.4,
+          "thinking": 86.6
+        },
+        "build": "AWQ int4, 20 GB"
+      },
+      "llmash": {
+        "measured": "2026-09-13",
+        "model_id": "qwen3.8-27b:rco-3",
+        "workloads": {
+          "conversation": 153.2,
+          "coding": 170.1,
+          "thinking": 178.3
+        },
+        "build": "RCO-3, 9.6 GB"
       }
     }
   }

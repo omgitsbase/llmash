@@ -50,14 +50,18 @@ This is the same setting as `OLLAMA_MODELS`.
 
 ## Speed
 
-One GPU, an RTX PRO 6000 Blackwell with 96 GB: same prompts, every backend run
-as it comes with no hand tuning. Your numbers will differ.
+One GPU, an RTX PRO 6000 Blackwell with 96 GB: same prompts, each backend serving
+what it hands you by default. Your numbers will differ.
 
-The two rows are not the same file. llmash runs the build it assembles, which is
-what you get when you pull; Ollama runs the fp8 that build is made from. So most
-of the gap is bytes read rather than engine, and the point of the comparison is
+The rows are not the same file, and that is the comparison. Ollama pulls its own
+Q8_0; vLLM runs int4 with speculative decoding; llmash runs the build it
+assembles. So much of the gap is bytes read rather than engine, and the point is
 that the smaller file answers as well: at 3 bits the published results for this
 method sit 0.7% under fp8.
+
+Only the llmash and vLLM rows move between runs, by as much as a third. Both
+speculate, and a drafter's throughput depends on how predictable the text is;
+Ollama, with no draft model, repeats to a tenth of a token per second.
 
 <!-- BENCHMARK -->
 
@@ -65,15 +69,37 @@ method sit 0.7% under fp8.
 
 | backend | build | conversation | coding | thinking |
 |---|---|--:|--:|--:|
-| Ollama | Q8_0, 25 GB | 175.1 | 176.8 | 178.1 |
-| **llmash** | RCO-3, 13.9 GB | **236.8** | **368.7** | **421.2** |
+| Ollama | Q8_0, 28.1 GB | 198.6 | 199.1 | 197.5 |
+| **llmash**\* | RCO-3, 8.9 GB | **333.2** | **449.5** | **445.5** |
 
-Tokens per second while generating, median of three runs, excluding model load and prompt processing.
+**Qwen3.6 35B-A3B**
+
+| backend | build | conversation | coding | thinking |
+|---|---|--:|--:|--:|
+| Ollama | Q8_0, 38.7 GB | 204.5 | 204.6 | 207.2 |
+| vLLM | AWQ int4, 24 GB | 344.6 | 382.5 | 538.6 |
+| **llmash**\* | RCO-3, 12.5 GB | **455.0** | **534.3** | **569.3** |
+
+**Qwen3.8 27B**
+
+| backend | build | conversation | coding | thinking |
+|---|---|--:|--:|--:|
+| Ollama | Q8_0, 29.0 GB | 50.1 | 50.1 | 50.0 |
+| vLLM | AWQ int4, 20 GB | 72.7 | 73.4 | 86.6 |
+| **llmash**\* | RCO-3, 9.6 GB | **153.2** | **170.1** | **178.3** |
+
+Tokens per second while generating, median of five runs, excluding model load and prompt processing.
+
+\* llmash runs a custom build: one quantization type chosen per tensor under a size budget, assembled on this machine. It is not one of the published files, and no other runtime has an equivalent. Each row is what that tool hands you: Ollama its own Q8_0 pull, whose manifests carry no draft model; vLLM its int4 weights with speculative decoding; llmash the build a pull assembles, with the drafter and launch settings it chooses itself.
 
 <!-- /BENCHMARK -->
 
-Only gemma-4 is measured on this pairing so far; the other models need a source
-repository recorded before a custom build can be made of them.
+vLLM is the native Windows build on int4 weights, with the draft model it ships
+for Qwen3.6 and n-gram lookup otherwise. Its fp8 path is not an option on this
+card: it has only the Ampere w8a8 kernel compiled in and aborts in
+`cutlass_scaled_mm_sm80_epilogue` on Blackwell. gemma-4 has no vLLM row at all,
+because `head_dim` varies per layer in that architecture and the loader refuses
+it.
 
 ## How it fits together
 
@@ -149,14 +175,26 @@ Published GSQ-RCO figures on Qwen3.8-27B, the mean of AIME25, GPQA-Diamond and
 LiveCodeBench v6, against an fp8 original scoring 91.87. They measure the method,
 not this implementation.
 
-The source is the repository's Q8_0, read a block at a time and dropped once
-quantized, so nothing but the result reaches disk and the conversion holds
-about 350 MB. Qwen3.6-35B-A3B goes from 37 GB to 17 GB in 17 minutes. A
-finished build reports how long it spent choosing widths, waiting on the
-download and quantizing, which is what says whether more cores or a faster
-link would change anything.
+The source is the narrowest published build that still sits clear of the target,
+so a three-bit build reads a Q6_K rather than a Q8_0 and moves a quarter fewer
+bytes. It is read a block at a time and dropped once quantized, so nothing but
+the result reaches disk. Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes,
+of which 10 are the download.
 
-It needs ggml, which comes with the llama.cpp runtime beside `llama-server`.
+The quantizing itself runs on the GPU where the runtime carries it, which is
+every type a custom build reaches for, and the source crosses the bus still
+quantized rather than as its four-byte expansion. gemma-4 26B quantizes in 1:12
+that way against 9:44 on the cores, and the output is byte-identical either way.
+Anything the GPU does not carry falls back per tensor, so a CPU-only runtime
+still works.
+
+A finished build reports how long it spent choosing widths, waiting on the
+download and quantizing, which is what says whether more cores or a faster link
+would change anything.
+
+`rco convert` does the same from a model already on disk, with no download at
+all. It needs ggml, which comes with the llama.cpp runtime beside
+`llama-server`.
 
 ## Speculation
 
