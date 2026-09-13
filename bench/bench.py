@@ -164,8 +164,7 @@ def table():
     out = []
     for label, backends in data["models"].items():
         out.append(f"**{label}**\n")
-        # the build is a column because the backends are not on the same one:
-        # llmash runs what it assembles, the others run the fp8 it starts from
+        # the build is a column because the rows are different files
         out.append("| backend | build | conversation | coding | thinking |")
         out.append("|---|---|--:|--:|--:|")
         for key, name in order:
@@ -179,15 +178,14 @@ def table():
             out.append(f"| {bold}{name}{bold}{star} | {build} | {cells} |")
         out.append("")
     out.append("Tokens per second while generating, median of five runs, "
-               "excluding model load and prompt processing.")
+               "excluding model load and prompt processing. Ollama's rows are from one "
+               "model load; between loads they drift by about a tenth.")
     out.append("")
-    out.append("\\* llmash runs a custom build: one quantization type chosen per tensor "
-               "under a size budget, assembled on this machine. It is not one of the "
-               "published files, and no other runtime has an equivalent. Each row is what "
-               "that tool hands you: Ollama its own Q8_0 pull, whose manifests carry no "
-               "draft model; vLLM its int4 weights with speculative decoding; llmash the "
-               "build a pull assembles, with the drafter and launch settings it chooses "
-               "itself.")
+    out.append("\\* llmash runs a custom build: one quantization type per tensor, chosen "
+               "under a size budget and assembled on this machine. No other runtime has an "
+               "equivalent. Ollama runs its own Q8_0 pull, which ships without a draft "
+               "model; vLLM runs int4 weights with speculative decoding; llmash runs what a "
+               "pull assembles, drafter and launch settings included.")
     return "\n".join(out)
 
 
