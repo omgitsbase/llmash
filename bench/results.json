@@ -85,6 +85,18 @@
         },
         "build": "RCO-3, 9.6 GB"
       }
+    },
+    "_probe": {
+      "ollama": {
+        "measured": "2026-09-13",
+        "model_id": "qwen3.6:35b",
+        "workloads": {
+          "conversation": 97.3,
+          "coding": 91.5,
+          "thinking": 88.6
+        },
+        "build": "x"
+      }
     }
   }
 }
