@@ -43,6 +43,7 @@ using quant_fn  = size_t (*) (int, const float *, void *, int64_t, int64_t, int6
 using row_fn    = size_t (*) (int, int64_t);
 using blck_fn   = int64_t (*) (int);
 using tsize_fn  = size_t (*) (int);
+using takes_fn  = bool (*) (int, int64_t, bool);
 
 void * open_lib(const std::string & path) {
 #ifdef _WIN32
@@ -78,9 +79,20 @@ const char * ggml_base_name() {
 #endif
 }
 
+const char * ggml_cuda_name() {
+#ifdef _WIN32
+    return "ggml-cuda.dll";
+#else
+    return "libggml-cuda.so";
+#endif
+}
+
 } // namespace
 
 Ggml::~Ggml() {
+    if (cuda_ != nullptr) {
+        close_lib(cuda_);
+    }
     if (lib_ != nullptr) {
         close_lib(lib_);
     }
@@ -132,6 +144,24 @@ bool Ggml::load(const Config & cfg, std::string & err) {
             return false;
         }
     }
+
+    // The same quantizers on the GPU, if this runtime carries them. Absent on
+    // a CPU-only build and on any runtime older than they are, so nothing here
+    // is an error: the CPU path stands on its own.
+    const fs::path cu = fs::path(cfg.llama_bin).parent_path() / ggml_cuda_name();
+    if (fs::is_regular_file(cu, ec)) {
+        cuda_ = open_lib(fs::absolute(cu, ec).string());
+        if (cuda_ != nullptr) {
+            cuda_quant_ = symbol(cuda_, "ggml_cuda_quantize_chunk");
+            cuda_takes_ = symbol(cuda_, "ggml_cuda_quantize_supported");
+            if (cuda_quant_ == nullptr || cuda_takes_ == nullptr) {
+                close_lib(cuda_);
+                cuda_       = nullptr;
+                cuda_quant_ = nullptr;
+                cuda_takes_ = nullptr;
+            }
+        }
+    }
     return true;
 }
 
@@ -149,8 +179,23 @@ bool Ggml::quantized(int type) const {
     return t != nullptr && t->is_quantized;
 }
 
+bool Ggml::is_gpu(int type, int64_t n_per_row, bool has_imatrix) const {
+    if (cuda_takes_ == nullptr) {
+        return false;
+    }
+    return reinterpret_cast<takes_fn>(cuda_takes_)(type, n_per_row, has_imatrix);
+}
+
 size_t Ggml::quantize(int type, const float * src, void * dst, int64_t nrows, int64_t n_per_row,
                       const float * imatrix) const {
+    // The GPU answers 0 for a type it does not carry, which is the whole of
+    // the fallback: nothing here needs to know which types those are.
+    if (cuda_quant_ != nullptr) {
+        const size_t n = reinterpret_cast<quant_fn>(cuda_quant_)(type, src, dst, 0, nrows, n_per_row, imatrix);
+        if (n > 0) {
+            return n;
+        }
+    }
     return reinterpret_cast<quant_fn>(quant_)(type, src, dst, 0, nrows, n_per_row, imatrix);
 }
 
@@ -166,8 +211,12 @@ void Ggml::dequantize(int type, const void * src, float * dst, int64_t n) const 
 const std::vector<int> & candidates() {
     // Q8_0 at the top so a tensor that needs the source's own precision can
     // keep it: the point of a budget is to spend it unevenly.
-    static const std::vector<int> all = {GT_Q8_0,  GT_Q6_K,   GT_Q5_K,    GT_Q4_K,   GT_IQ4_XS,  GT_IQ3_S,
-                                         GT_Q2_K,  GT_IQ2_S,  GT_IQ3_XXS, GT_IQ2_XS, GT_IQ2_XXS, GT_IQ1_M};
+    // Q5_0 and IQ4_NL are the only ones below Q8_0 that a 32-wide row can take.
+    // Without them a tensor whose row does not divide 256 has nowhere to go but
+    // the source's own width, which is what kept gemma-4's experts at 8 bits.
+    static const std::vector<int> all = {GT_Q8_0,   GT_Q6_K,    GT_Q5_K,    GT_Q5_0,  GT_Q4_K,
+                                         GT_IQ4_NL, GT_IQ4_XS,  GT_IQ3_S,   GT_Q2_K,  GT_IQ2_S,
+                                         GT_IQ3_XXS, GT_IQ2_XS, GT_IQ2_XXS, GT_IQ1_M};
     return all;
 }
 
@@ -203,6 +252,17 @@ double floor_bits(const std::string & tensor) {
         return 3.0;
     }
     return 0.0;
+}
+
+std::vector<int> candidates_for_row(const Ggml & g, const std::vector<int> & types, int64_t n_per_row) {
+    std::vector<int> out;
+    for (const int ty : types) {
+        const int64_t b = g.block(ty);
+        if (b > 0 && n_per_row % b == 0) {
+            out.push_back(ty);
+        }
+    }
+    return out;
 }
 
 std::vector<int> candidates_for(const Ggml & g, double bpw) {

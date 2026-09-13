@@ -116,6 +116,24 @@ int main() {
         const std::vector<Cost> costs =
             measure(g, src.data(), rows, n_per, candidates(), im.data(), rows, 4);
         check(costs.size() == candidates().size(), "every candidate is measured");
+
+        // A row that does not divide 256 can only take a 32-block type, and
+        // there has to be something under Q8_0 for it or the tensor keeps the
+        // source's width. gemma-4's expert rows are 704.
+        const std::vector<int> narrow = candidates_for_row(g, candidates(), 704);
+        check(!narrow.empty(), "a 704-wide row has candidates");
+        for (const int t : narrow) {
+            check(704 % g.block(t) == 0, "every candidate divides the row");
+        }
+        bool under_q8 = false;
+        for (const int t : narrow) {
+            if (bits_of_type(g, t) < bits_of_type(g, GT_Q8_0)) {
+                under_q8 = true;
+            }
+        }
+        check(under_q8, "a 704-wide row can go below the source's own width");
+        const std::vector<int> wide = candidates_for_row(g, candidates(), 2048);
+        check(wide.size() == candidates().size(), "a 2048-wide row keeps every candidate");
         bool all_positive = true, ordered = true;
         for (size_t i = 0; i < costs.size(); i++) {
             all_positive = all_positive && costs[i].error > 0 && costs[i].bytes > 0;

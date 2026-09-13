@@ -19,9 +19,9 @@ namespace llmash {
 namespace rco {
 
 enum GgmlType : int {
-    GT_F32 = 0, GT_F16 = 1, GT_Q8_0 = 8, GT_Q2_K = 10, GT_Q3_K = 11, GT_Q4_K = 12, GT_Q5_K = 13,
-    GT_Q6_K = 14, GT_IQ2_XXS = 16, GT_IQ2_XS = 17, GT_IQ3_XXS = 18, GT_IQ4_NL = 20, GT_IQ3_S = 21,
-    GT_IQ2_S = 22, GT_IQ4_XS = 23, GT_IQ1_M = 29, GT_BF16 = 30,
+    GT_F32 = 0, GT_F16 = 1, GT_Q5_0 = 6, GT_Q8_0 = 8, GT_Q2_K = 10, GT_Q3_K = 11, GT_Q4_K = 12,
+    GT_Q5_K = 13, GT_Q6_K = 14, GT_IQ2_XXS = 16, GT_IQ2_XS = 17, GT_IQ3_XXS = 18, GT_IQ4_NL = 20,
+    GT_IQ3_S = 21, GT_IQ2_S = 22, GT_IQ4_XS = 23, GT_IQ1_M = 29, GT_BF16 = 30,
 };
 
 // ggml-base, found beside llama-server. Every entry point is checked against
@@ -38,17 +38,25 @@ public:
     const char * name(int type) const;
     bool         quantized(int type) const;
 
+    // Whether the runtime's CUDA backend would take this tensor. It serialises
+    // internally, so a caller should hand over whole runs of rows from one
+    // thread for the tensors it takes, and keep its pool on the rest.
+    bool is_gpu(int type, int64_t n_per_row, bool has_imatrix) const;
+
     size_t quantize(int type, const float * src, void * dst, int64_t nrows, int64_t n_per_row,
                     const float * imatrix) const;
     void   dequantize(int type, const void * src, float * dst, int64_t n) const;
 
 private:
-    void * lib_    = nullptr;
-    void * traits_ = nullptr;
-    void * quant_  = nullptr;
-    void * row_    = nullptr;
-    void * blck_   = nullptr;
-    void * tsize_  = nullptr;
+    void * lib_        = nullptr;
+    void * traits_     = nullptr;
+    void * quant_      = nullptr;
+    void * row_        = nullptr;
+    void * blck_       = nullptr;
+    void * tsize_      = nullptr;
+    void * cuda_       = nullptr;
+    void * cuda_quant_ = nullptr;
+    void * cuda_takes_ = nullptr;
 };
 
 // The types a search may assign, widest first.
@@ -56,6 +64,11 @@ const std::vector<int> & candidates();
 
 // Those of them a build at this width may use.
 std::vector<int> candidates_for(const Ggml & g, double bpw);
+
+// Those of them a row this long can hold: a k-quant or an IQ_XS type needs the
+// row to divide 256, where Q8_0, Q5_0 and IQ4_NL only need 32. A gemma-4 expert
+// row is 704, so without this every one of them keeps the source's own width.
+std::vector<int> candidates_for_row(const Ggml & g, const std::vector<int> & types, int64_t n_per_row);
 
 // What a custom build aims for by default: what an IQ3_S build weighs.
 // llama.cpp's names understate it, an "IQ3_XS" file measuring 3.85 bits a
