@@ -388,6 +388,17 @@ size_t cols(const std::string & s) {
     return n;
 }
 
+void test_rco_quality() {
+    check(rco_quality_text(3.9) == "matches fp8", "a wide build is level with the original");
+    check(rco_quality_text(5.0) == "matches fp8", "so is a wider one");
+    check(rco_quality_gap(2.75) > 2.5 && rco_quality_gap(2.75) < 2.7, "2.75 bits is the measured 2.6%");
+    check(rco_quality_gap(3.0) > 0.6 && rco_quality_gap(3.0) < 0.8, "3 bits is the measured 0.7%");
+    check(rco_quality_gap(2.875) > rco_quality_gap(3.0) && rco_quality_gap(2.875) < rco_quality_gap(2.75),
+          "a width between two measured ones falls between them");
+    check(rco_quality_gap(2.0) == rco_quality_gap(2.5), "below the measured range it holds the last figure");
+    check(rco_quality_text(2.75).find("under fp8") != std::string::npos, "the text names what it is under");
+}
+
 void test_tradeoff() {
     QuantInfo custom = Q("RCO-3.9", 996 * 1000 * 1000);
     custom.fetch     = 2200LL * 1000 * 1000;
@@ -437,6 +448,7 @@ int main() {
     test_render_tables();
     test_elide();
     test_show_info();
+    test_rco_quality();
     test_tradeoff();
     test_prog();
 

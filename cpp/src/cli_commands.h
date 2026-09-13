@@ -61,6 +61,13 @@ Tiers  tiers_of(const std::vector<QuantInfo> & quants);
 // closest to it in size, as plain lines the caller styles whole.
 const QuantInfo *        nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size);
 std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref);
+
+// How far a width falls below the fp8 original, as a percentage, from the
+// published GSQ-RCO results on Qwen3.8-27B: the mean of AIME25, GPQA-Diamond
+// and LiveCodeBench v6 against a base of 91.87. Interpolated between the four
+// measured widths; from 3.5 bits up the difference is inside the noise.
+double      rco_quality_gap(double bpw);
+std::string rco_quality_text(double bpw);
 // The quantisation tag embedded in a GGUF file name (pull.go's quantTag),
 // e.g. "Qwen3-8B-Q4_K_M-00001-of-00002.gguf" -> "Q4_K_M".
 std::string quant_tag(const std::string & file_name);
