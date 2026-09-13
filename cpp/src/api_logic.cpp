@@ -312,14 +312,15 @@ json tag_entry_json(const Model & m, const Config & cfg) {
               {"expert_count", m.experts},
               {"expert_used_count", m.experts_used}}},
         {"capabilities", caps_or_completion(m)},
-        {"loadable", loadable(m)},
+        {"loadable", loadable(m) && !m.incomplete},
+        {"incomplete", m.incomplete},
     };
 }
 
 json tags_json(const std::vector<Model> & models, const Config & cfg) {
     json rows = json::array();
     for (const auto & m : models) {
-        if (file_exists(m.path) && loadable(m)) {
+        if (file_exists(m.path) && (loadable(m) || m.incomplete)) {
             rows.push_back(tag_entry_json(m, cfg));
         }
     }
@@ -343,7 +344,7 @@ json v1_entry_json(const Model & m, const Config & cfg) {
 json v1_models_json(const std::vector<Model> & models, const Config & cfg) {
     json data = json::array();
     for (const auto & m : models) {
-        if (file_exists(m.path) && loadable(m)) {
+        if (file_exists(m.path) && loadable(m) && !m.incomplete) {
             data.push_back(v1_entry_json(m, cfg));
         }
     }
@@ -768,6 +769,18 @@ DeleteOutcome run_delete(const Model & m, const Config & cfg) {
     // and `rm` answered "nothing to delete" for a model plainly in the list.
     if (!m.manifest.empty()) {
         return delete_from_store(m);
+    }
+    if (m.incomplete) {
+        std::error_code rm;
+        if (!fs::remove(fs::path(m.path), rm) || rm) {
+            out.status = 500;
+            out.body   = error_obj("could not delete " + base_name(m.path) + ": " +
+                                 (rm ? rm.message() : std::string("file still present")));
+            return out;
+        }
+        out.status = 200;
+        out.body   = json{{"status", "success"}, {"removed", json::array({base_name(m.path)})}};
+        return out;
     }
     if (file_exists(m.path)) {
         const fs::path    dir  = fs::path(m.path).parent_path();

@@ -269,6 +269,13 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
         DeleteOutcome out = run_delete(m, cfg);
         reg.invalidate();
         st->cli.invalidate();
+        // The CLI prints `list` from this file without asking the server, and
+        // it is only rewritten when the model folder's own timestamp moves, so
+        // the row for what was just deleted would survive a couple of seconds.
+        if (out.status == 200) {
+            std::error_code rm;
+            std::filesystem::remove(std::filesystem::path(cfg.root) / "cache" / "list.txt", rm);
+        }
         write_json(res, out.status, out.body);
     });
 

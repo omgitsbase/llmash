@@ -231,7 +231,10 @@ std::string loose_name(const std::string & path) {
     return stem + ":" + tag;
 }
 
-std::vector<std::string> walk_gguf(const std::string & dir) {
+namespace {
+
+// walk_gguf and walk_partials differ only in what they keep.
+std::vector<std::string> walk_ext(const std::string & dir, bool want_part) {
     std::vector<std::string> out;
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
@@ -258,12 +261,25 @@ std::vector<std::string> walk_gguf(const std::string & dir) {
         if (it->is_symlink(ec)) {
             continue;
         }
-        if (lower(p.extension().string()) == ".gguf") {
+        const std::string ext = lower(p.extension().string());
+        const bool        part = ext == ".part" && lower(fs::path(p.stem()).extension().string()) == ".gguf";
+        if (want_part ? part : ext == ".gguf") {
             out.push_back(p.string());
         }
     }
     std::sort(out.begin(), out.end());
     return out;
+}
+
+} // namespace
+
+std::vector<std::string> walk_gguf(const std::string & dir) { return walk_ext(dir, false); }
+
+std::vector<std::string> walk_partials(const std::string & dir) { return walk_ext(dir, true); }
+
+std::string partial_name(const std::string & path) {
+    const std::string name = loose_name(fs::path(path).stem().string());
+    return name + ".partial";
 }
 
 Registry::Registry(Config cfg) : cfg_(std::move(cfg)) {}
@@ -371,6 +387,24 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out) c
         if (fs::exists(side, ec)) {
             mo.mtp_path = side.string();
         }
+        out.push_back(std::move(mo));
+    }
+
+    // A stopped pull holds its bytes whether or not anything can read them, so
+    // the header is not parsed here: only the name, the size and the date.
+    for (const auto & path : walk_partials(dir)) {
+        Model mo;
+        mo.name       = partial_name(path);
+        mo.path       = path;
+        mo.quant      = "unknown";
+        mo.in_library = true;
+        mo.incomplete = true;
+
+        std::error_code ec;
+        mo.size     = static_cast<uint64_t>(fs::file_size(path, ec));
+        mo.modified = mtime_unix(path);
+        mo.digest   = "sha256:" + sha256_hex(fs::path(path).filename().string() + ":" +
+                                             std::to_string(mo.size));
         out.push_back(std::move(mo));
     }
 }

@@ -138,6 +138,30 @@ int main(int argc, char ** argv) {
     check(model_counts.first == 1, "count_library counts the one real model as clean");
     check(model_counts.second == 1, "count_library counts the corrupt file as skipped, not clean or silently dropped");
 
+    // -------------------------------------------------- a stopped download
+
+    {
+        std::ofstream half(dir / "loose" / "Half-Model-RCO-3.gguf.part", std::ios::binary);
+        half << std::string(4096, 'x');
+    }
+    std::ofstream(dir / "loose" / "notes.txt.part", std::ios::binary) << "not a model";
+
+    const auto partials = walk_partials((dir / "loose").string());
+    check(partials.size() == 1, "walk_partials finds the .gguf.part and not other .part files");
+    check(walk_gguf((dir / "loose").string()).size() == 3, "walk_gguf still ignores .part files");
+    check(partial_name((dir / "loose" / "Half-Model-RCO-3.gguf.part").string()) == "half-model:rco-3.partial",
+          "a partial is named after the model it would become, tagged .partial");
+
+    Config cfg_part;
+    cfg_part.root        = dir.string();
+    cfg_part.models_root = (dir / "loose").string();
+    Registry   reg_part(cfg_part);
+    const auto half = reg_part.find("half-model:rco-3.partial");
+    check(half.has_value(), "the registry lists a stopped download");
+    check(half && half->incomplete, "and marks it incomplete");
+    check(half && half->size == 4096, "with the bytes it is actually holding");
+
+
     // ------------------------------------------- doctor's disk-space check
 
     const double free_gb = free_disk_gb(dir.root_path().string());
@@ -149,8 +173,14 @@ int main(int argc, char ** argv) {
     Config   cfg1;
     cfg1.root        = dir.string();
     cfg1.models_root = (dir / "loose").string();
-    Registry reg1(cfg1);
-    check(reg1.all().size() == 1, "a fake registry over the loose folder reads exactly the one real model");
+    Registry   reg1(cfg1);
+    const auto seen = reg1.all();
+    size_t     whole = 0;
+    for (const auto & m : seen) {
+        whole += m.incomplete ? 0 : 1;
+    }
+    check(whole == 1, "a fake registry over the loose folder reads exactly the one real model");
+    check(seen.size() == 2, "and lists the stopped download beside it");
 
     // -------------------------------------------------------- formatting
 
