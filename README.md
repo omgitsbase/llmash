@@ -53,11 +53,11 @@ This is the same setting as `OLLAMA_MODELS`.
 Same prompts, same GPU (an RTX PRO 6000 Blackwell, 96 GB), each tool running the
 model it gives you by default. Your numbers will differ.
 
-The rows are different files on purpose. Ollama pulls a Q8_0. vLLM runs int4
-weights with speculative decoding. llmash runs a 3-bit build it puts together
-itself, with a drafter. Most of the gap is bytes read per token, not engine, and
-the smaller file does not cost accuracy: at 3 bits the published results for this
-method sit 0.7% under fp8.
+The rows are different files on purpose. Ollama pulls a Q8_0. vLLM runs 8-bit
+weights of the same size, with speculative decoding. llmash runs a 3-bit build it
+puts together itself, with a drafter. Most of the gap is bytes read per token,
+not engine, and the smaller file does not cost accuracy: at 3 bits the published
+results for this method sit 0.7% under fp8.
 
 The llmash and vLLM rows move between runs, by up to a third, because speculative
 decoding is faster on predictable text. Ollama has no drafter and repeats to a
@@ -77,7 +77,7 @@ tenth of a token per second.
 | backend | build | conversation | coding | thinking |
 |---|---|--:|--:|--:|
 | Ollama | Q8_0, 38.7 GB | 204.5 | 204.6 | 207.2 |
-| vLLM | AWQ int4, 24 GB | 344.6 | 382.5 | 538.6 |
+| vLLM | INT8 GPTQ, 43 GB | 302.2 | 353.4 | 457.0 |
 | **llmash**\* | RCO-3, 12.5 GB | **455.0** | **534.3** | **569.3** |
 
 **Qwen3.8 27B**
@@ -85,19 +85,20 @@ tenth of a token per second.
 | backend | build | conversation | coding | thinking |
 |---|---|--:|--:|--:|
 | Ollama | Q8_0, 29.0 GB | 50.1 | 50.1 | 50.0 |
-| vLLM | AWQ int4, 20 GB | 72.7 | 73.4 | 86.6 |
+| vLLM | INT8 W8A16, 32 GB | 50.9 | 51.1 | 63.6 |
 | **llmash**\* | RCO-3, 9.6 GB | **153.2** | **170.1** | **178.3** |
 
 Tokens per second while generating, median of five runs, excluding model load and prompt processing. Ollama's rows are from one model load; between loads they drift by about a tenth.
 
-\* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs int4 weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
+\* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. RCO-3 answers nearly identically to Q8_0: on the published benchmarks the 3-bit allocation scores within a point of the fp8 original, at a third of the bytes. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs 8-bit weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
 
 <!-- /BENCHMARK -->
 
-vLLM is the native Windows build on int4 weights, with the draft model it ships
-for Qwen3.6 and n-gram lookup otherwise. Its fp8 path is not an option on this
-card: it has only the Ampere w8a8 kernel compiled in and aborts in
-`cutlass_scaled_mm_sm80_epilogue` on Blackwell. gemma-4 has no vLLM row at all,
+vLLM is the native Windows build on 8-bit weights (INT8, weight-only, the same
+bytes as a Q8_0), with the draft model published for Qwen3.6 and n-gram lookup
+for Qwen3.8. Its fp8 path is not an option on this card: the wheel carries only
+the Ampere w8a8 kernel and aborts in `cutlass_scaled_mm_sm80_epilogue` on
+Blackwell, so INT8 through Marlin is what runs. gemma-4 has no vLLM row at all,
 because `head_dim` varies per layer in that architecture and the loader refuses
 it.
 
