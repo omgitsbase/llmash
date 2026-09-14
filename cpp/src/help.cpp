@@ -180,7 +180,7 @@ Environment Variables:
       LLMASH_PORT                  Port for the local API (default 11434)
       LLMASH_PUBLIC_PORT           Keyed public listener for )HELP" "`ollama link`" R"HELP( (default 11435, 0 = off)
       LLMASH_CTX                   Default context length (default 8192)
-      LLMASH_KV                    Quantization type for the K/V cache (default "q8_0")
+      LLMASH_KV                    Quantization type for the K/V cache (default "f16")
       LLMASH_LOAD_MODE             How weights reach VRAM: dio or mmap (default "dio")
       LLMASH_VRAM_GB               VRAM budget for resident models (default 80)
       LLMASH_PIN                   Comma-separated models never evicted
