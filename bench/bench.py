@@ -174,7 +174,7 @@ def table():
             bold = "**" if key == "llmash" else ""
             cells = " | ".join(f"{bold}{w[c]:.1f}{bold}" if c in w else "-" for c in cols)
             build = backends[key].get("build", "") or "-"
-            star = "\*" if key == "llmash" else ""
+            star = "\\*" if key == "llmash" else ""
             out.append(f"| {bold}{name}{bold}{star} | {build} | {cells} |")
         out.append("")
     out.append("Tokens per second while generating, median of five runs, "
@@ -183,9 +183,11 @@ def table():
     out.append("")
     out.append("\\* llmash runs a custom build: one quantization type per tensor, chosen "
                "under a size budget and assembled on this machine. No other runtime has an "
-               "equivalent. Ollama runs its own Q8_0 pull, which ships without a draft "
-               "model; vLLM runs int4 weights with speculative decoding; llmash runs what a "
-               "pull assembles, drafter and launch settings included.")
+               "equivalent. RCO-3 answers nearly identically to Q8_0: on the published "
+               "benchmarks the 3-bit allocation scores within a point of the fp8 original, "
+               "at a third of the bytes. Ollama runs its own Q8_0 pull, which ships without "
+               "a draft model; vLLM runs 8-bit weights with speculative decoding; llmash "
+               "runs what a pull assembles, drafter and launch settings included.")
     return "\n".join(out)
 
 
