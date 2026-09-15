@@ -80,7 +80,10 @@ struct Cost {
 
 // The least a tensor may be given whatever the budget says, because the
 // search cannot see what it would cost. 0 for all but a couple.
-double floor_bits(const std::string & tensor);
+double floor_bits(const std::string & tensor, const std::string & mtp_prefix = "");
+
+// the "blk.N." of the block holding the MTP head, empty when there is none
+std::string mtp_block_prefix(const std::vector<std::string> & names);
 
 std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int64_t n_per_row,
                           const std::vector<int> & types, const float * imatrix, int64_t sample_rows,

@@ -2000,10 +2000,17 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
     };
 
     std::vector<size_t> work;
+    std::vector<std::string> all_names;
+    all_names.reserve(layout.tensors.size());
     for (size_t i = 0; i < layout.tensors.size(); i++) {
+        all_names.push_back(layout.tensors[i].name);
         if (quantizable(layout.tensors[i], ggml)) {
             work.push_back(i);
         }
+    }
+    const std::string mtp_prefix = rco::mtp_block_prefix(all_names);
+    if (!mtp_prefix.empty()) {
+        emit(json{{"status", "  " + pad_right("mtp head", 12) + mtp_prefix + " stays wide, it drafts"}});
     }
     if (work.empty()) {
         emit(error_obj("nothing in this build can be requantized"));
@@ -2056,7 +2063,7 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
                     rco::Measured m;
                     m.name       = t.name;
                     m.elements   = t.dims[0] * rows;
-                    m.floor_bits = rco::floor_bits(t.name);
+                    m.floor_bits = rco::floor_bits(t.name, mtp_prefix);
                     const double have = rco::bits_of_type(ggml, static_cast<int>(t.type));
                     std::vector<int> mine;
                     for (const int ty : rco::candidates_for_row(ggml, types, t.dims[0])) {

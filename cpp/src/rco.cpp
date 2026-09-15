@@ -240,12 +240,36 @@ double bits_of_type(const Ggml & g, int type) {
     return b > 0 ? static_cast<double>(g.type_size(type)) * 8.0 / static_cast<double>(b) : 32.0;
 }
 
-double floor_bits(const std::string & tensor) {
+// "blk.64." for a model whose last block is its MTP head, empty for one
+// without. The head's own tensors are the .nextn.* ones, but it predicts
+// through the whole block, so the block is what has to stay wide.
+std::string mtp_block_prefix(const std::vector<std::string> & names) {
+    std::string prefix;
+    for (const std::string & n : names) {
+        if (n.find(".nextn.") == std::string::npos) {
+            continue;
+        }
+        const size_t dot = n.find('.', 4);
+        if (n.rfind("blk.", 0) == 0 && dot != std::string::npos) {
+            prefix = n.substr(0, dot + 1);
+        }
+    }
+    return prefix;
+}
+
+double floor_bits(const std::string & tensor, const std::string & mtp_prefix) {
     if (tensor == "output.weight" || tensor == "lm_head.weight") {
         return 6.0;
     }
     if (tensor == "token_embd.weight") {
         return 3.0;
+    }
+    // LLMASH_RCO_MTP_BITS=6 holds the MTP head's block wide, on the theory
+    // that a head allocated IQ2_S drafts worse. Off, because the two builds
+    // measured the same: acceptance swings 0.52 to 0.70 with the prompt and
+    // not with the head's width, and neither decoded faster.
+    if (!mtp_prefix.empty() && tensor.rfind(mtp_prefix, 0) == 0) {
+        return env_float("LLMASH_RCO_MTP_BITS", 0.0);
     }
     return 0.0;
 }
