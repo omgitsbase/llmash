@@ -841,27 +841,36 @@ std::vector<std::string> Instance::args() {
     const std::string eagle3     = sidecar_path(model.path, ".eagle3.gguf");
     const std::string dspark     = dspark_path(model.path);
     const std::string draft      = sidecar_path(model.path, ".draft.gguf");
+    const std::string fallback   = env_str("LLMASH_SPEC_FALLBACK", "ngram-mod");
+    // LLMASH_SPEC_STACK=1 offers the lookup drafter beside the model's own
+    // head. Off: the fork gives lookup the first refusal, and on prompts seen
+    // once it wins the round with worse guesses than the head would have made
+    // (Qwen3.6-A3B -4.8% on prose). The gain only appears when a prompt is
+    // repeated, which is the drafter replaying its own last answer.
+    const bool stack = fallback.rfind("ngram", 0) == 0 && env_int("LLMASH_SPEC_STACK", 0) != 0;
+    const auto with_lookup = [&](const char * primary) {
+        return stack ? fallback + "," + primary : std::string(primary);
+    };
     if (model.has_mtp) {
-        a.insert(a.end(), {"--spec-type", "draft-mtp", "--spec-draft-n-max", std::to_string(mtp_draft)});
+        a.insert(a.end(), {"--spec-type", with_lookup("draft-mtp"), "--spec-draft-n-max", std::to_string(mtp_draft)});
     } else if (!mtp.empty() && file_exists(mtp)) {
-        a.insert(a.end(), {"--spec-type", "draft-mtp", "--model-draft", mtp, "-ngld", "999", "--spec-draft-n-max",
-                           std::to_string(mtp_draft)});
+        a.insert(a.end(), {"--spec-type", with_lookup("draft-mtp"), "--model-draft", mtp, "-ngld", "999",
+                           "--spec-draft-n-max", std::to_string(mtp_draft)});
         spec_note = "mtp";
     } else if (!eagle3.empty() && file_exists(eagle3)) {
-        a.insert(a.end(), {"--spec-type", "draft-eagle3", "--model-draft", eagle3, "-ngld", "999",
+        a.insert(a.end(), {"--spec-type", with_lookup("draft-eagle3"), "--model-draft", eagle3, "-ngld", "999",
                            "--spec-draft-n-max", std::to_string(mtp_draft)});
         spec_note = "eagle3";
     } else if (!dspark.empty() && file_exists(dspark)) {
-        a.insert(a.end(), {"--spec-type", "draft-dspark", "--model-draft", dspark, "-ngld", "999",
+        a.insert(a.end(), {"--spec-type", with_lookup("draft-dspark"), "--model-draft", dspark, "-ngld", "999",
                            "--spec-draft-n-max", std::to_string(dspark_max), "--spec-draft-n-min",
                            std::to_string(dspark_min)});
         spec_note = "dspark";
     } else if (!draft.empty() && file_exists(draft)) {
-        a.insert(a.end(), {"--spec-type", "draft-simple", "--model-draft", draft, "-ngld", "999",
+        a.insert(a.end(), {"--spec-type", with_lookup("draft-simple"), "--model-draft", draft, "-ngld", "999",
                            "--spec-draft-n-max", std::to_string(mtp_draft)});
         spec_note = "draft";
     } else {
-        const std::string fallback = env_str("LLMASH_SPEC_FALLBACK", "ngram-mod");
         if (!fallback.empty() && fallback != "none") {
             a.insert(a.end(), {"--spec-type", fallback});
             if (fallback.rfind("ngram", 0) != 0) {
@@ -869,6 +878,9 @@ std::vector<std::string> Instance::args() {
             }
             spec_note = fallback;
         }
+    }
+    if (stack && !spec_note.empty()) {
+        spec_note += "+lookup";
     }
     return a;
 }
