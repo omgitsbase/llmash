@@ -13,35 +13,12 @@
 #include <string>
 #include <vector>
 
-// Port of pull.go: /api/pull for both the Ollama registry (into
-// the blob store) and Hugging Face (hf:owner/repo[@QUANT], into the loose
-// GGUF folder), and the parallel resumable download engine both use.
-
 namespace llmash {
 
-// Implemented in pull.cpp, a separate module ported from pull.go (~970 lines
-// of Ollama-registry and Hugging Face client logic: manifest and blob
-// fetching, range-probing a remote GGUF header to pick a quant, downloading
-// with resumable progress).
 void handle_pull(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
 void handle_quants(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
 void handle_resolve(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
 
-// ---------------------------------------------------------------------
-// Everything below is the logic those three handlers are wired to, kept
-// free of httplib types so it can be exercised directly (draft.cpp calls
-// into the HTTP/GGUF primitives here too, for the same reason).
-// ---------------------------------------------------------------------
-
-// -------------------------------------------------------------- transport
-//
-// cpp-httplib's HTTPS client only compiles in with CPPHTTPLIB_OPENSSL_SUPPORT
-// defined and OpenSSL linked; neither is true of this build (see the CMake
-// file), and OpenSSL is not among the vendored dependencies this project is
-// allowed to add. huggingface.co and the Ollama registry are HTTPS-only, so
-// outbound requests go through WinHTTP instead, which does TLS itself and
-// needs nothing beyond what Windows already ships (linked via a pragma in
-// pull.cpp, so the shared CMakeLists does not need a winhttp.lib entry).
 struct HttpResult {
     int         status = 0;
     std::string body;
@@ -82,11 +59,6 @@ private:
     bool bad_ = false;
 };
 
-// -------------------------------------------------------- draft-file names
-//
-// Shared with draft.cpp: pull.go's own build picker has to leave a drafter's
-// files out of "the model", which is the same classification draft.go uses
-// to spot a drafter in the first place.
 struct DraftKind {
     std::string name;     // what llmash calls it, and the sidecar file's suffix
     std::string spec_arg; // llama.cpp's --spec-type
@@ -103,10 +75,6 @@ struct HfFile {
     int64_t     size = 0;
 };
 
-// `err` (when given) is set only for a request that failed outright (a
-// transport error or unparseable JSON); a repository that answers with no
-// GGUF files, or answers 404, comes back as an empty list with no error,
-// matching hfFiles' own "not found is not a failure" reading of the API.
 std::vector<HfFile>   hf_files(const std::string & repo, std::string * err = nullptr);
 std::vector<HfFile>   pick_gguf(const std::vector<HfFile> & files, const std::string & quant);
 std::optional<HfFile> pick_mmproj(const std::vector<HfFile> & files);
@@ -218,10 +186,6 @@ std::string blob_path(const Config & cfg, const std::string & digest);
 // still names.
 void remove_manifest_model(const Config & cfg, Registry & reg, const std::string & manifest_path);
 
-// registryBuild: what makes a registry build unreadable for llama.cpp
-// (Ollama packs vision/audio encoders and mllama models the vendored server
-// rejects), and the Hugging Face build to take instead, at the same
-// quantisation.
 struct RegistryBuild {
     std::string unloadable;
     std::string hf_repo;  // where this model's other builds are, or ""

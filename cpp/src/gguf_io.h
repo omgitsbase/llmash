@@ -48,9 +48,6 @@ Layout layout_from(const std::string & head);
 // split bookkeeping, so only the tensors are taken.
 bool append_part(Layout & l, const std::string & head);
 
-// A header for the whole model, written before the types are known: an
-// entry's size does not depend on its type, so the types and offsets are
-// filled in afterwards by patch_entry.
 int64_t write_header(const std::string & path, const Layout & l, std::string & err);
 bool    patch_entry(std::ostream & out, const Layout & l, size_t tensor, uint32_t type, int64_t offset);
 

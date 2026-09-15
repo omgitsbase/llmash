@@ -167,9 +167,6 @@ std::string install_root(const std::string & exe_directory) {
     std::string     name = dir.filename().string();
     std::transform(name.begin(), name.end(), name.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    // The installer puts a second copy of the program in <root>/bin so one
-    // shim is on PATH. Run from there, the install is the folder above: the
-    // tray binary, local.json, the logs and the cache all live in it.
     if (name == "bin" && fs::is_regular_file(dir.parent_path() / llmash_exe(), ec)) {
         return dir.parent_path().string();
     }

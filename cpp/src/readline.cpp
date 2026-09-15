@@ -21,11 +21,6 @@ namespace llmash {
 
 namespace {
 
-// -------------------------------------------------------------- key codes
-// Same names and values as readline.go: raw control bytes read with
-// ENABLE_VIRTUAL_TERMINAL_INPUT on, so arrows and Home/End/Delete arrive as
-// the escape sequences a Linux terminal would send.
-
 constexpr char32_t charNull      = 0;
 constexpr char32_t charLineStart = 1;
 constexpr char32_t charBackward  = 2;
@@ -135,9 +130,6 @@ public:
         }
         mode_ = mode;
         on_   = true;
-        // The literal readline.go mask ORs in a 4th flag that is the same
-        // bit as ENABLE_PROCESSED_INPUT (0x0001) applied to an input
-        // handle's mode; harmless, kept for a 1:1 mask.
         DWORD raw = mode & ~static_cast<DWORD>(ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | 0x0001);
         raw |= ENABLE_VIRTUAL_TERMINAL_INPUT;
         SetConsoleMode(h, raw);

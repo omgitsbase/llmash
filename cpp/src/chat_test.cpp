@@ -226,9 +226,6 @@ void test_unparsable_tool_args() {
        "[{\"function\":{\"arguments\":{},\"name\":\"run\"},\"id\":\"call_0\",\"type\":\"function\"}]");
 }
 
-// The prefill path: with an injected <think> handoff llama.cpp replays the
-// prefill in `content`, so the visible text is recovered by subtraction and
-// split on </think> by hand.
 void test_injected_prefill() {
     ChatStream st;
     st.model         = "qwen3:8b";

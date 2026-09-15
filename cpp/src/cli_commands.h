@@ -16,11 +16,6 @@
 
 namespace llmash {
 
-// Thrown by die()/cli_exit() to unwind to a command's own entry point,
-// standing in for Go's os.Exit(code): unlike os.Exit this runs destructors
-// on the way out, which is what we want for RAII resources (never bare
-// exit()/abort() from inside this module).
-
 [[noreturn]] void die(const std::string & message);
 
 // ------------------------------------------------------------ arg parsing
@@ -62,10 +57,6 @@ Tiers  tiers_of(const std::vector<QuantInfo> & quants);
 const QuantInfo *        nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size);
 std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref);
 
-// How far a width falls below the fp8 original, as a percentage, from the
-// published GSQ-RCO results on Qwen3.8-27B: the mean of AIME25, GPQA-Diamond
-// and LiveCodeBench v6 against a base of 91.87. Interpolated between the four
-// measured widths; from 3.5 bits up the difference is inside the noise.
 double      rco_quality_gap(double bpw);
 std::string rco_quality_text(double bpw);
 // The quantisation tag embedded in a GGUF file name (pull.go's quantTag),
@@ -86,9 +77,6 @@ bool path_under(const std::string & path, const std::string & dir);
 // net.DialTimeout("tcp", 127.0.0.1:port, 600ms): is something listening.
 bool port_open(int port);
 
-// filterRows: the rows of tags()/ps()'s "models" array whose name has
-// `prefix` (case-folded when fold is true, the way `list` folds and `ps`
-// does not).
 std::vector<nlohmann::json> filter_rows(const nlohmann::json & doc, const std::string & prefix, bool fold);
 
 std::string render_list(const std::vector<nlohmann::json> & rows);
@@ -127,9 +115,6 @@ void pull_model(const std::string & name);
 void               set_prog(const std::string & prog);
 const std::string & prog();
 
-// One entry point for main.cpp to route a parsed command line through:
-// dispatches to the matching cmd_* above (constructing its own ApiClient
-// from cfg), or returns false for a name none of these commands own.
 bool dispatch(const std::string & cmd, const std::vector<std::string> & args, Config & cfg, Registry & reg,
               int & exit_code);
 

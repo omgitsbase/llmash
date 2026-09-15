@@ -51,9 +51,6 @@ std::string ollama_host();
 // entry is "NAME=value", ready to hand to a child process.
 std::vector<std::string> generic_launch_env(const std::string & host, const std::string & model);
 
-// Runs the named integration against this server and does not return: exits
-// the process with the child's exit code (or 1 on a launch failure),
-// mirroring runInherit/launchClaude/launchGeneric in the Go original.
 [[noreturn]] void launch_claude(const Config & cfg, const std::string & model, const std::vector<std::string> & extra);
 [[noreturn]] void launch_generic(const std::string & key, const std::string & model,
                                   const std::vector<std::string> & extra);

@@ -140,13 +140,6 @@ int die(const std::string & message) {
     return 1;
 }
 
-// The installer that came with this install, wherever the layout put it.
-//
-// `cfg.root` is the folder holding the running executable, and the installer
-// puts a second copy of the program in `<root>/bin` so one shim is on PATH.
-// Run from PATH, root is therefore `...\llmash\bin` while install.ps1 sits in
-// its parent, so the old single check never found it and `update` told every
-// user to go and paste the one-liner instead.
 std::string find_installer(const Config & cfg) {
     std::error_code ec;
     const fs::path  root = fs::path(cfg.root);
@@ -239,9 +232,6 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
         return 1;
     }
 
-    // Install where this install lives, which is the folder holding the
-    // installer, not `cfg.root` — from PATH that is the `bin` copy, and
-    // passing it would lay a second install down inside the first.
     const std::string target = fs::path(script).parent_path().string();
     const std::string where  = fs::is_regular_file(fs::path(target) / "llmash.exe", ec)
                                    ? target

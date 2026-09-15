@@ -19,10 +19,6 @@ struct subprocess_s; // sheredom/subprocess.h; kept out of this header
 
 namespace llmash {
 
-// A snapshot of the fields ps() needs from a live Instance, read by the
-// caller through manager.h's public API (vram_gb(), on_gpu(), ready(), the
-// public last_used/expires_at/keep_alive/ctx fields) since Instance itself
-// cannot be constructed or linked here.
 struct InstanceView {
     Model  model;
     double vram_gb   = 0;
@@ -61,16 +57,10 @@ nlohmann::json openai_error_json(const std::string & message, const std::string 
 nlohmann::json ps_entry_json(const InstanceView & v, const Config & cfg);
 nlohmann::json ps_json(const std::vector<InstanceView> & live, const Config & cfg);
 
-// A cheap, non-cryptographic stand-in: registry.h's Model carries no digest
-// (an ollama-store model's real one lives in its manifest, which Registry
-// does not expose either).
 std::string digest_of(const Model & m);
 
 // ---------------------------------------------------------------- auth
 
-// Mirrors guarded(): a Bearer token takes precedence over X-API-Key, both
-// compared to expected_key in constant time, and an empty expected_key
-// always rejects.
 bool check_api_key(const std::string & authorization_header,
                     const std::string & x_api_key_header,
                     const std::string & expected_key);
@@ -118,9 +108,6 @@ struct DeleteOutcome {
     nlohmann::json body;
 };
 
-// The file-system half of apiDelete: given the model apiDelete already
-// resolved (404 before this point if it did not), removes its file and any
-// shard siblings, or reports why it would not.
 DeleteOutcome run_delete(const Model & m, const Config & cfg);
 
 // -------------------------------------------------------------- cli cache
@@ -143,9 +130,6 @@ private:
 
 // -------------------------------------------------------------- process
 
-// RAII over sheredom/subprocess.h's C handle: run() always leaves the
-// process joined and its handles closed, even if the caller never calls
-// join() explicitly.
 class Subprocess {
 public:
     Subprocess();

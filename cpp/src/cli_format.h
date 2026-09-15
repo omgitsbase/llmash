@@ -13,9 +13,6 @@ namespace llmash {
 // Terminal cell width: 2 for the wide CJK/emoji blocks, 0 for combining marks.
 int disp_width(const std::string & utf8);
 
-// Ollama's tablewriter layout: no borders, no header rule, left-aligned,
-// four-space gaps, and a wrap at wrap_at columns (0 = no wrap, table.go's
-// default is 30).
 class Table {
 public:
     explicit Table(std::vector<std::string> header = {});
@@ -52,9 +49,6 @@ std::string human_time(std::time_t t, bool is_zero, const std::string & zero_val
 // parse failure, or an empty string, returns zero_value.
 std::string human_time_iso(const std::string & s, const std::string & zero_value, double now);
 
-// cmds.go's own byte formatter (1024-based, used nowhere by the client
-// commands themselves today but ported for fidelity: it is the same package-
-// level `human` that api.go's create/copy handlers call).
 std::string human(double n);
 
 // A UTC "YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM]" timestamp as a Unix time, or

@@ -322,9 +322,6 @@ std::string foreign_base(const std::vector<std::string> & bases, const std::stri
                 return b;
             }
         }
-        // Take the model name without the organisation, remove the target
-        // and the words that mean nothing (packaging, quantisation, drafter
-        // kinds).
         std::string  name = b;
         const size_t i    = name.find_last_of('/');
         if (i != std::string::npos) {

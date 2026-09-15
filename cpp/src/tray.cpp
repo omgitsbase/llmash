@@ -30,9 +30,6 @@ using json   = nlohmann::json;
 
 namespace llmash {
 
-// Identifies llmash's notification icon to Windows, which then keeps its
-// position across restarts and rejects any other program claiming it.
-// {6f3a1c84-9d2b-4e57-a1d0-5c8e7b23f409}
 static constexpr GUID kTrayIconGuid = {
     0x6f3a1c84, 0x9d2b, 0x4e57, {0xa1, 0xd0, 0x5c, 0x8e, 0x7b, 0x23, 0xf4, 0x09}};
 
@@ -119,9 +116,6 @@ double now_epoch() {
     return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// RFC3339(Nano): "2026-09-08T18:30:00[.frac](Z|+HH:MM|-HH:MM)". Every
-// timestamp the server actually emits uses a numeric +00:00 offset; Z is
-// handled too since that is what the pinned sentinel would parse as.
 bool parse_offset_time(const std::string & s, double & epoch_out) {
     if (s.size() < 19) {
         return false;
@@ -267,9 +261,6 @@ std::string set_keep_alive(const std::string & model, int seconds) {
 
 // ------------------------------------------------------- server control
 
-// Is the pid the server wrote still ours and still alive? This runs every
-// five seconds, so it opens one handle and reads one path, rather than
-// starting a PowerShell to query WMI.
 bool server_process_exists(const Config & cfg) {
     const unsigned long pid = read_pid_file(cfg.root);
     return pid_alive(pid, "llmashw.exe") || pid_alive(pid, "llmash.exe");
@@ -359,9 +350,6 @@ bool start_server_process(const Config & cfg) {
     return false;
 }
 
-// The engines go first, and this waits for the port: killing the server
-// alone leaves any llama-server.exe it started holding their VRAM, and
-// returning before it is really gone lets the next start race it.
 void stop_server_process(const Config & cfg) {
     const unsigned long pid = read_pid_file(cfg.root);
     if (pid_alive(pid)) {
@@ -544,10 +532,6 @@ bool TrayApp::create() {
     nid_.hIcon            = hicon_;
     copy_wide(nid_.szTip, L"llmash");
 
-    // A GUID lets Windows keep the icon's place and refuse it to anything
-    // else claiming to be us. It ties the icon to this exact path, though,
-    // so an install that moved falls back to the plain registration rather
-    // than showing no icon at all.
     icon_added_ = Shell_NotifyIconW(NIM_ADD, &nid_) != FALSE;
     if (!icon_added_) {
         Shell_NotifyIconW(NIM_DELETE, &nid_);
@@ -662,9 +646,6 @@ void TrayApp::add_item(HMENU menu, UINT flags, const std::wstring & text, const 
     AppendMenuW(menu, flags, id, text.c_str());
 }
 
-// Rebuilt from scratch every open so the loaded models and their timers are
-// live; TrackPopupMenu is itself a nested message loop, so a click while one
-// is already open must be ignored rather than nesting a second.
 void TrayApp::show_menu(POINT pt) {
     if (menu_open_) {
         return;
@@ -873,9 +854,6 @@ bool cmd_tray(const Config & cfg, std::string & err) {
     std::wstring werr;
     if (!spawn_detached(to_wide(exe), L"tray", to_wide(cfg.root), DETACHED_PROCESS, &werr)) {
         const std::string low = lower(to_utf8(werr));
-        // ERROR_VIRUS_INFECTED (225): llmash is unsigned, and a freshly
-        // built program with no reputation behind it is a common false
-        // positive (see GitHub issue from user nigelp).
         if (low.find("virus") != std::string::npos || low.find("potentially unwanted") != std::string::npos) {
             err = "your antivirus blocked " + exe +
                  " from running.\n"

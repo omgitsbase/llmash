@@ -153,9 +153,6 @@ bool read_header(const std::string & head, Layout & l, bool keep_kv, std::string
         if (c.bad()) {
             break;
         }
-        // The split bookkeeping goes: what is written back is one whole
-        // model, and those keys would send the loader after shards that do
-        // not exist.
         if (keep_kv && key.rfind("split.", 0) != 0) {
             l.kv.push_back(KvEntry{key, head.substr(from, c.at() - from)});
         }

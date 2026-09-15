@@ -80,14 +80,8 @@ struct Release {
 // "-suffix" removed.
 std::string release_version(const std::string & tag);
 
-// update.go's latestRelease, over WinHTTP so no SSL library needs vendoring;
-// Windows does the TLS. err carries the same wording callers act on: no
-// releases yet, GitHub is rate limiting, or an unexpected status.
 bool latest_release(const std::string & slug, Release & out, std::string & err);
 
-// A best-effort guess at what the user typed (llmash, ollama, llamash),
-// since only main.cpp's argv[0] handling knows for certain: LLMASH_PROG if
-// set, else this executable's own file name.
 std::string prog_name();
 
 } // namespace clidoc

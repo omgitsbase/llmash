@@ -44,10 +44,6 @@ using json = nlohmann::json;
 
 namespace {
 
-// --------------------------------------------------------------- wire JSON
-// Loose accessors matching http.go's str/num/sub/list: wrong type or a
-// missing key is not an error, just an empty result.
-
 std::string j_str(const json & m, const std::string & k) {
     if (!m.is_object()) return "";
     const auto it = m.find(k);
@@ -636,9 +632,6 @@ BOOL WINAPI console_ctrl_handler(DWORD ctrl_type) {
 extern "C" void on_interrupt(int) { g_interrupted.store(true); }
 #endif
 
-// interruptible()'s C++ shape: SetConsoleCtrlHandler in place of Go's
-// signal.Notify, registered and torn down around one request the same way
-// interruptible()/its cancel func are.
 class InterruptGuard {
 public:
     InterruptGuard() {

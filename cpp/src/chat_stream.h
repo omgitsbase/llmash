@@ -478,9 +478,6 @@ public:
         return e;
     }
 
-    // Everything owed after the upstream stream ends: the tail of an
-    // unterminated <think>, any unflushed tool arguments, the assembled tool
-    // calls, and the done frame.
     std::vector<json> finalize(double started) {
         std::vector<json> out;
         if (!hoff.empty() && !open_th_.empty() && open_th_.size() > th_emitted_) {

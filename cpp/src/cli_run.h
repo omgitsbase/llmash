@@ -30,9 +30,6 @@ struct RunArgs {
     std::optional<double> temperature;
 };
 
-// Raised for anything cobra would have rejected with a die() and exit(1): an
-// unknown flag, a flag missing its argument, an invalid --think level, no
-// model argument.
 struct CliUsageError : std::runtime_error {
     explicit CliUsageError(const std::string & msg) : std::runtime_error(msg) {}
 };
@@ -117,10 +114,6 @@ void infer_thinking(const nlohmann::json & model_info, RunOptions & o, bool expl
 
 // ------------------------------------------------------------------ entry
 
-// The whole `llmash run <model> [prompt]` command: resolves the model,
-// streams one reply or drops into the interactive REPL. Returns the process
-// exit code (0 normally; die() paths raise CliExit instead of calling
-// std::exit so this stays callable from a test).
 int cmd_run(const RunArgs & args);
 
 // die()'s C++ shape: printed to stderr, then unwound instead of exiting so

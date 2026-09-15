@@ -60,10 +60,6 @@ std::string lower(std::string s) {
     return s;
 }
 
-// registry.cpp classifies exactly these files out of a folder scan (they are
-// drafters, projectors, or a shard after the first) but keeps that logic to
-// itself; there is no public accessor for it, so the two regexes and the tag
-// list are repeated here, only for the "N models, M skipped" line.
 bool is_sidecar(const std::string & stem) {
     const std::string s = lower(stem);
     for (const char * tag : {".mtp", ".eagle3", ".dspark", ".draft", ".mmproj", "-mmproj", "eagle3", "dspark",

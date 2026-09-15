@@ -230,9 +230,6 @@ public:
         }
     }
 
-    // Closes our handles to the child without killing it: a still-running
-    // child intentionally outlives us here, exactly as exec.Cmd does in the
-    // Go original when nothing explicitly stops it.
     void reset() {
         if (live_) {
             subprocess_destroy(&proc_);
@@ -257,9 +254,6 @@ void kill_tree(unsigned long pid) {
     }
 }
 
-// Runs argv to completion and returns its combined stdout+stderr along with
-// its exit code (1 if it could not even be started, matching docker()'s
-// "else if err != nil { code = 1 }" branch).
 int run_capture(const std::vector<std::string> & argv, std::string & out) {
     Proc p;
     if (!p.spawn(argv, nullptr, "", true)) {
@@ -293,19 +287,11 @@ void kill_by_exe(const std::string & exe) {
 
 } // namespace
 
-// Owns one exe-route child: its process handle, and the thread draining its
-// stderr for load-progress lines (and, once tracked progress ends, just to
-// keep the pipe from filling and stalling a backend we intend to keep
-// running).
 struct RemoteRouter::ExeProc {
     Proc        proc;
     std::thread tail;
 
     ~ExeProc() {
-        // A real exec.Cmd in the Go original is left running when nothing
-        // calls stopExeRoute; here that would hang this destructor forever
-        // waiting on tail to see EOF, so unlike the Go original we always
-        // stop the child on teardown. See the port report for why.
         proc.terminate();
         if (tail.joinable()) {
             tail.join();
