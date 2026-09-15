@@ -117,9 +117,6 @@ int main() {
             measure(g, src.data(), rows, n_per, candidates(), im.data(), rows, 4);
         check(costs.size() == candidates().size(), "every candidate is measured");
 
-        // A row that does not divide 256 can only take a 32-block type, and
-        // there has to be something under Q8_0 for it or the tensor keeps the
-        // source's width. gemma-4's expert rows are 704.
         const std::vector<int> narrow = candidates_for_row(g, candidates(), 704);
         check(!narrow.empty(), "a 704-wide row has candidates");
         for (const int t : narrow) {

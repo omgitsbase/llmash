@@ -3,10 +3,6 @@
 // Choosing a quantization type per tensor under a total size budget.
 //
 // The budget is the only thing coupling the tensors, so in its Lagrangian
-// form each one independently takes the type with the lowest
-// error + lambda * bytes, and lambda is bisected until the total lands on
-// the budget. The error is measured with ggml's own quantizer, loaded from
-// the runtime beside llama-server.
 
 #include "config.h"
 
@@ -38,9 +34,6 @@ public:
     const char * name(int type) const;
     bool         quantized(int type) const;
 
-    // Whether the runtime's CUDA backend would take this tensor. It serialises
-    // internally, so a caller should hand over whole runs of rows from one
-    // thread for the tensors it takes, and keep its pool on the rest.
     bool is_gpu(int type, int64_t n_per_row, bool has_imatrix) const;
 
     size_t quantize(int type, const float * src, void * dst, int64_t nrows, int64_t n_per_row,
@@ -71,15 +64,8 @@ const std::vector<int> & candidates();
 // Those of them a build at this width may use.
 std::vector<int> candidates_for(const Ggml & g, double bpw);
 
-// Those of them a row this long can hold: a k-quant or an IQ_XS type needs the
-// row to divide 256, where Q8_0, Q5_0 and IQ4_NL only need 32. A gemma-4 expert
-// row is 704, so without this every one of them keeps the source's own width.
 std::vector<int> candidates_for_row(const Ggml & g, const std::vector<int> & types, int64_t n_per_row);
 
-// What a custom build aims for by default: what an IQ3_S build weighs.
-// llama.cpp's names understate it, an "IQ3_XS" file measuring 3.85 bits a
-// weight over the whole model, and a budget set to the name instead of the
-// size hands the comparison a head start.
 constexpr double DEFAULT_BPW = 3.9;
 
 double bits_of_type(const Ggml & g, int type);
@@ -96,9 +82,6 @@ struct Cost {
 // search cannot see what it would cost. 0 for all but a couple.
 double floor_bits(const std::string & tensor);
 
-// Measures `sample_rows` rows spread through the tensor and scales their
-// error to the whole, which makes what it costs to decide independent of
-// how big the tensor is.
 std::vector<Cost> measure(const Ggml & g, const float * data, int64_t nrows, int64_t n_per_row,
                           const std::vector<int> & types, const float * imatrix, int64_t sample_rows,
                           int nthread);
@@ -117,9 +100,6 @@ int    pick(const Measured & m, double lambda);
 // handed to whichever tensors gain the most from it.
 std::map<std::string, int> allocate(const std::vector<Measured> & m, int64_t budget_bytes);
 
-// llama.cpp's imatrix file: per tensor, the mean square of each input
-// channel over a calibration run, which is what tells the quantizer which
-// columns to spend its bits on. Both the GGUF form and the older one.
 class Imatrix {
 public:
     bool   load(const std::string & path, std::string & err);

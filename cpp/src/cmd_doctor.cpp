@@ -50,9 +50,6 @@ struct Report {
     }
 };
 
-// cmds.go/doctor.go both read install.json the same way: origin defaults to
-// "dev" and any directory not written by the installer (dev == true) is
-// treated as a checkout, not an install.
 struct Install {
     std::string origin = "dev";
     bool        dev     = true;
@@ -245,9 +242,6 @@ void cmd_doctor() {
         }
     }
 
-    // manager.h does not expose a VRAM query (that is where Go's freeVRAMGB
-    // lives, via NVML/DXGI); nvidia-smi's own totals, already fetched above,
-    // stand in for it here.
     double free_vram_gb = 0;
     if (gpu_fields.size() >= 4) {
         try {
@@ -293,10 +287,6 @@ void cmd_doctor() {
     } else {
         d.add(ST_WARN, "speculation", "no fallback drafter; set LLMASH_SPEC_FALLBACK=ngram-mod");
     }
-
-    // fast backends: doctor.go walks remote.go's fastRoutes, which has no
-    // C++ counterpart yet (no route config lives in Config); skipped, see
-    // the job report.
 
     // ---- reachability of the commands ------------------------------------
     for (const char * n : {"llmash", "ollama", "llamash"}) {

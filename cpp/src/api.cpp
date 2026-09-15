@@ -49,9 +49,6 @@ void write_text(Response & res, int code, const std::string & s) {
 
 json error_obj(const std::string & msg) { return json{{"error", msg}}; }
 
-// An unparseable or non-object body is an empty object, the way Go's
-// readBody hands back the map it was decoding into and the callers ignore
-// its error.
 json read_body(const Request & req) {
     json d = json::parse(req.body, nullptr, false);
     if (!d.is_object()) {
@@ -148,10 +145,6 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
-    // Go's mux sends every unmatched path to its "/" handler, which 404s
-    // anything that is not exactly "/". httplib has no catch-all pattern, so
-    // the same answer comes from the error hook, and only when no handler
-    // wrote a body of its own.
     srv.set_error_handler([](const Request &, Response & res) {
         if (res.status == 404 && res.body.empty() && !res.content_provider_) {
             write_json(res, 404, error_obj("not found"));
@@ -269,9 +262,6 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
         DeleteOutcome out = run_delete(m, cfg);
         reg.invalidate();
         st->cli.invalidate();
-        // The CLI prints `list` from this file without asking the server, and
-        // it is only rewritten when the model folder's own timestamp moves, so
-        // the row for what was just deleted would survive a couple of seconds.
         if (out.status == 200) {
             std::error_code rm;
             std::filesystem::remove(std::filesystem::path(cfg.root) / "cache" / "list.txt", rm);
@@ -289,10 +279,6 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
         Instance * in = mgr.find(name);
         if (in == nullptr) {
-            // Go also answers here for a model served by a fast backend,
-            // whose idle clock lives in remote.h's RemoteRouter;
-            // register_routes is not given one, so that branch has no home
-            // yet.
             write_json(res, 404, error_obj("model '" + name + "' is not loaded"));
             return;
         }

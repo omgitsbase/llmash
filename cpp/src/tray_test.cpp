@@ -115,10 +115,6 @@ int main() {
              "size_text: a zero size_vram still falls back");
     }
 
-    // ---- the real Win32 sequence: add a notification icon, then remove
-    // it. Run twice in a row: the second RegisterClassExW only succeeds if
-    // the first call's UnregisterClassW (and DestroyWindow, and the
-    // Shell_NotifyIconW NIM_DELETE before it) actually released everything.
     check(self_test_tray_icon(), "Shell_NotifyIconW: add then remove succeeds");
     check(self_test_tray_icon(), "Shell_NotifyIconW: second cycle proves the first left nothing behind");
 

@@ -23,11 +23,6 @@ namespace fs = std::filesystem;
 using namespace llmash;
 using json = nlohmann::json;
 
-// --------------------------------------------------------------- STUBS
-// Stand-ins for the modules landing alongside this one. Each records what it
-// was handed so the test can assert api.cpp passed the right thing, and
-// returns a sentinel that is never mistaken for the real module's output.
-
 namespace llmash {
 
 namespace stub {
@@ -61,9 +56,6 @@ json ps_json(const std::vector<InstanceView> & live, const Config &) {          
     stub::ps_calls++;
     return json{{"models", json::array({json{{"name", "stub_live"}, {"count", live.size()}}})}};
 }
-// STUB, implementing the contract api_logic.h documents so the gate wiring
-// around it means something: a Bearer token wins over X-API-Key, and an
-// empty expected key always rejects.
 bool check_api_key(const std::string & authorization_header, const std::string & x_api_key_header,
                     const std::string & expected_key) {
     stub::auth_seen     = authorization_header;
@@ -335,9 +327,6 @@ int main() {
         check(!stub::copy_called, "and never starts the copy");
     }
 
-    // ------------------------------------------------- listing wiring
-    // The bodies come from api_logic/table; only the mounting, status and
-    // content type below are this module's to get right.
     {
         auto res = cli.Get("/api/tags");
         check(res && res->status == 200 && res->get_header_value("Content-Type") == "application/json" &&
@@ -398,9 +387,6 @@ int main() {
         check(res && res->status == 200, "the local port takes no key at all");
     }
 
-    // --------------------------------------------- reload on POST /api/paths
-    // Last: this one replaces cfg from local.json, the way `llmash models`
-    // applies a new folder to a running server.
     {
         auto res = cli.Post("/api/paths", std::string("{}"), "application/json");
         const json b = res ? body_json(res->body) : json::object();

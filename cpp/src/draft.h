@@ -36,14 +36,8 @@ constexpr int64_t DRAFT_SIZE_CEILING = 6ll << 30;
 // Lower-cased, everything but [a-z0-9] dropped.
 std::string normalise(const std::string & s);
 
-// The name a drafter would have been published under: the model's own name,
-// or its base repository's, with the size that tells one member of a family
-// from another kept and the packaging/quantisation words dropped.
 std::string model_stem(const Model & m);
 
-// draft.go's hubGet reports why it failed, and consider_repo() prints that
-// reason: "rate limited" reads very differently from "no such repository".
-// pull.h's hub_info() answers only yes/no, so this carries the text.
 bool hub_info_reason(const std::string & repo, HubModel & out, std::string & err);
 
 // A base that is a derivative of the target (an abliterated fine-tune, say),
@@ -65,12 +59,6 @@ bool consider_repo(const HubModel & hit, const std::string & want, const std::st
 // Every drafter published for this model, best first. `say` is called only
 // when verbose, matching findDrafters' own flag.
 std::vector<DraftCand> find_drafters(const Model & m, bool verbose, const Say & say = Say());
-
-// ----------------------------------------------------------- verification
-//
-// llama.cpp accepts a drafter only if the vocabularies match and its encoder
-// is shaped for the target's hidden size. Both are in the GGUF header, so the
-// answer costs a few kilobytes instead of a load.
 
 struct GGUFSpec {
     std::string          arch;

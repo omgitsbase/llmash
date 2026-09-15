@@ -262,9 +262,6 @@ int cmd_serve(const std::vector<std::string> & args) {
     g_servers[0] = &main_srv;
     catch_shutdown();
 
-    // The tray checks this instead of enumerating processes. Spawning a
-    // PowerShell every five seconds to ask whether we are running cost a few
-    // percent of a laptop's CPU for as long as the tray was up.
     write_pid_file(cfg.root, current_pid());
 
     std::thread reaper([&mgr] { manager_reaper(mgr); });

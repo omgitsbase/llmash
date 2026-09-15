@@ -763,10 +763,6 @@ DeleteOutcome run_delete(const Model & m, const Config & cfg) {
         return out;
     }
     std::vector<std::string> removed;
-    // An Ollama-store model is a manifest naming blobs that other manifests
-    // may also name, so deleting `path` is both wrong and not enough: the
-    // blob carries no .gguf extension, the shard scan below matched nothing,
-    // and `rm` answered "nothing to delete" for a model plainly in the list.
     if (!m.manifest.empty()) {
         return delete_from_store(m);
     }

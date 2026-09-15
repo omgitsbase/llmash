@@ -733,10 +733,6 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
 
 // ------------------------------------------------------------- drafters
 
-// The local model behind a name, or nothing when the name is not backed by a
-// file on this machine.
-// `missing` tells a name the server never heard of from one it cannot point at
-// a file for. Neither exits: a pull filed under another name hits the first.
 std::optional<Model> model_for(ApiClient & api, const std::string & name, bool * missing = nullptr) {
     auto [info, code] = show_model(api, name);
     if (code != 200) {
@@ -1672,9 +1668,6 @@ int cmd_stop(const std::vector<std::string> & args, ApiClient & api) {
 
 namespace {
 
-// One bar per layer and a spinner for every other status, the way
-// `ollama pull` draws them.
-// Every build of a repo, one per line, for a caller that cannot be asked.
 void list_builds(ApiClient & api, const std::string & repo) {
     ApiResult  r;
     const json d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(repo), nullptr, 120, r);
@@ -2096,9 +2089,6 @@ int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg) {
             std::printf("  removed from PATH\n");
         }
 
-        // The program that started us lives in the directory being deleted,
-        // so the last step goes to a hidden PowerShell that waits for this
-        // process to exit and retries the delete for a few seconds.
         const auto retry = [](const std::string & target, bool recurse) {
             const std::string flag = recurse ? " -Recurse" : "";
             return "for ($i = 0; $i -lt 30; $i++) { Remove-Item -LiteralPath '" + ps_quote(target) + "'" + flag +

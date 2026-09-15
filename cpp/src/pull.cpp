@@ -132,12 +132,6 @@ int64_t j_int(const json & j, const char * key) {
     return it->get<int64_t>();
 }
 
-// ------------------------------------------------------------- WinHTTP
-//
-// One request at a time, read in chunks. Both platforms answer to the same
-// two names: a Stream the caller drains with read_chunk, and open_stream to
-// start one.
-
 #ifdef _WIN32
 
 std::wstring widen(const std::string & s) {
@@ -196,11 +190,6 @@ struct Stream {
     }
 };
 
-// One session and one connection per thread, kept open between requests.
-// WinHTTP reuses the socket underneath a connection handle, so a worker that
-// asks for range after range pays for TLS once rather than every time: a
-// conversion reads its source in thousands of small ranges, and setting them
-// up was most of what it spent its time on.
 struct ThreadConn {
     Handle       session;
     Handle       connect;
@@ -325,10 +314,6 @@ bool open_stream(const std::string & url, const std::string & method, const std:
 
 // ---------------------------------------------------------------- libcurl
 
-// curl pushes bytes at a write callback, so the multi interface turns that
-// round: perform until the callback has left something in `pending`, then
-// hand it out. One perform delivers at most a few writes, so the buffer
-// stays small without pausing the transfer.
 CURLM * thread_multi() {
     static thread_local CURLM * m = curl_multi_init();
     return m;
@@ -1243,10 +1228,6 @@ int64_t dl_block() {
     return n;
 }
 
-// Hugging Face answers 429 when too many ranged requests are in flight, and it
-// stays cross for longer than an ordinary hiccup. The custom-build stream already
-// waits this long; a plain download used to give up after four tries inside ten
-// seconds and fail the whole pull partway through a file.
 bool rate_limited(int status) { return status == 429 || status == 503; }
 
 void back_off(int status, int attempt) {
@@ -1608,27 +1589,10 @@ void set_alias(const Config & cfg, const std::string & file, const std::string &
     write_alias(cfg, file, name, err);
 }
 
-// ----------------------------------------------------------------- RCO
-//
-// One quantization type per tensor under a size budget, applied to the
-// repository's best build. Rows are fetched, quantized and dropped a block
-// at a time, so neither the source nor a whole tensor is ever held.
-
 namespace {
 
-// A block of q8_0 rows costs about four times its size once expanded to
-// float, and two are in flight. With a 35B's importance matrix alongside
-// (190 MB) this keeps the whole conversion near 350 MB; the largest single
-// tensor in that model is 2 GB as float, so whole-tensor buffers were never
-// an option.
-// Tunable because the right size depends on the line: throughput is the bytes
-// in flight over the round trip, and a range request costs about a second
-// before its first byte whatever its size.
 int64_t block_bytes() { return (std::max<int64_t>)(1, env_int("LLMASH_RCO_BLOCK_MB", 48)) << 20; }
 
-// One request per half block. Eight small pieces per block put forty
-// requests in flight and Hugging Face refused them; the same bytes in fewer,
-// larger pieces do not.
 int64_t piece_bytes() { return (std::max<int64_t>)(1, env_int("LLMASH_RCO_PIECE_MB", 24)) << 20; }
 
 std::string mmss(double seconds) {
@@ -1642,11 +1606,6 @@ std::string pad_right(const std::string & s, size_t n) {
     return s.size() >= n ? s : s + std::string(n - s.size(), ' ');
 }
 
-// What to requantize FROM, in order of preference. Q8_0 first: its rounding
-// error is far under what 4 bits introduces, and it is a third of the
-// download a 16-bit build would be.
-// Narrowest first. A source only has to sit clear of the target to be worth
-// requantizing from, and the narrower one is a smaller download.
 const std::vector<std::string> & source_preference() {
     static const std::vector<std::string> pref = {"q6_k", "q8_0", "bf16", "f16", "q5_k_m"};
     return pref;
@@ -1709,12 +1668,6 @@ std::string find_imatrix(const std::vector<HfFile> & files) {
     return "";
 }
 
-// A stretch of a remote file, into a caller-owned buffer, over several
-// connections.
-// `min_piece` keeps the pieces large: throughput is (requests in flight) x
-// (bytes each), but it is the number of requests that trips a rate limiter,
-// so the same overlap is bought with fewer, bigger ones.
-// A source already here, spelled as a URL so one path covers both.
 bool is_local_url(const std::string & url) { return url.rfind("file://", 0) == 0; }
 
 std::string local_path_of(const std::string & url) { return url.substr(7); }
@@ -1787,9 +1740,6 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out
                     if (!open_stream(url, "GET", range, {}, stm, last)) {
                         // last carries the reason
                     } else if (stm.status == 429 || stm.status == 503) {
-                        // Too many at once. Wait longer than the usual retry:
-                        // the ceiling is the server's, and hurrying into it
-                        // only earns another refusal.
                         last = "the server is rate limiting this address";
                         std::this_thread::sleep_for(std::chrono::seconds(3 + attempt * 7));
                     } else if (stm.status != 200 && stm.status != 206) {
@@ -1843,22 +1793,10 @@ bool fetch_span(const std::string & url, int64_t from, int64_t bytes, char * out
     return true;
 }
 
-// Only what the source itself quantized. llama.cpp holds the expert router,
-// the norms and the state-space tensors at full precision on purpose, and
-// they are 2-D and block-aligned like any other, so going by shape alone
-// requantized the router and the model answered "the the the".
 bool quantizable(const ggufio::TensorEntry & t, const rco::Ggml & g) {
-    // A row only has to divide the narrowest block, not the widest. Demanding
-    // 256 skipped every expert tensor in gemma-4, whose rows are 704 and 2112:
-    // 8.3 GB, over half the model, stayed at the source's Q8_0 in a build asked
-    // for 3 bits. Which types a row can actually take is settled per tensor by
-    // rco::candidates_for_row.
     return t.dims.size() > 1 && t.dims[0] % 32 == 0 && t.rows() > 0 && g.quantized(static_cast<int>(t.type));
 }
 
-// One run of rows out of one tensor: what is fetched, quantized and written
-// as a unit. It may span experts, which are contiguous in the file; the
-// quantizer is handed each expert's own rows, since their weights differ.
 struct RowBlock {
     size_t  tensor = 0;
     int64_t from   = 0; // first row
@@ -2072,9 +2010,6 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
         return "";
     }
 
-    // Measure every tensor on a sample of its rows, then bisect the multiplier
-    // until the total lands on the budget. The sample is counted in weights
-    // rather than rows, which a wide tensor reaches in fewer of them.
     const int64_t          sample_weights = (std::max<int64_t>)(4096, env_int("LLMASH_RCO_SAMPLE", 128 * 1024));
     const std::vector<int> types          = rco::candidates_for(ggml, bpw);
 
@@ -2122,11 +2057,6 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
                     m.name       = t.name;
                     m.elements   = t.dims[0] * rows;
                     m.floor_bits = rco::floor_bits(t.name);
-                    // The types below a tensor's floor are also the slowest, and a
-                    // row that does not divide 256 can only take a 32-block type.
-                    // Nothing wider than the source either: the information is
-                    // not there to keep, and a Q6_K source was being written
-                    // back out as q8_0 for 36 of its tensors.
                     const double have = rco::bits_of_type(ggml, static_cast<int>(t.type));
                     std::vector<int> mine;
                     for (const int ty : rco::candidates_for_row(ggml, types, t.dims[0])) {
@@ -2228,11 +2158,6 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
         expected += (n + layout.align - 1) / layout.align * layout.align;
     }
 
-    // A ring of blocks in flight. One ahead was not enough: a range request
-    // costs about a second before its first byte whatever its size, so with
-    // only eight outstanding the machine spent three quarters of the
-    // conversion waiting rather than quantizing. Depth hides that latency;
-    // the block size is what holds the memory down.
     const std::vector<RowBlock>    blocks = plan_blocks(layout, ggml, chosen);
     const int                      depth  = (std::max)(2, env_int("LLMASH_RCO_AHEAD", 5));
     std::vector<std::string>       buf(static_cast<size_t>(depth));
@@ -2298,9 +2223,6 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
             const size_t  dst_row = ggml.row_size(ty, n_per);
             qbuf.assign(dst_row * static_cast<size_t>(b.rows) + 64, 0);
 
-            // Every thread takes a run of rows inside one expert: a dense
-            // tensor has one expert, and quantizing it on a single thread
-            // was most of the time this used to take.
             const int64_t per_expert = (std::max<int64_t>)(1, t.rows() / (std::max<int64_t>)(t.experts(), 1));
             // Per tensor, not per build: the GPU carries some of the types and
             // leaves the rest, and the ones it leaves still want the pool.
@@ -2317,9 +2239,6 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
                 const int64_t abs  = b.from + at;
                 const int64_t e    = abs / per_expert;
                 const int64_t left = (std::min)(b.rows - at, per_expert - abs % per_expert);
-                // Slicing a run across the pool is what parallelises the CPU
-                // quantizer; the GPU one serialises internally, so cutting it
-                // up only pays for more round trips.
                 const int64_t step = on_gpu ? left : (std::max<int64_t>)(1, (left + nthread - 1) / nthread);
                 for (int64_t k = 0; k < left; k += step) {
                     runs.push_back(Run{at + k, (std::min)(step, left - k), e});
@@ -2437,9 +2356,6 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
     }
     out.close();
 
-    // A scanner opening the file behind us fails the rename with a sharing
-    // violation, and an unchecked one reported "-1 B at -0.00 bpw" for a build
-    // that was sitting there finished.
     for (int attempt = 0; attempt < 20; attempt++) {
         ec.clear();
         fs::rename(tmp, dest, ec);
@@ -3166,9 +3082,6 @@ RegistryBuild inspect_registry_build(const RegistryManifest & m) {
         b.unloadable          = unloadable_build(meta);
         b.size                = layer.size;
         b.quant               = quant_of_file_type(meta);
-        // The registry serves one build per tag and publishes no list of
-        // them, so the other builds of a model are the ones the Hugging Face
-        // repository behind it carries.
         b.hf_repo = hf_equivalent(m.repo, m.tag, meta, b.quant);
         return b;
     }
@@ -3177,9 +3090,6 @@ RegistryBuild inspect_registry_build(const RegistryManifest & m) {
 
 namespace {
 
-// "llama-3.2-1b" is how the file on disk is named, and how `list` shows it.
-// The registry writes the size as a tag and runs the rest together, so the
-// same model is "llama3.2:1b" there.
 std::string registry_form(const std::string & ref) {
     if (contains(ref, ":") || contains(ref, "/")) {
         return "";

@@ -8,9 +8,6 @@ namespace llmash {
 
 namespace {
 
-// Owns a subprocess_s: subprocess_destroy() always runs once create()
-// succeeds, on every return path (RAII in place of Go's SysProcAttr flags +
-// manual cmd.Process.Release()).
 class ScopedProcess {
 public:
     ~ScopedProcess() {

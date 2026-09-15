@@ -46,9 +46,6 @@ PowerShellRun run_hidden_powershell(const std::string & script) {
     }
     result.started = true;
 
-    // Drained concurrently with the wait below: a script that ever printed
-    // more than one pipe buffer's worth would otherwise deadlock against
-    // subprocess_join (child blocked writing, parent blocked joining).
     std::thread drain([&] {
         char     buf[4096];
         unsigned n;

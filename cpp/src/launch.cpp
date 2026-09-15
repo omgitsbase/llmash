@@ -155,9 +155,6 @@ std::vector<std::string> current_environment() {
 
 #endif
 
-// Launches exe with args, giving the child our real console (stdin/stdout/
-// stderr are inherited, not piped) so an interactive CLI works exactly as if
-// the user typed it themselves; this is runInherit in the Go original.
 [[noreturn]] void run_inherit(const std::string & exe, const std::vector<std::string> & args,
                                const std::vector<std::string> * env) {
 #ifndef _WIN32

@@ -127,10 +127,6 @@ private:
     void        pasted_line(std::ostream & out);
 };
 
-// Terminal cell width: two columns for the wide CJK and emoji blocks, none
-// for combining marks (a fixed set of the common combining-mark blocks, not
-// the full Unicode Mn/Me category tables the Go original gets from its
-// standard library).
 int disp_width(const std::u32string & s);
 int disp_width(const std::string & utf8);
 

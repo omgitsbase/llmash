@@ -229,6 +229,38 @@ std::string transport_error(httplib::Error e) {
     return "httplib::Error: " + httplib::to_string(e);
 }
 
+// A child that exited mid-answer arrives here as a transport error. Name it,
+// and save the request that killed it beside the model's log.
+std::string upstream_failure(Instance * inst, const std::string & err, const json & payload) {
+    if (inst == nullptr || inst->alive()) {
+        return err;
+    }
+    std::string base = inst->logfile;
+    if (base.size() > 4 && base.compare(base.size() - 4, 4, ".log") == 0) {
+        base.erase(base.size() - 4);
+    }
+    std::string saved;
+    if (!base.empty()) {
+        const std::string path =
+            base + "-crash-" + std::to_string(static_cast<long long>(now_seconds())) + ".json";
+        json rec        = json::object();
+        rec["model"]    = inst->model.name;
+        rec["log_tail"] = inst->tail_log(8192);
+        rec["request"]  = payload;
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << rec.dump(1);
+            saved = path;
+        }
+    }
+    std::string msg = "llama-server for " + inst->model.name + " exited while answering (" + err +
+                      "); it is started again on the next request. Its log: " + inst->logfile;
+    if (!saved.empty()) {
+        msg += "; the request that hit it: " + saved;
+    }
+    return msg;
+}
+
 // POST json and hand every decoded SSE event to on_event, which returns false
 // to stop reading. sseLines()'s job, plus the status check around it.
 Upstream post_sse(int port, const std::string & path, const json & payload,
@@ -529,7 +561,7 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
                 return !s.stop;
             });
             if (!up.sent) {
-                emit(error_obj(up.error));
+                emit(error_obj(upstream_failure(inst, up.error, pay)));
                 return;
             }
             if (up.status != 200) {
@@ -632,7 +664,7 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
                 return true;
             });
             if (!up.sent && ok) {
-                fail(up.error);
+                fail(upstream_failure(inst, up.error, body));
             } else if (up.sent && up.status != 200) {
                 fail("llama-server " + std::to_string(up.status) + ": " + up.detail);
             }

@@ -129,9 +129,6 @@ std::string human_duration_seconds(double seconds) {
     return buf;
 }
 
-// RFC3339(-nano): "YYYY-MM-DDTHH:MM:SS[.frac](Z|+HH:MM|-HH:MM)". Returns -1
-// on anything that doesn't parse; good enough for what a JSON API actually
-// sends, not a general-purpose parser.
 double parse_rfc3339(const std::string & s) {
     if (s.size() < 20) {
         return -1;

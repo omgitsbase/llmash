@@ -216,9 +216,6 @@ void Progress::render_locked() {
     if (!stderr_is_terminal()) {
         return;
     }
-    // 2026 is synchronized output: the terminal shows the whole frame at once
-    // instead of each line as it arrives, and 25l hides the caret, which is
-    // what was flickering through every redraw.
     out("\x1b[?2026h");
     out("\x1b[?25l");
     for (int i = 0; i < pos_ - 1; i++) {

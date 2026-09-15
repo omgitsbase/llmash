@@ -164,10 +164,6 @@ double     g_vram_free  = 0;
 double     g_vram_total = 0;
 bool       g_vram_known = false;
 
-// Free VRAM as the driver reports it, cached for two seconds; unknown reads
-// as no GPU rather than as an 80 GB card, since assuming the budget on a
-// machine with none of it sends every context calculation and offload
-// decision the wrong way.
 void read_vram_locked() {
     if (now_f() - g_vram_at < 2.0) {
         return;
@@ -282,10 +278,6 @@ std::vector<std::string> offload_devices(const std::string & llama_bin) {
     return g_dev_cache;
 }
 
-// can_offload() is a free function per manager.h with no Config to read, so
-// it locates llama-server the same minimal way config.cpp's own resolver
-// does (LLAMA_BIN, then the install's runtime folder) for its own use; a
-// caller that already has a Config (Instance::args) passes its real path in.
 std::string guess_llama_bin() {
     std::string v = env_str("LLAMA_BIN");
     if (!v.empty()) {
@@ -381,9 +373,6 @@ std::string explain_load_failure(const std::string & raw, const Config & cfg) {
     return "llama-server failed to start.";
 }
 
-// Owns the child's pipe for its whole life and writes what comes out of it
-// to logfile, so tail_log has something to read; touches nothing on
-// Instance, since this thread outlives any single call into it.
 void drain_to_file(subprocess_s proc, std::string logfile) {
     ScopedSubprocess sp;
     sp.proc  = proc;
@@ -581,10 +570,6 @@ std::pair<int, uint64_t> cpu_threads_and_mask() {
     if (nm.first <= 0 || (hw != 0 && static_cast<unsigned>(nm.first) > hw)) {
         return {0, 0};
     }
-    // Dropping the efficient cores only pays when enough performance cores
-    // are left to carry the work. A laptop with two of them, pinned, is far
-    // slower than letting llama.cpp spread over everything it can see, so
-    // below four this leaves the default alone. LLMASH_THREADS overrides.
     if (nm.first < 4) {
         return {0, 0};
     }
@@ -1016,10 +1001,6 @@ std::string Instance::start() {
 }
 
 void Instance::mark_loaded() {
-    // No wait primitive is exposed for this signal (see the report): the one
-    // caller in the Go original that blocked on it can never observe a not-
-    // yet-finished load here, since Manager::get serializes every load
-    // behind one global lock before calling start().
 }
 
 void Instance::stop() {
@@ -1068,9 +1049,6 @@ void erase_ptr(std::vector<std::unique_ptr<Instance>> & live, Instance * target)
                live.end());
 }
 
-// Serializes every model load, matching manager.go's package-level `load`
-// mutex ("held across a load, like the Python lock"); manager.h leaves no
-// room for it as a Manager field, so it lives here instead.
 std::mutex g_load_mu;
 
 } // namespace
@@ -1391,10 +1369,6 @@ Tuning auto_tune() {
         }
     }
 
-    // Prompt processing runs in physical batches; the stock 512 leaves a big
-    // card idle. The batch costs a few hundred MB, so the card's size is what
-    // decides it: gating on free VRAM meant a second resident model quietly
-    // dropped every later load back to 512 and with it the prompt speed.
     if (tune_enabled("batch")) {
         int        ub = env_int("LLMASH_UBATCH", 0);
         int        b  = env_int("LLMASH_BATCH", 0);
