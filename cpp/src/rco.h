@@ -66,7 +66,7 @@ std::vector<int> candidates_for(const Ggml & g, double bpw);
 
 std::vector<int> candidates_for_row(const Ggml & g, const std::vector<int> & types, int64_t n_per_row);
 
-constexpr double DEFAULT_BPW = 3.9;
+constexpr double DEFAULT_BPW = 3.0;
 
 double bits_of_type(const Ggml & g, int type);
 
