@@ -1,5 +1,6 @@
 #include "config.h"
 #include "platform.h"
+#include "gguf.h"
 #include "registry.h"
 
 #include <cstdio>
@@ -86,6 +87,19 @@ int main() {
     eq(loose_name("D:/m/Qwen3-8B-Q4_K_M-00001-of-00002.gguf"), "qwen3-8b:q4_k_m", "shards resolve to one name");
     eq(loose_name("D:/m/Some_Model.gguf"), "some-model:gguf", "underscores in the name become dashes");
     eq(loose_name("D:/m/Model.i1-Q6_K.gguf"), "model:q6_k", "an imatrix marker is not part of the name");
+    eq(loose_name("D:/m/Long-Name-NM-DAU.i1-RCO-2.4.gguf"), "long-name-nm-dau:rco-2.4", "nor before a custom width");
+
+    {
+        GGUFInfo g;
+        g.n_layer = 65, g.attn_every = 4, g.head_kv = 4, g.key_len = 256, g.value_len = 256;
+        g.ssm_state = 128, g.ssm_inner = 6144;
+        check(g.kv_bytes_per_token() == 65536.0, "a hybrid model's cache counts only the layers that attend");
+        check(g.state_bytes() == 49.0 * 6144 * 128 * 4, "its recurrent layers hold a fixed state");
+        GGUFInfo d;
+        d.n_layer = 28, d.head_kv = 8, d.key_len = 128, d.value_len = 128;
+        check(d.kv_bytes_per_token() == 28.0 * 8 * 256 * 2, "a dense model's cache counts every layer");
+        check(kv_type_scale("q8_0") == 34.0 / 64.0, "q8_0 spends about half of f16");
+    }
 
     const std::optional<Model> qwen = reg.find("qwen3-8b");
     check(qwen.has_value(), "a model at the top level is found");

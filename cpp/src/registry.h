@@ -37,6 +37,8 @@ struct Model {
     int         ctx_train = 0;
     int         experts = 0;
     int         experts_used = 0;
+    double      kv_bytes_tok = 0;   // f16 cache per token of context, from the header
+    double      state_bytes  = 0;   // per-sequence state that does not grow with the context
     std::vector<std::string> caps;
 };
 

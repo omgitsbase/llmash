@@ -1,6 +1,7 @@
 #include "gguf.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <vector>
@@ -41,6 +42,28 @@ struct Reader {
         return s;
     }
 
+    // A scalar as one element, an array as all of them, capped; anything else
+    // consumed as zeros.
+    std::vector<uint64_t> ints(uint32_t type) {
+        std::vector<uint64_t> out;
+        if (type != T_ARRAY) {
+            out.push_back(num_any(type));
+            return out;
+        }
+        const uint32_t et = num<uint32_t>();
+        const uint64_t n  = num<uint64_t>();
+        if (bad || n > (1ull << 32)) {
+            bad = true;
+            return out;
+        }
+        for (uint64_t i = 0; i < n && !bad; i++) {
+            const uint64_t v = num_any(et);
+            if (out.size() < 4096) {
+                out.push_back(v);
+            }
+        }
+        return out;
+    }
     uint64_t num_any(uint32_t type) {
         switch (type) {
             case T_UINT8:  case T_INT8:  case T_BOOL: { uint8_t v = num<uint8_t>();  return v; }
@@ -83,6 +106,48 @@ bool contains(const std::string & hay, const char * needle) {
 }
 
 } // namespace
+
+double kv_type_scale(const std::string & kv_type) {
+    std::string t;
+    for (const char c : kv_type) {
+        t += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (t == "f32") return 2.0;
+    if (t == "q8_0") return 34.0 / 64.0;
+    if (t == "q5_1") return 24.0 / 64.0;
+    if (t == "q5_0") return 22.0 / 64.0;
+    if (t == "q4_1") return 20.0 / 64.0;
+    if (t == "q4_0" || t == "iq4_nl") return 18.0 / 64.0;
+    return 1.0;  // f16, bf16
+}
+
+double GGUFInfo::kv_bytes_per_token() const {
+    if (n_layer <= 0 || head_kv <= 0) {
+        return 0;
+    }
+    const int kl = key_len > 0 ? key_len : (head_count > 0 && embd > 0 ? embd / head_count : 128);
+    const int vl = value_len > 0 ? value_len : kl;
+    int attend = attn_every > 0 ? n_layer / attn_every : n_layer;
+    attend -= swa_layers;
+    if (attend < 0) {
+        attend = 0;
+    }
+    return static_cast<double>(attend) * head_kv * (kl + vl) * 2.0;
+}
+
+double GGUFInfo::state_bytes() const {
+    double b = 0;
+    if (attn_every > 0 && ssm_state > 0 && ssm_inner > 0) {
+        b += static_cast<double>(n_layer - n_layer / attn_every) * ssm_inner * ssm_state * 4.0;
+    }
+    if (swa_window > 0 && swa_layers > 0) {
+        const int kl = key_len_swa > 0 ? key_len_swa : (key_len > 0 ? key_len : 128);
+        const int vl = value_len_swa > 0 ? value_len_swa : kl;
+        const int hk = head_kv_swa > 0 ? head_kv_swa : head_kv;
+        b += static_cast<double>(swa_layers) * hk * (kl + vl) * 2.0 * swa_window;
+    }
+    return b;
+}
 
 std::string file_type_name(uint32_t ft) {
     switch (ft) {
@@ -132,6 +197,8 @@ GGUFInfo read_gguf(const std::string & path) {
         return info;
     }
     info.n_tensors = static_cast<uint32_t>(n_tensors);
+    std::vector<uint64_t> head_kv_per_layer;
+    std::vector<uint64_t> swa_pattern;  // 1 where a layer sees only its window
 
     for (uint64_t i = 0; i < n_kv && !r.bad; i++) {
         const std::string key  = r.str();
@@ -163,6 +230,33 @@ GGUFInfo read_gguf(const std::string & path) {
             info.experts_used = static_cast<int>(r.num_any(type));
         } else if (ends_with(key, ".pooling_type")) {
             info.has_pooling = r.num_any(type) != 0;
+        } else if (ends_with(key, ".block_count")) {
+            info.n_layer = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".embedding_length")) {
+            info.embd = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".attention.head_count")) {
+            const auto v = r.ints(type);
+            info.head_count = v.empty() ? 0 : static_cast<int>(v[0]);
+        } else if (ends_with(key, ".attention.head_count_kv")) {
+            head_kv_per_layer = r.ints(type);
+        } else if (ends_with(key, ".attention.key_length")) {
+            info.key_len = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".attention.value_length")) {
+            info.value_len = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".attention.key_length_swa")) {
+            info.key_len_swa = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".attention.value_length_swa")) {
+            info.value_len_swa = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".full_attention_interval")) {
+            info.attn_every = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".attention.sliding_window")) {
+            info.swa_window = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".attention.sliding_window_pattern")) {
+            swa_pattern = r.ints(type);
+        } else if (ends_with(key, ".ssm.state_size")) {
+            info.ssm_state = static_cast<int>(r.num_any(type));
+        } else if (ends_with(key, ".ssm.inner_size")) {
+            info.ssm_inner = static_cast<int>(r.num_any(type));
         } else if (key == "general.base_model.0.repo_url" && type == T_STRING) {
             info.base_repo_url = r.str();
         } else if (key == "general.base_model.0.organization" && type == T_STRING) {
@@ -182,6 +276,20 @@ GGUFInfo read_gguf(const std::string & path) {
     }
     if (r.bad || info.arch.empty()) {
         return info;
+    }
+    // the kv head count on a full layer, and on a windowed one, when they differ
+    for (size_t i = 0; i < head_kv_per_layer.size(); i++) {
+        const bool windowed = i < swa_pattern.size() && swa_pattern[i] != 0;
+        int &      slot     = windowed ? info.head_kv_swa : info.head_kv;
+        if (slot == 0) {
+            slot = static_cast<int>(head_kv_per_layer[i]);
+        }
+    }
+    for (const uint64_t w : swa_pattern) {
+        info.swa_layers += w != 0;
+    }
+    if (info.head_kv == 0) {
+        info.head_kv = info.head_kv_swa;
     }
 
     for (uint64_t i = 0; i < n_tensors && !r.bad; i++) {
