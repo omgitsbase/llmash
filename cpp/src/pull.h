@@ -10,6 +10,7 @@
 #include <functional>
 #include <istream>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -75,7 +76,13 @@ struct HfFile {
     int64_t     size = 0;
 };
 
-std::vector<HfFile>   hf_files(const std::string & repo, std::string * err = nullptr);
+// `others` collects the extensions of the repo's non-GGUF files, so a repo
+// that holds none can say what it does hold.
+std::vector<HfFile>   hf_files(const std::string & repo, std::string * err = nullptr,
+                               std::set<std::string> * others = nullptr);
+
+// "safetensors and MLX weights" from those extensions, empty when there are none
+std::string other_formats_text(const std::set<std::string> & exts);
 std::vector<HfFile>   pick_gguf(const std::vector<HfFile> & files, const std::string & quant);
 std::optional<HfFile> pick_mmproj(const std::vector<HfFile> & files);
 std::string           quant_tag(const std::string & name);
