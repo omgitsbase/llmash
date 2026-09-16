@@ -356,6 +356,8 @@ public:
     double      nudge_after_s = 15;
     int         think_budget  = 32000;
     std::string nudge_text;
+    bool        verbose       = false;  // a speed line per turn through `log`
+    json        tm_;                    // the last timings block llama-server sent
 
     double now = 0;
 
@@ -399,6 +401,9 @@ public:
             }
         }
         const json tm    = jsub(ev, "timings");
+        if (!tm.empty()) {
+            tm_ = tm;
+        }
         bool       has_gen = tm.contains("predicted_n");
         int        gen_n   = has_gen ? static_cast<int>(to_float(tm["predicted_n"])) : 0;
         if (tm.contains("prompt_n") && !tm["prompt_n"].is_null()) {
@@ -518,6 +523,23 @@ public:
         int prompt_eval = n_in;
         if (n_reproc >= 0) {
             prompt_eval = n_reproc;
+        }
+        if (verbose && log) {
+            const int    gen    = tm_.contains("predicted_n") ? static_cast<int>(jnum(tm_, "predicted_n")) : n_out;
+            const double gen_s  = tm_.contains("predicted_ms") ? jnum(tm_, "predicted_ms") / 1000.0 : total - load;
+            const int    cached = static_cast<int>(jnum(tm_, "cache_n"));
+            char         buf[240];
+            std::snprintf(buf, sizeof(buf),
+                          "%s: %d tok in %.2f s, %.0f tok/s | prompt %d tok, %d cached, %.2f s | first token %.2f s",
+                          model.c_str(), gen, gen_s, gen_s > 0 ? gen / gen_s : 0.0, prompt_eval + cached, cached,
+                          jnum(tm_, "prompt_ms") / 1000.0, load);
+            std::string line = buf;
+            if (const double dn = jnum(tm_, "draft_n"); dn > 0) {
+                const double da = jnum(tm_, "draft_n_accepted");
+                std::snprintf(buf, sizeof(buf), " | draft %.0f%% (%.0f/%.0f)", 100.0 * da / dn, da, dn);
+                line += buf;
+            }
+            log(line);
         }
         out.push_back(final_event(model, finish, total, load, prompt_eval, n_out, iso_time(now)));
         return out;

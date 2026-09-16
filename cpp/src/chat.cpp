@@ -70,6 +70,7 @@ struct Knobs {
     double                   nudge_after_s = 15;
     int                      lowlat_predict = 8;
     int                      v1_ctx         = 32768;
+    bool                     verbose        = false;
 };
 
 const Knobs & knobs(const Config & cfg) {
@@ -81,6 +82,7 @@ const Knobs & knobs(const Config & cfg) {
         k.nudge_after_s  = env_float("LLMASH_NUDGE_S", 15);
         k.lowlat_predict = env_int("LLMASH_LOWLAT_PREDICT", 8);
         k.v1_ctx         = env_int("LLMASH_V1_CTX", 32768);
+        k.verbose        = env_str("LLMASH_VERBOSE") == "1";
 
         std::ifstream in(cfg.root + "\\local.json", std::ios::binary);
         if (!in) {
@@ -435,8 +437,7 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
     std::string       hoff;
     const std::string custom = jstr(opts, "handoff");
     if (!custom.empty() && !(think_is_bool && !think_bool)) {
-        hoff         = "<think>
-" + custom;
+        hoff         = "<think>\n" + custom;
         json m       = json::object();
         m["role"]    = "assistant";
         m["content"] = hoff;
@@ -487,13 +488,15 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
     const double nudge_after_s = k.nudge_after_s;
     const int    think_budget  = k.think_budget;
 
-    events = [payload, name, hoff, port, inst, nudge_after_s, think_budget](const Emit & emit) {
+    const bool   verbose       = k.verbose;
+    events = [payload, name, hoff, port, inst, nudge_after_s, think_budget, verbose](const Emit & emit) {
         ChatStream st;
         st.model         = name;
         st.hoff          = hoff;
         st.prefill       = hoff;
         st.nudge_after_s = nudge_after_s;
         st.think_budget  = think_budget;
+        st.verbose       = verbose;
         st.nudge_text    = kNudgeText;
         st.log           = &log_chat;
 

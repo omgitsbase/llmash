@@ -175,6 +175,7 @@ Aliases:
 
 Flags:
   -h, --help   help for serve
+      --verbose  print a line per turn: tokens, tok/s, prompt cache, draft acceptance
 
 Environment Variables:
       OLLAMA_HOST                   IP Address for the ollama server (default 127.0.0.1:11434)
