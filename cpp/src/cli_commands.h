@@ -46,6 +46,7 @@ struct Tiers {
 struct BuildChoice {
     std::string quant;
     std::string mtp;
+    std::string repo;     // set when the builds came from another repo than the one asked for
     bool        registry = false;
 };
 

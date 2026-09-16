@@ -52,6 +52,26 @@ double secs_since(ProgClock::time_point t) {
     return std::chrono::duration<double>(ProgClock::now() - t).count();
 }
 
+// Rows a line takes on screen: past the width it wraps, and the redraw has to
+// climb over every row it left.
+int rows_of(const std::string & line, int w) {
+    int cols = 0;
+    for (size_t i = 0; i < line.size(); i++) {
+        const unsigned char c = static_cast<unsigned char>(line[i]);
+        if (c == 0x1b) {
+            if (i + 1 < line.size() && line[i + 1] == '[') {
+                for (i += 2; i < line.size() && (line[i] < 0x40 || line[i] > 0x7e); i++) {
+                }
+            }
+            continue;
+        }
+        if ((c & 0xc0) != 0x80) {
+            cols++;
+        }
+    }
+    return std::max(1, (cols + w - 1) / w);
+}
+
 } // namespace
 
 // ------------------------------------------------------------------ spinner
@@ -216,22 +236,29 @@ void Progress::render_locked() {
     if (!stderr_is_terminal()) {
         return;
     }
+    int w = terminal_columns();
+    if (w <= 0) {
+        w = kTermWidth;
+    }
     out("\x1b[?2026h");
     out("\x1b[?25l");
     for (int i = 0; i < pos_ - 1; i++) {
         out("\x1b[A");
     }
     out("\x1b[1G");
-    const int max = std::min(static_cast<int>(states_.size()), kTermHeight);
+    const int max  = std::min(static_cast<int>(states_.size()), kTermHeight);
+    int       rows = 0;
     for (size_t i = states_.size() - static_cast<size_t>(max); i < states_.size(); i++) {
         const std::string line = states_[i]->str();
         std::fputs(line.c_str(), stderr);
         out("\x1b[K");
+        rows += rows_of(line, w);
         if (i + 1 < states_.size()) {
             out("\n");
         }
     }
-    pos_ = static_cast<int>(states_.size());
+    out("\x1b[J");
+    pos_ = rows;
     out("\x1b[?25h");
     out("\x1b[?2026l");
     std::fflush(stderr);

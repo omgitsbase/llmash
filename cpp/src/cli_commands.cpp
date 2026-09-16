@@ -567,6 +567,11 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     const bool      have = r.ok && r.status == 200;
     const std::string repo       = have ? j_str(d, "repo") : model;
     const std::string rco_source = have ? j_str(d, "rco_source") : "";
+    const std::string from       = have ? j_str(d, "from") : "";
+    if (!from.empty()) {
+        choice.repo = "hf:" + repo;
+    }
+    const std::string head = from.empty() ? title : from + " holds no GGUF build, so these are " + repo + "'s:";
 
     std::vector<QuantInfo> quants, plain, custom;
     if (have) {
@@ -656,7 +661,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         const int                n =
             showing_all ? pick_menu(repo + ", every build:", texts(full), cursor,
                                     kArrows + " move   enter choose   a back", "aA")
-                        : pick_menu(title, texts(basic), cursor, kArrows + " move   enter choose   a all builds", "aA");
+                        : pick_menu(head, texts(basic), cursor, kArrows + " move   enter choose   a all builds", "aA");
         if (n == -1) {
             throw CliExit(1);
         }
@@ -1752,7 +1757,7 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
             const QuantInfo   here = {j_str(d, "quant"), static_cast<int64_t>(j_num(d, "size")), 1};
             const BuildChoice c    = choose_build(api, "hf:" + hf, "", here, model + ", which build?");
             if (!c.registry) {
-                repo  = "hf:" + hf;
+                repo  = c.repo.empty() ? "hf:" + hf : c.repo;
                 as    = model;
                 quant = c.quant;
                 mtp   = c.mtp;
@@ -1764,6 +1769,9 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
         const BuildChoice c = choose_build(api, repo, quant, std::nullopt, repo + ", which build?");
         quant               = c.quant;
         mtp                 = c.mtp;
+        if (!c.repo.empty()) {
+            repo = c.repo;
+        }
     }
     // Nothing here can answer a prompt, so the builds go out as data and the
     // default is taken. Naming one is a re-run with --quant.
