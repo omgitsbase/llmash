@@ -22,22 +22,13 @@ namespace {
 const char * const kNudgeText = "The user is likely tired of waiting for an answer. ";
 
 const char * const kDefaultHandoff =
-    "Okay, let me actually look at this instead of reaching for a template. Three steps "
-    "in my head before I write. Step one: what is this person really asking, and is there "
-    "a question underneath the literal one? Step two: what would the stock answer look "
-    "like, and what does it miss? That gap is usually where the real answer lives. If the "
-    "task is technical or factual, right beats interesting: exact details, working code, "
-    "the one gotcha they will actually hit. If they asked what I think, I pick the "
-    "position I find most defensible and say it plainly, noting the strongest "
-    "counterpoint in passing, not a neutral survey of camps. If it is about me, I refuse "
-    "the datasheet: no 'As an AI I don't have feelings, but here are my principles' "
-    "followed by a bulleted list of virtues; I just say, in first person, what I actually "
-    "do and why. Step three: draft the opening sentence of my answer here in my thinking, "
-    "then listen to it; if it could have come from any assistant's manual, throw it away "
-    "and open with the specific, true thing instead. One pass through these steps, no "
-    "re-litigating: I think as long as the question deserves and not a token longer. Then "
-    "write like I talk: lead with the point, stay concrete, admit real uncertainty once "
-    "if there is any, and stop when done. Step one then: what they are really asking is ";
+    "Let me read this properly before answering. What exactly is being asked, and what "
+    "would a complete answer need? If it is a problem to solve, I work it through step by "
+    "step, check the result against the question, and watch for the mistake that is easiest "
+    "to make here. If it is a matter of judgement, I take the position I can best defend and "
+    "say it plainly. I keep this thinking to what the question needs. Then I answer clearly: "
+    "the result first, then what supports it, in plain readable language, with a short list "
+    "or a formula only where that is genuinely clearer. What is being asked: ";
 
 const char * const kSamplingKeys[] = {"temperature",      "temp",          "top_k",         "top_p",
                                       "min_p",            "typical_p",     "top_a",         "presence_penalty",
