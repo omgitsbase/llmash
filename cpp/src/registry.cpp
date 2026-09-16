@@ -379,6 +379,8 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.ctx_train    = static_cast<int>(g.ctx_train);
         mo.experts      = g.experts;
         mo.experts_used = g.experts_used;
+        mo.kv_bytes_tok = g.kv_bytes_per_token();
+        mo.state_bytes  = g.state_bytes();
         mo.projector    = find_projector_for(path);
         mo.caps         = caps_for(g, mo.projector, dir);
 
@@ -516,6 +518,8 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
         mo.ctx_train    = static_cast<int>(g.ctx_train);
         mo.experts      = g.experts;
         mo.experts_used = g.experts_used;
+        mo.kv_bytes_tok = g.kv_bytes_per_token();
+        mo.state_bytes  = g.state_bytes();
         // A store model keeps its vision encoder in a layer of its own.
         mo.projector = find_projector_for(path.string());
         if (mo.projector.empty() && !projector_blob.empty() && fs::exists(blobs / projector_blob, ec)) {

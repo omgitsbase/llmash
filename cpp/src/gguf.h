@@ -30,7 +30,32 @@ struct GGUFInfo {
     std::string base_repo_url;              // general.base_model.0.repo_url
     std::string base_org;                   // general.base_model.0.organization
     std::string base_name;                  // general.base_model.0.name
+
+    // The attention geometry, for sizing the cache a context costs.
+    int n_layer     = 0;  // <arch>.block_count
+    int head_count  = 0;  // attention.head_count
+    int head_kv     = 0;  // attention.head_count_kv on a layer that attends over the whole context
+    int head_kv_swa = 0;  // the same on a sliding-window layer
+    int key_len     = 0;  // attention.key_length, value_length
+    int value_len   = 0;
+    int key_len_swa = 0;
+    int value_len_swa = 0;
+    int embd        = 0;  // embedding_length
+    int attn_every  = 0;  // full_attention_interval: the other layers are recurrent (0: all attend)
+    int swa_window  = 0;  // attention.sliding_window
+    int swa_layers  = 0;  // layers on the window, from sliding_window_pattern
+    int ssm_state   = 0;  // ssm.state_size
+    int ssm_inner   = 0;  // ssm.inner_size
+
+    // Bytes of K/V one token costs across the layers that see the whole
+    // context, at an f16 cache; and the per-sequence state that does not grow
+    // with it: recurrent layers, and windowed layers up to their window.
+    double kv_bytes_per_token() const;
+    double state_bytes() const;
 };
+
+// How many bytes a cache type spends per f16 byte: 1 for f16, about half for q8_0.
+double kv_type_scale(const std::string & kv_type);
 
 // ok=false for anything that is not a GGUF.
 GGUFInfo read_gguf(const std::string & path);

@@ -165,17 +165,20 @@ The server comes up with the tray. `llmash serve` runs the server in this
 console instead.
 )HELP";
 
-const std::string k_serve_help_body = R"HELP(Start Ollama
+const std::string k_serve_help_body = R"HELP(Run the server in this console
 
 Usage:
   ollama serve [flags]
 
-Aliases:
-  serve, start
-
 Flags:
-  -h, --help   help for serve
-      --verbose  print a line per turn: tokens, tok/s, prompt cache, draft acceptance
+      --host ADDR    address to listen on (default 127.0.0.1; 0.0.0.0 reaches the LAN)
+      --port N       port (default 11434)
+      --ctx N        context length: the default when a request names none, and the most any request gets
+      --kv TYPE      K/V cache type: f16, q8_0 or q4_0 (default f16; q8_0 halves the cache)
+      --verbose      print a line per turn: tokens, tok/s, prompt cache, draft acceptance
+  -h, --help         this
+
+`ollama start` runs the same server in the background, with the tray icon.
 
 Environment Variables:
       OLLAMA_HOST                   IP Address for the ollama server (default 127.0.0.1:11434)
@@ -186,7 +189,7 @@ Environment Variables:
       LLMASH_EXTRA_ROOTS           Other Ollama stores read alongside the models directory, ';' between them
       LLMASH_PORT                  Port for the local API (default 11434)
       LLMASH_PUBLIC_PORT           Keyed public listener for )HELP" "`ollama link`" R"HELP( (default 11435, 0 = off)
-      LLMASH_CTX                   Default context length (default 8192)
+      LLMASH_CTX                   Context length: the default, and the most any request gets (default 8192)
       LLMASH_KV                    Quantization type for the K/V cache (default "f16")
       LLMASH_LOAD_MODE             How weights reach VRAM: dio or mmap (default "dio")
       LLMASH_VRAM_GB               VRAM budget for resident models (default 80)

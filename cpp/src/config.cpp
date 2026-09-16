@@ -195,6 +195,7 @@ Config load_config() {
     c.port        = env_int("LLMASH_PORT", 11434);
     c.public_port = env_int("LLMASH_PUBLIC_PORT", 11435);
     c.ctx         = env_int("LLMASH_CTX", 8192);
+    c.ctx_cap     = env_str("LLMASH_CTX").empty() ? 0 : c.ctx;
     c.parallel    = env_int("LLMASH_PARALLEL", 1);
     c.kv_type     = env_str("LLMASH_KV", "f16");
     c.load_mode   = env_str("LLMASH_LOAD_MODE", "dio");

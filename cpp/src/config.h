@@ -16,6 +16,7 @@ struct Config {
     int         port         = 11434;
     int         public_port  = 11435;
     int         ctx          = 8192;
+    int         ctx_cap      = 0;    // LLMASH_CTX or serve --ctx, when given: no request gets more
     int         parallel     = 1;
     std::string kv_type      = "f16";
     std::string load_mode    = "dio";

@@ -1,5 +1,7 @@
 #include "serve.h"
 
+#include "help.h"
+
 #include "api.h"
 #include "api_logic.h"
 #include "cli_util.h"
@@ -174,19 +176,39 @@ void tune_server(httplib::Server & srv) {
 } // namespace
 
 int cmd_serve(const std::vector<std::string> & args) {
+    for (const std::string & a : args) {
+        if (a == "-h" || a == "--help") {
+            std::fputs(prog_text(*command_help("serve"), clidoc::prog_name()).c_str(), stdout);
+            return 0;
+        }
+    }
     Config cfg = load_config();
     setup_logging(cfg);
 
     int         port = cfg.port;
     std::string host = "127.0.0.1";
     for (size_t i = 0; i < args.size(); i++) {
-        if (args[i] == "--port" && i + 1 < args.size()) {
+        const std::string & a   = args[i];
+        const bool          val = i + 1 < args.size();
+        if (a == "--port" && val) {
             port = std::atoi(args[++i].c_str());
-        } else if (args[i] == "--host" && i + 1 < args.size()) {
+        } else if (a == "--host" && val) {
             host = args[++i];
-        } else if (args[i] == "--verbose" || args[i] == "-v") {
+        } else if (a == "--ctx" && val) {
+            cfg.ctx     = std::atoi(args[++i].c_str());
+            cfg.ctx_cap = cfg.ctx;
+        } else if (a == "--kv" && val) {
+            cfg.kv_type = args[++i];
+        } else if (a == "--verbose" || a == "-v") {
             set_env("LLMASH_VERBOSE", "1");  // one line per turn: tokens, tok/s, cache, draft
+        } else {
+            std::fprintf(stderr, "unknown flag: %s\n\n%s", a.c_str(),
+                         prog_text(*command_help("serve"), clidoc::prog_name()).c_str());
+            return 1;
         }
+    }
+    if (cfg.ctx_cap > 0) {
+        logf("context %d: the default, and the most a request gets", cfg.ctx_cap);
     }
     cfg.port = port;
     if (cfg.public_port == port) {

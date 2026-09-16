@@ -1,5 +1,7 @@
 #include "manager.h"
 
+#include "gguf.h"
+
 #include "draft.h"
 #include "log.h"
 #include "platform.h"
@@ -613,7 +615,10 @@ bool Instance::on_gpu() const {
     return on_gpu_;
 }
 
-double Instance::vram_gb() const { return static_cast<double>(model.size) / static_cast<double>(1ull << 30) * 1.05; }
+double Instance::vram_gb() const {
+    const double GB = static_cast<double>(1ull << 30);
+    return static_cast<double>(model.size) / GB * 1.05 + (model.kv_bytes_tok * ctx + model.state_bytes) / GB;
+}
 
 bool Instance::alive() const {
     std::lock_guard<std::mutex> lock(mu_);
@@ -1125,7 +1130,8 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
             used += in->vram_gb();
         }
     }
-    const double vram_budget = env_float("LLMASH_VRAM_GB", 80);
+    const double total       = total_vram_gb();
+    const double vram_budget = env_float("LLMASH_VRAM_GB", total > 0 ? total - env_float("LLMASH_VRAM_HEADROOM", 6) : 80);
     const double ram_floor   = env_float("LLMASH_RAM_FLOOR", 12);
     const double busy_grace  = env_float("LLMASH_BUSY_GRACE", 120);
     const bool   tight       = free_ram_gb() < ram_floor;
@@ -1158,14 +1164,13 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
 }
 
 int Manager::fit_ctx(const Model & m, int ctx) {
-    // Reasoning fills the window and stays in the cache, so taking the window
-    // away costs these models more than it looks. Layers go instead.
-    if (has_thinking_block(m.tmpl)) {
-        return ctx;
-    }
-    const double weights = static_cast<double>(m.size) / static_cast<double>(1ull << 30);
+    const double GB       = static_cast<double>(1ull << 30);
     const int    parallel = cfg_.parallel > 0 ? cfg_.parallel : 1;
-    const double want    = weights * (1.0 + static_cast<double>(ctx) * parallel / kCtxTrainNative);
+    const double weights  = static_cast<double>(m.size) / GB;
+    const double per_tok  = m.kv_bytes_tok * kv_type_scale(cfg_.kv_type) / GB;
+    if (ctx <= 0 || per_tok <= 0) {
+        return ctx;  // an architecture the header did not describe: llama.cpp fits what it can
+    }
     double freeV = free_vram_gb().first;
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -1173,17 +1178,22 @@ int Manager::fit_ctx(const Model & m, int ctx) {
             freeV += cur->vram_gb();
         }
     }
-    const double vram_headroom = env_float("LLMASH_VRAM_HEADROOM", 6);
-    const double room          = std::max(4.0, freeV - vram_headroom);
-    if (want <= room) {
+    const double headroom = env_float("LLMASH_VRAM_HEADROOM", 6);
+    const double room     = std::max(2.0, freeV - headroom);
+    // compute buffers: the logits of a full micro-batch and the attention scratch
+    const double compute = total_vram_gb() > 24 ? 1.5 : 0.8;
+    const double fixed   = weights * 1.05 + m.state_bytes * parallel / GB + compute;
+    const double need    = fixed + per_tok * ctx * parallel;
+    if (need <= room) {
         return ctx;
     }
-    const double step    = 32768.0;
-    const double allowed = std::max(0.0, room / std::max(weights, 0.1) - 1.0) * kCtxTrainNative;
-    const int    fitted  = static_cast<int>(std::max(8192.0, std::floor(allowed / step) * step));
+    const double step   = 4096.0;
+    const int    fitted = static_cast<int>(std::max(step, std::floor((room - fixed) / (per_tok * parallel) / step) * step));
     if (fitted < ctx) {
-        log_line("ctx " + std::to_string(ctx) + " would need ~" + std::to_string(want) + " GB on the card with " +
-                 std::to_string(freeV) + " GB free; using " + std::to_string(fitted) + " instead");
+        char buf[240];
+        std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free: using %d",
+                      ctx, need, weights, per_tok * ctx * parallel, freeV, fitted);
+        log_line(std::string(m.name) + ": " + buf);
         return fitted;
     }
     return ctx;
@@ -1206,6 +1216,10 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
     }
     if (ctx <= 0) {
         ctx = cfg_.ctx > 0 ? cfg_.ctx : 8192;
+    }
+    if (cfg_.ctx_cap > 0 && ctx > cfg_.ctx_cap) {
+        log_line(name + ": ctx " + std::to_string(ctx) + " asked, " + std::to_string(cfg_.ctx_cap) + " is the server's limit");
+        ctx = cfg_.ctx_cap;
     }
 
     {
