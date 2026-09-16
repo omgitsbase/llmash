@@ -754,9 +754,13 @@ DeleteOutcome delete_from_store(const Model & m) {
 
 DeleteOutcome run_delete(const Model & m, const Config & cfg) {
     DeleteOutcome out;
-    // in_library covers every folder read in place, pulls land in one of them,
-    // and rm has to be able to undo a pull. Only the rest are protected.
-    if (m.in_library && !same_dir(fs::path(m.path).parent_path().string(), loose_dir(cfg))) {
+    // pulls land in llmash's own folders and rm has to undo one; a folder the
+    // user pointed llmash at is only read
+    const std::string dir  = fs::path(m.path).parent_path().string();
+    const fs::path    base = cfg.models_root.empty() ? cfg.root : cfg.models_root;
+    const bool        own  = same_dir(dir, loose_dir(cfg)) || same_dir(dir, (base / "gguf").string()) ||
+                      same_dir(dir, cfg.gguf_dir);
+    if (m.in_library && !own) {
         out.status = 409;
         out.body   = error_obj(m.name + " is read from " + m.path +
                              ", a folder llmash only reads; delete the file yourself");
@@ -774,6 +778,7 @@ DeleteOutcome run_delete(const Model & m, const Config & cfg) {
                                  (rm ? rm.message() : std::string("file still present")));
             return out;
         }
+        fs::remove(fs::path(m.path + ".idx"), rm);  // the block map beside a stopped pull
         out.status = 200;
         out.body   = json{{"status", "success"}, {"removed", json::array({base_name(m.path)})}};
         return out;

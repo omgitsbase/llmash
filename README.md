@@ -230,11 +230,12 @@ both have a switch.
 | | |
 |---|---|
 | `list` `ps` `show` `run` `pull` `rm` `cp` `stop` | as in Ollama |
-| `serve` | start the server; the tray does this for you |
+| `start` | start llmash in the background, with its tray icon |
+| `serve` | run the server in this console |
 | `pulldraft` | find and install a draft model for a model you have |
 | `models` | show where models are read from, or point llmash at a folder of them |
 | `doctor` | check the install, runtime, GPU, models and routes |
-| `update` | install the latest release |
+| `update` | install the latest push; `--stable` for the latest release |
 | `launch` | point Claude Code, Codex, Droid and others at this server |
 | `link` | expose the API over a Tailscale funnel, with a key |
 | `uninstall` | remove everything the installer created |

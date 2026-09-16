@@ -2,6 +2,7 @@
 // integration. Each says so rather than pretending to work.
 #ifndef _WIN32
 
+#include <cstdio>
 #include "cli_win.h"
 #include "pull.h"
 #include "tray.h"
@@ -19,6 +20,11 @@ static std::string not_ported(const char * what) { return std::string(what) + " 
 bool cmd_tray(const Config &, std::string & err) {
     err = not_ported("the tray");
     return false;
+}
+
+int cmd_start(const Config &) {
+    std::fprintf(stderr, "%s\n", not_ported("the tray").c_str());
+    return 1;
 }
 
 std::string which_exe(const std::string & exe) {

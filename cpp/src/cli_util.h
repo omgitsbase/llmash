@@ -72,6 +72,7 @@ std::string repo_slug();
 
 struct Release {
     std::string tag;
+    std::string name;
     bool        draft = false;
     std::vector<std::pair<std::string, std::string>> assets; // name, download url
 };
@@ -81,6 +82,12 @@ struct Release {
 std::string release_version(const std::string & tag);
 
 bool latest_release(const std::string & slug, Release & out, std::string & err);
+// The release at a tag; `edge` is what CI builds from the latest push.
+bool release_by_tag(const std::string & slug, const std::string & tag, Release & out, std::string & err);
+
+// "0.4.19" from "0.4.19+331e038", and a numeric order over such numbers
+std::string version_number(const std::string & v);
+bool        version_less(const std::string & a, const std::string & b);
 
 std::string prog_name();
 

@@ -58,7 +58,7 @@ Available Commands:
   launch       Launch the Ollama menu or an integration
   link         Expose the server publicly over Tailscale Funnel
   unlink       Take the public API back down
-  tray         Show the notification-area icon
+  start        Start llmash in the background, with its tray icon
   pulldraft    Find and install a draft model to make a model faster
   models       Show where models are read from, or point llmash at a folder
   doctor       Check this machine over and report what is wrong
@@ -137,9 +137,12 @@ Usage:
   llmash update [flags]
 
 Flags:
+      --stable  take the latest release rather than the latest push
       --force   reinstall even when the installed version is already current
 
-Reads the latest release from GitHub and runs its installer when it is newer.
+Every push to main is built into the `edge` prerelease on GitHub, and update
+installs that when it is newer than what is here. The runtime only changes
+with a release.
 )HELP";
 
 const std::string k_uninstall_help = R"HELP(Remove llmash from this machine
@@ -153,10 +156,13 @@ Flags:
 Models are never removed; they stay in Ollama's model store.
 )HELP";
 
-const std::string k_tray_help = R"HELP(Show the notification-area icon
+const std::string k_start_help = R"HELP(Start llmash in the background, with its notification-area icon
 
 Usage:
-  llmash tray
+  llmash start
+
+The server comes up with the tray. `llmash serve` runs the server in this
+console instead.
 )HELP";
 
 const std::string k_serve_help_body = R"HELP(Start Ollama
@@ -439,7 +445,8 @@ const std::unordered_map<std::string, std::string> & command_help_map() {
         {"doctor", k_doctor_help},
         {"update", k_update_help},
         {"uninstall", k_uninstall_help},
-        {"tray", k_tray_help},
+        {"start", k_start_help},
+        {"tray", k_start_help},
         {"serve", k_serve_help_body},
         {"create", k_create_help + k_host_env},
         {"show", k_show_help + k_host_env},
