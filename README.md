@@ -134,14 +134,14 @@ qwen3-1.7b, which build?
   large    Q8_0                    2.2 GB
 ```
 
-Pick it and you choose the width: 2.75, 3, 3.4, 3.9, 4.4 or 5 bits a weight,
+Pick it and you choose the width: 2.4, 2.75, 3, 3.9, 4.4 or 5 bits a weight,
 each with what that width is worth against a Q8:
 
 ```
 how small?
+  rco 2.4  about 613 MB   3.9% under Q8
   rco 2.75 about 703 MB   2.6% under Q8
   rco 3    about 766 MB   near identical to Q8
-  rco 3.4  about 869 MB   near identical to Q8
   rco 3.9  about 996 MB   matches Q8
 ```
 
