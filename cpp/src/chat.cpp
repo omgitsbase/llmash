@@ -21,15 +21,6 @@ namespace {
 
 const char * const kNudgeText = "The user is likely tired of waiting for an answer. ";
 
-const char * const kDefaultHandoff =
-    "Let me read this properly before answering. What exactly is being asked, and what "
-    "would a complete answer need? If it is a problem to solve, I work it through step by "
-    "step, check the result against the question, and watch for the mistake that is easiest "
-    "to make here. If it is a matter of judgement, I take the position I can best defend and "
-    "say it plainly. I keep this thinking to what the question needs. Then I answer clearly: "
-    "the result first, then what supports it, in plain readable language, with a short list "
-    "or a formula only where that is genuinely clearer. What is being asked: ";
-
 const char * const kSamplingKeys[] = {"temperature",      "temp",          "top_k",         "top_p",
                                       "min_p",            "typical_p",     "top_a",         "presence_penalty",
                                       "frequency_penalty", "repeat_penalty", "repeat_last_n", "tfs_z",
@@ -74,9 +65,7 @@ std::vector<std::string> csv(const std::string & s) {
 // once from the same file config.cpp reads.
 struct Knobs {
     std::vector<std::string> think_off;
-    std::vector<std::string> no_inject;
     json                     sampling = json::object();
-    bool                     inject_on     = false;
     int                      think_budget  = 32000;
     double                   nudge_after_s = 15;
     int                      lowlat_predict = 8;
@@ -88,7 +77,6 @@ const Knobs & knobs(const Config & cfg) {
     static Knobs          k;
     std::call_once(once, [&] {
         k.think_off      = csv(env_str("LLMASH_THINK_OFF", "gemma4,gemma-4"));
-        k.inject_on      = env_str("LLMASH_INJECT") == "1";
         k.think_budget   = env_int("LLMASH_THINK_BUDGET", 32000);
         k.nudge_after_s  = env_float("LLMASH_NUDGE_S", 15);
         k.lowlat_predict = env_int("LLMASH_LOWLAT_PREDICT", 8);
@@ -106,9 +94,6 @@ const Knobs & knobs(const Config & cfg) {
         const json local = json::parse(text, nullptr, false);
         if (local.is_discarded() || !local.is_object()) {
             return;
-        }
-        for (const auto & v : jlist(local, "no_inject")) {
-            k.no_inject.push_back(lower(go_sprint(v)));
         }
         const json samp = jsub(local, "sampling");
         for (auto it = samp.begin(); it != samp.end(); ++it) {
@@ -449,19 +434,13 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
 
     std::string       hoff;
     const std::string custom = jstr(opts, "handoff");
-    const bool        inject = opts.contains("inject") && opts["inject"].is_boolean() && opts["inject"].get<bool>();
-    if ((!custom.empty() || k.inject_on || inject) && !(think_is_bool && !think_bool)) {
-        std::string text = custom;
-        if (text.empty() && !name_matches_any(name, k.no_inject)) {
-            text = kDefaultHandoff;
-        }
-        if (!text.empty()) {
-            hoff     = "<think>\n" + text;
-            json m   = json::object();
-            m["role"]    = "assistant";
-            m["content"] = hoff;
-            messages.push_back(m);
-        }
+    if (!custom.empty() && !(think_is_bool && !think_bool)) {
+        hoff         = "<think>
+" + custom;
+        json m       = json::object();
+        m["role"]    = "assistant";
+        m["content"] = hoff;
+        messages.push_back(m);
     }
 
     json payload              = json::object();
