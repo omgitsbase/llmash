@@ -184,6 +184,8 @@ int cmd_serve(const std::vector<std::string> & args) {
             port = std::atoi(args[++i].c_str());
         } else if (args[i] == "--host" && i + 1 < args.size()) {
             host = args[++i];
+        } else if (args[i] == "--verbose" || args[i] == "-v") {
+            set_env("LLMASH_VERBOSE", "1");  // one line per turn: tokens, tok/s, cache, draft
         }
     }
     cfg.port = port;

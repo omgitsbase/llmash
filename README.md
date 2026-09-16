@@ -231,7 +231,7 @@ both have a switch.
 |---|---|
 | `list` `ps` `show` `run` `pull` `rm` `cp` `stop` | as in Ollama |
 | `start` | start llmash in the background, with its tray icon |
-| `serve` | run the server in this console |
+| `serve` | run the server in this console; `--verbose` prints each turn's speed |
 | `pulldraft` | find and install a draft model for a model you have |
 | `models` | show where models are read from, or point llmash at a folder of them |
 | `doctor` | check the install, runtime, GPU, models and routes |
