@@ -484,12 +484,18 @@ bool is_rco(const std::string & name) {
 const char kRcoPitch[] = "Q8 quality, Q4 size";
 
 // The one choice that costs bandwidth and minutes, so it is confirmed.
-bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain) {
+bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain, const std::string & source) {
     const QuantInfo * ref = nearest_by_size(plain, custom.size);
 
-    std::printf("\n  %s%s is quantized here from the repository's Q8_0, read a piece at%s\n", kDim, custom.name.c_str(),
-                kReset);
+    std::printf("\n  %s%s is quantized here from the repository's %s, read a piece at%s\n", kDim, custom.name.c_str(),
+                source.empty() ? "widest build" : source.c_str(), kReset);
     std::printf("  %sa time, so only the result is written to disk.%s\n\n", kDim, kReset);
+    if (const double src_bits = bits_of(source); src_bits > 0 && src_bits < 6.0) {
+        std::printf("  %sThe widest build here is a %s. Under a Q6 the source has already lost%s\n", kBold,
+                    source.c_str(), kReset);
+        std::printf("  %swhat this is trying to keep, so expect a high loss against the original.%s\n\n", kBold,
+                    kReset);
+    }
     const std::vector<std::string> rows = tradeoff_rows(custom, ref);
     for (size_t i = 0; i < rows.size(); i++) {
         std::printf("  %s%s%s\n", i == 1 ? kBold : kDim, rows[i].c_str(), kReset);
@@ -526,7 +532,7 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
 
 // A custom build is a target width, not one build, so choosing it opens them.
 std::string choose_width(const std::vector<QuantInfo> & custom, const std::vector<QuantInfo> & plain,
-                         const std::string & start) {
+                         const std::string & start, const std::string & source) {
     std::vector<QuantInfo> rungs = custom;
     std::sort(rungs.begin(), rungs.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size < b.size; });
     std::vector<std::string> rows;
@@ -547,7 +553,7 @@ std::string choose_width(const std::vector<QuantInfo> & custom, const std::vecto
             return "";
         }
         cursor = n;
-        if (confirm_custom(rungs[static_cast<size_t>(n)], plain)) {
+        if (confirm_custom(rungs[static_cast<size_t>(n)], plain, source)) {
             return rungs[static_cast<size_t>(n)].name;
         }
     }
@@ -559,7 +565,8 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     ApiResult       r;
     const json      d = api.call_json("GET", "/api/quants?repo=" + url_query_escape(model), nullptr, 120, r);
     const bool      have = r.ok && r.status == 200;
-    const std::string repo = have ? j_str(d, "repo") : model;
+    const std::string repo       = have ? j_str(d, "repo") : model;
+    const std::string rco_source = have ? j_str(d, "rco_source") : "";
 
     std::vector<QuantInfo> quants, plain, custom;
     if (have) {
@@ -661,7 +668,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         }
         const Row & picked = rows[static_cast<size_t>(n)];
         if (is_rco(picked.quant) && !custom.empty()) {
-            const std::string width = choose_width(custom, plain, picked.quant);
+            const std::string width = choose_width(custom, plain, picked.quant, rco_source);
             if (width.empty()) {
                 cursor = n;
                 continue;
@@ -1063,8 +1070,10 @@ ParsedArgs parse_simple(const std::vector<std::string> & args, const std::vector
 // ------------------------------------------------------- pure logic units
 
 double rco_quality_gap(double bpw) {
-    // bits a weight against percent below the fp8 original
-    static constexpr double kPts[][2] = {{2.50, 6.4}, {2.75, 2.6}, {3.00, 0.7}, {3.47, 0.1}};
+    // bits a weight against percent below the fp8 original. 2.50 up are the
+    // published GSQ-RCO figures; 2.40 is ours and sits above the 2.50 one, so
+    // the curve is not monotone between them.
+    static constexpr double kPts[][2] = {{2.40, 3.9}, {2.50, 6.4}, {2.75, 2.6}, {3.00, 0.7}, {3.47, 0.1}};
     static constexpr size_t kN        = sizeof(kPts) / sizeof(kPts[0]);
 
     if (bpw >= kPts[kN - 1][0]) {
@@ -1091,7 +1100,7 @@ std::string build_row(const std::string & label, const QuantInfo & q, const std:
     return row + (q.fetch > 0 ? " bandwidth" : "");
 }
 
-// "rco 3" for RCO-3, "rco 3.4" for a rung of its own.
+// "rco 3" for RCO-3, "rco 2.4" for a rung of its own.
 std::string rco_row_label(const std::string & quant) {
     const double bpw = rco_bpw_of_quant(quant);
     char         buf[16];

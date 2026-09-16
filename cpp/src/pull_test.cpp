@@ -198,6 +198,12 @@ const char * const FAKE_HF_BODY = R"({
 
 // ============================================================ the tests
 
+void test_other_formats() {
+    check_eq(other_formats_text({"safetensors", "json"}), std::string("safetensors"), "a safetensors repo says so");
+    check_eq(other_formats_text({"safetensors", "npz"}), std::string("safetensors and MLX"), "MLX is named too");
+    check_eq(other_formats_text({"json", "md"}), std::string(""), "nothing worth naming is empty");
+}
+
 void test_quant_tag() {
     section("quant_tag");
     check_eq(quant_tag("Qwen3-8B-Q4_K_M-00001-of-00002.gguf"), std::string("Q4_K_M"), "a sharded Q4_K_M build");
@@ -720,6 +726,7 @@ int main() {
     std::cout << "scratch: " << scratch().string() << "\n";
 
     test_quant_tag();
+    test_other_formats();
     test_kind_of();
     test_hf_parsing_and_pickers();
     test_rco_source_pick();

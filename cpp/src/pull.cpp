@@ -947,9 +947,10 @@ std::string hf_download_url(const std::string & repo, const std::string & file) 
 
 namespace {
 
-// The GGUF entries of /api/models/<repo>?blobs=true. False only for a body
-// that is not the JSON object the API documents.
-bool parse_hf_siblings(const std::string & body, std::vector<HfFile> & out) {
+// The GGUF entries of /api/models/<repo>?blobs=true, and the extensions of
+// everything else, which is what a repo holding no GGUF is named by. False
+// only for a body that is not the JSON object the API documents.
+bool parse_hf_siblings(const std::string & body, std::vector<HfFile> & out, std::set<std::string> * others = nullptr) {
     const json d = json::parse(body, nullptr, false);
     if (d.is_discarded() || !d.is_object()) {
         return false;
@@ -970,6 +971,11 @@ bool parse_hf_siblings(const std::string & body, std::vector<HfFile> & out) {
         const std::string low = lower(h.name);
         if (ends_with(low, ".gguf") || contains(low, "imatrix")) {
             out.push_back(std::move(h));
+        } else if (others != nullptr) {
+            const size_t dot = low.rfind('.');
+            if (dot != std::string::npos && dot + 1 < low.size()) {
+                others->insert(low.substr(dot + 1));
+            }
         }
     }
     return true;
@@ -977,7 +983,7 @@ bool parse_hf_siblings(const std::string & body, std::vector<HfFile> & out) {
 
 } // namespace
 
-std::vector<HfFile> hf_files(const std::string & repo, std::string * err) {
+std::vector<HfFile> hf_files(const std::string & repo, std::string * err, std::set<std::string> * others) {
     if (err != nullptr) {
         err->clear();
     }
@@ -990,9 +996,71 @@ std::vector<HfFile> hf_files(const std::string & repo, std::string * err) {
         return {};
     }
     std::vector<HfFile> out;
-    if (!parse_hf_siblings(r.body, out)) {
+    if (!parse_hf_siblings(r.body, out, others)) {
         if (err != nullptr) *err = "the Hugging Face API answered with something that is not JSON";
         return {};
+    }
+    return out;
+}
+
+// Repos carrying a GGUF of the same model, for one that carries none. The
+// query is the repo's own name with the format words taken off it.
+std::vector<std::string> gguf_repos_for(const std::string & repo, int want) {
+    std::string name = repo.substr(repo.find('/') + 1);
+    for (const char * drop : {"-mlx", "-MLX", "-exl3", "-EXL3", "-exl2", "-AWQ", "-awq", "-GPTQ", "-gptq", "-4bit",
+                              "-8bit", "-bf16", "-BF16", "-fp8", "-FP8"}) {
+        for (size_t at = name.find(drop); at != std::string::npos; at = name.find(drop)) {
+            name.erase(at, std::strlen(drop));
+        }
+    }
+    // A fine-tune's full name matches nothing, so the query gives up words from
+    // the end until it does: the family alone always finds a GGUF.
+    std::vector<std::string> parts;
+    for (size_t at = 0; at < name.size();) {
+        const size_t dash = name.find('-', at);
+        parts.push_back(name.substr(at, dash == std::string::npos ? dash : dash - at));
+        at = dash == std::string::npos ? name.size() : dash + 1;
+    }
+    std::vector<std::string> out;
+    for (size_t keep = parts.size(); keep >= 1 && out.empty(); keep--) {
+        std::string q;
+        for (size_t i = 0; i < keep; i++) {
+            q += (i ? "-" : "") + parts[i];
+        }
+        for (const HubModel & m : hub_search(q + " GGUF", 30)) {
+            if (!contains(lower(m.id), "gguf") || equal_fold(m.id, repo)) {
+                continue;
+            }
+            out.push_back(m.id);
+            if (static_cast<int>(out.size()) >= want) {
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+std::string other_formats_text(const std::set<std::string> & exts) {
+    // the extensions worth naming, and what a reader calls them
+    static const std::vector<std::pair<const char *, const char *>> kKnown{
+        {"safetensors", "safetensors"}, {"npz", "MLX"},  {"bin", "PyTorch"},
+        {"pt", "PyTorch"},              {"pth", "PyTorch"}, {"onnx", "ONNX"},
+    };
+    std::vector<std::string> names;
+    for (const auto & [ext, name] : kKnown) {
+        if (exts.count(ext) != 0 && std::find(names.begin(), names.end(), name) == names.end()) {
+            names.emplace_back(name);
+        }
+    }
+    if (names.empty()) {
+        return "";
+    }
+    std::string out = names[0];
+    for (size_t i = 1; i + 1 < names.size(); i++) {
+        out += ", " + names[i];
+    }
+    if (names.size() > 1) {
+        out += " and " + names.back();
     }
     return out;
 }
@@ -2490,6 +2558,11 @@ std::string rco_convert(const std::string & path, double bpw, const std::string 
                        " to quantize from. Pull a wider build of it instead."));
         return "";
     }
+    if (have > 0 && have < 6.0) {
+        emit(json{{"status", "warning: " + quant_tag(base_name(path)) +
+                                 " is under a Q6, so this reads a build that has already lost some of the "
+                                 "model — expect a high loss against the original"}});
+    }
 
     std::string head, herr;
     if (!read_head(src.urls.front(), 48 * 1024 * 1024, head, herr)) {
@@ -2527,15 +2600,26 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
                      Registry & reg, const Emit & emit) {
     emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
     std::string               ferr;
-    const std::vector<HfFile> files = hf_files(repo, &ferr);
+    std::set<std::string>     others;
+    const std::vector<HfFile> files = hf_files(repo, &ferr, &others);
     if (files.empty()) {
-        emit(error_obj(ferr.empty() ? "no GGUF files in " + repo : ferr));
+        const std::string has = other_formats_text(others);
+        emit(error_obj(!ferr.empty()          ? ferr
+                       : has.empty()          ? repo + " holds no GGUF build"
+                                              : repo + " holds no GGUF build, only " + has +
+                                           ". A custom build is quantized from a GGUF, so there is nothing to read."));
         return "";
     }
     const std::vector<HfFile> want = pick_rco_source(files, bpw);
     if (want.empty()) {
         emit(error_obj("no build in " + repo + " wide enough to quantize from"));
         return "";
+    }
+    // Under a Q6 the source has already lost what this is trying to keep, so
+    // the result is a requantization of a small build, not of the model.
+    if (const double src_bits = bits_of_quant(quant_tag(want.front().name)); src_bits > 0 && src_bits < 6.0) {
+        emit(json{{"status", "warning: quantizing from " + quant_tag(want.front().name) +
+                                 ", under a Q6 — expect a high loss against the original"}});
     }
 
     RcoSource src;
@@ -2562,19 +2646,32 @@ std::string hf_pull(const std::string & repo, const std::string & quant, const s
 
     emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
     std::string               err;
-    const std::vector<HfFile> files = hf_files(repo, &err);
+    std::set<std::string>     others;
+    const std::vector<HfFile> files = hf_files(repo, &err, &others);
     if (!err.empty()) {
         emit(error_obj(err));
         return "";
     }
-    if (files.empty()) {
-        emit(error_obj("no GGUF files in " + repo));
-        return "";
-    }
     const std::vector<HfFile> want = pick_gguf(files, quant);
     if (want.empty()) {
-        emit(error_obj("no " + quant + " build in " + repo));
+        const std::string has = other_formats_text(others);
+        std::string       msg = repo + " holds no GGUF build" + (has.empty() ? "" : ", only " + has) +
+                          ", and llama.cpp loads GGUF.";
+        const std::vector<std::string> alts = gguf_repos_for(repo, 3);
+        if (!alts.empty()) {
+            msg += "\n  GGUF builds near it:";
+            for (const std::string & a : alts) {
+                msg += "\n    llmash pull hf:" + a;
+            }
+        }
+        emit(error_obj(msg));
         return "";
+    }
+    // pick_gguf answers with the nearest build when the one asked for is not
+    // there, which is silent unless it says so
+    if (const std::string got = quant_tag(want.front().name);
+        !quant.empty() && !equal_fold(got, quant) && !got.empty()) {
+        emit(json{{"status", "no " + quant + " in " + repo + ", taking " + got}});
     }
 
     struct Job {
@@ -3328,8 +3425,9 @@ json api_quants(const std::string & repo_arg) {
 
     // Assembled here rather than downloaded, so it is offered whenever an
     // allocation exists for this architecture.
-    std::string arch;
+    std::string arch, rco_source;
     if (const std::vector<HfFile> src = pick_rco_source(files, rco::DEFAULT_BPW); !src.empty()) {
+        rco_source = quant_tag(src.front().name);
         const HttpResult p = http_request(hf_download_url(repo, src.front().name), "GET", "bytes=0-4194303");
         std::istringstream in(p.body, std::ios::binary);
         const HeaderMeta   meta = read_header_meta(in);
@@ -3342,7 +3440,7 @@ json api_quants(const std::string & repo_arg) {
         const double ref = bits_of_quant(quant_tag(src.front().name));
         // the ladder is fixed and holds DEFAULT_BPW, which is only the rung the
         // picker starts on
-        for (const double b : {5.0, 4.4, 3.9, 3.4, 3.0, 2.75}) {
+        for (const double b : {5.0, 4.4, 3.9, 3.0, 2.75, 2.4}) {
             const int64_t size = ref > 0 ? static_cast<int64_t>(static_cast<double>(src_bytes) * b / ref) : 0;
             quants.push_back(QuantInfo{rco_quant_name(b), size, 1, src_bytes});
         }
@@ -3370,6 +3468,7 @@ json api_quants(const std::string & repo_arg) {
     return json{{"repo", repo},
                 {"arch", arch},
                 {"quants", to_json(quants)},
+                {"rco_source", rco_source},
                 {"mtp", to_json(heads)},
                 {"vision", pick_mmproj(files).has_value()}};
 }

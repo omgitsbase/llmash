@@ -396,7 +396,8 @@ void test_rco_quality() {
     check(rco_quality_gap(3.0) > 0.6 && rco_quality_gap(3.0) < 0.8, "3 bits is the measured 0.7%");
     check(rco_quality_gap(2.875) > rco_quality_gap(3.0) && rco_quality_gap(2.875) < rco_quality_gap(2.75),
           "a width between two measured ones falls between them");
-    check(rco_quality_gap(2.0) == rco_quality_gap(2.5), "below the measured range it holds the last figure");
+    check(rco_quality_gap(2.4) > 3.8 && rco_quality_gap(2.4) < 4.0, "2.4 bits is the 3.9% rung");
+    check(rco_quality_gap(2.0) == rco_quality_gap(2.4), "below the measured range it holds the last figure");
     check(rco_quality_text(2.75).find("under Q8") != std::string::npos, "the text names what it is under");
 }
 
@@ -412,7 +413,7 @@ void test_build_rows() {
     eq_str(plain, "tiny     IQ3_XS                  923 MB", "a published build keeps its own name");
     check(plain.size() == rco.size() - std::string(" bandwidth").size(), "and its size lands in the same column");
 
-    check(rco_row_label("RCO-3.4") == "rco 3.4", "a rung is labelled by its width");
+    check(rco_row_label("RCO-2.4") == "rco 2.4", "a rung is labelled by its width");
 }
 
 void test_tradeoff() {
