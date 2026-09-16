@@ -1040,6 +1040,52 @@ std::vector<std::string> gguf_repos_for(const std::string & repo, int want) {
     return out;
 }
 
+namespace {
+std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files, double bpw);
+}
+
+// The repo itself when it carries a GGUF build, otherwise the best-placed
+// repo on the hub carrying one of the same model, otherwise empty. `files`
+// comes back holding the chosen repo's listing.
+std::string resolve_gguf_repo(const std::string & repo, const std::string & quant, double bpw,
+                              std::vector<HfFile> & files, std::set<std::string> & others, std::string & err) {
+    const auto usable = [&](const std::vector<HfFile> & fs) {
+        return bpw > 0 ? !pick_rco_source(fs, bpw).empty() : !quants_of(fs).empty();
+    };
+    files = hf_files(repo, &err, &others);
+    if (!err.empty() || usable(files)) {
+        return err.empty() ? repo : "";
+    }
+    // the mirror carrying the build asked for, then the fullest one, then the
+    // hub's own order
+    struct Cand {
+        std::string         id;
+        std::vector<HfFile> files;
+        int                 score = 0;
+    };
+    std::vector<Cand> cands;
+    for (const std::string & alt : gguf_repos_for(repo, 5)) {
+        std::string           aerr;
+        std::set<std::string> aothers;
+        std::vector<HfFile>   afiles = hf_files(alt, &aerr, &aothers);
+        if (!aerr.empty() || !usable(afiles)) {
+            continue;
+        }
+        int score = static_cast<int>(quants_of(afiles).size());
+        if (bpw <= 0 && !quant.empty() && equal_fold(quant_tag(pick_gguf(afiles, quant).front().name), quant)) {
+            score += 1000;
+        }
+        cands.push_back({alt, std::move(afiles), score});
+    }
+    std::stable_sort(cands.begin(), cands.end(), [](const Cand & a, const Cand & b) { return a.score > b.score; });
+    if (!cands.empty()) {
+        files = std::move(cands.front().files);
+        return cands.front().id;
+    }
+    // a repo with GGUFs of its own, just none that fit, gets the precise error
+    return quants_of(files).empty() ? "" : repo;
+}
+
 std::string other_formats_text(const std::set<std::string> & exts) {
     // the extensions worth naming, and what a reader calls them
     static const std::vector<std::pair<const char *, const char *>> kKnown{
@@ -2655,16 +2701,8 @@ std::string hf_pull(const std::string & repo, const std::string & quant, const s
     const std::vector<HfFile> want = pick_gguf(files, quant);
     if (want.empty()) {
         const std::string has = other_formats_text(others);
-        std::string       msg = repo + " holds no GGUF build" + (has.empty() ? "" : ", only " + has) +
-                          ", and llama.cpp loads GGUF.";
-        const std::vector<std::string> alts = gguf_repos_for(repo, 3);
-        if (!alts.empty()) {
-            msg += "\n  GGUF builds near it:";
-            for (const std::string & a : alts) {
-                msg += "\n    llmash pull hf:" + a;
-            }
-        }
-        emit(error_obj(msg));
+        emit(error_obj(repo + " holds no GGUF build" + (has.empty() ? "" : ", only " + has) +
+                       ", and llama.cpp loads GGUF."));
         return "";
     }
     // pick_gguf answers with the nearest build when the one asked for is not
@@ -3347,7 +3385,23 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
         if (q.empty()) {
             q = "Q4_K_M";
         }
-        const std::string first = hf_pull(repo, q, as, cfg, reg, emit);
+        // a repo with no GGUF is answered by one of the same model that has one
+        std::vector<HfFile>   files;
+        std::set<std::string> others;
+        std::string           rerr;
+        emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
+        const std::string used = resolve_gguf_repo(repo, q, rco_bpw_of_quant(q), files, others, rerr);
+        if (used.empty()) {
+            const std::string has = other_formats_text(others);
+            emit(error_obj(!rerr.empty() ? rerr
+                                         : repo + " holds no GGUF build" + (has.empty() ? "" : ", only " + has) +
+                                               ", and no GGUF of the same model turned up on the hub."));
+            return;
+        }
+        if (used != repo) {
+            emit(json{{"status", repo + " holds no GGUF build, taking " + used}});
+        }
+        const std::string first = hf_pull(used, q, as, cfg, reg, emit);
         if (!first.empty()) {
             if (!as.empty()) {
                 RegistryManifest m;
@@ -3356,7 +3410,7 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
                     remove_manifest_model(cfg, reg, m.manifest_path(cfg));
                 }
             }
-            finish_hf(repo, first, as, mtp, cfg, reg, emit);
+            finish_hf(used, first, as, mtp, cfg, reg, emit);
         }
         return;
     }
@@ -3416,10 +3470,14 @@ json api_quants(const std::string & repo_arg) {
         repo = repo.substr(0, at);
     }
 
-    std::string err;
-    const auto  files = hf_files(repo, &err);
-    if (!err.empty()) {
+    std::string           err, from;
+    std::vector<HfFile>   files;
+    std::set<std::string> others;
+    if (const std::string used = resolve_gguf_repo(repo, "", 0, files, others, err); !err.empty()) {
         return error_obj(err);
+    } else if (!used.empty() && used != repo) {
+        from = repo;
+        repo = used;
     }
     std::vector<QuantInfo> quants = quants_of(files);
 
@@ -3466,6 +3524,7 @@ json api_quants(const std::string & repo_arg) {
     std::stable_sort(quants.begin(), quants.end(),
                      [](const QuantInfo & a, const QuantInfo & b) { return a.size < b.size; });
     return json{{"repo", repo},
+                {"from", from},
                 {"arch", arch},
                 {"quants", to_json(quants)},
                 {"rco_source", rco_source},
