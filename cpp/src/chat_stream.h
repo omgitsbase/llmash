@@ -337,6 +337,15 @@ struct Step {
 
 // One /v1/chat/completions SSE event in, the Ollama /api/chat events it
 // becomes out.
+// The byte before a cut must not be the middle of a UTF-8 character, or the
+// string on either side fails to serialize.
+inline size_t utf8_floor(const std::string & s, size_t n) {
+    while (n > 0 && n < s.size() && (static_cast<unsigned char>(s[n]) & 0xC0) == 0x80) {
+        n--;
+    }
+    return n;
+}
+
 class ChatStream {
 public:
     std::string model;
@@ -585,7 +594,7 @@ private:
         } else {
             // the last 8 bytes could still be a half-written </think>
             if (vis.size() > kClose.size()) {
-                th = vis.substr(0, vis.size() - kClose.size());
+                th = vis.substr(0, utf8_floor(vis, vis.size() - kClose.size()));
             }
             open_th_ = carry + vis;
         }

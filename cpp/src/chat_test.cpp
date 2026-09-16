@@ -226,6 +226,44 @@ void test_unparsable_tool_args() {
        "[{\"function\":{\"arguments\":{},\"name\":\"run\"},\"id\":\"call_0\",\"type\":\"function\"}]");
 }
 
+void test_prefill_utf8_boundary() {
+    ChatStream st;
+    st.model         = "qwen3:8b";
+    st.hoff          = "<think>\n";
+    st.prefill       = st.hoff;
+    st.nudge_after_s = 0;
+    st.think_budget  = 0;
+    st.now           = kT0;
+    st.begin_attempt();
+
+    std::vector<json> out;
+    const auto        feed = [&](const json & delta_content) {
+        json d       = json::object();
+        d["content"] = delta_content;
+        json ch      = json::object();
+        ch["delta"]  = d;
+        ch["index"]  = 0;
+        json ev        = json::object();
+        ev["choices"]  = json::array({ch});
+        for (const json & o : st.on_event(ev).out) {
+            out.push_back(o);
+        }
+    };
+
+    // "ab≡cdefghi": holding back the last 8 bytes would cut inside the ≡
+    feed("<think>\nab\xE2\x89\xA1" "cdefghi");
+    eq("the cut steps back to the character boundary", out.at(0)["message"]["thinking"].get<std::string>(), "ab");
+    bool dumps = true;
+    try {
+        out.at(0).dump();
+    } catch (...) {
+        dumps = false;
+    }
+    ok("the event serializes", dumps);
+    feed("\n</think>\n\nOK");
+    eq("the character arrives whole", out.at(1)["message"]["thinking"].get<std::string>(), "\xE2\x89\xA1" "cdefghi\n");
+}
+
 void test_injected_prefill() {
     ChatStream st;
     st.model         = "qwen3:8b";
@@ -427,6 +465,7 @@ int main() {
     test_tool_calls();
     test_unparsable_tool_args();
     test_injected_prefill();
+    test_prefill_utf8_boundary();
     test_think_budget_restart();
     test_ndjson_to_generate();
     test_fold_events();
