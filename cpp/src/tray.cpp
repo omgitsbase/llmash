@@ -1,6 +1,8 @@
 #include "cli_win.h"
 #include "tray.h"
 
+#include "cli_commands.h"
+
 #include "shortcut.h"
 #include "winproc.h"
 #include "tray_internal.h"
@@ -859,7 +861,7 @@ bool cmd_tray(const Config & cfg, std::string & err) {
                  " from running.\n"
                  "The command line still works; only the tray is stopped.\n"
                  "Allow it in your antivirus (in Windows Security it is under Protection history), then run "
-                 "`llmash tray` again.\n"
+                 "`llmash start` again.\n"
                  "Reporting it helps everyone else: https://www.microsoft.com/en-us/wdsi/filesubmission";
         } else {
             err = "could not start the tray: " + to_utf8(werr);
@@ -867,6 +869,24 @@ bool cmd_tray(const Config & cfg, std::string & err) {
         return false;
     }
     return true;
+}
+
+int cmd_start(const Config & cfg) {
+    const std::string at = "http://127.0.0.1:" + std::to_string(cfg.port);
+    if (port_open(cfg.port)) {
+        std::printf("llmash is already running at %s\n", at.c_str());
+        return 0;
+    }
+    std::string err;
+    if (!cmd_tray(cfg, err)) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+        return 1;
+    }
+    for (int i = 0; i < 100 && !port_open(cfg.port); i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    std::printf(port_open(cfg.port) ? "llmash is running at %s\n" : "llmash is starting at %s\n", at.c_str());
+    return 0;
 }
 
 int tray_main(const Config & cfg) {

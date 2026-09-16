@@ -241,7 +241,7 @@ void need_server(ApiClient & api) {
     if (api.up()) {
         return;
     }
-    std::fprintf(stderr, "llmash isn't running at %s.\nStart it with:  %s serve\n", api.host().c_str(),
+    std::fprintf(stderr, "llmash isn't running at %s.\nStart it with:  %s start\n", api.host().c_str(),
                  prog().c_str());
     throw CliExit(1);
 }

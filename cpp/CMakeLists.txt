@@ -15,7 +15,8 @@ endif()
 # VERSION at the repository root is the one source of the version number.
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../VERSION LLMASH_VERSION LIMIT_COUNT 1)
 string(STRIP "${LLMASH_VERSION}" LLMASH_VERSION)
-string(REPLACE "." "," LLMASH_VERSION_COMMAS "${LLMASH_VERSION}")
+string(REGEX REPLACE "\\+.*$" "" LLMASH_VERSION_NUMBER "${LLMASH_VERSION}")
+string(REPLACE "." "," LLMASH_VERSION_COMMAS "${LLMASH_VERSION_NUMBER}")
 set(LLMASH_VERSION_COMMAS "${LLMASH_VERSION_COMMAS},0")
 
 # cpp-httplib is vendored in its split form: the header declares, httplib.cpp

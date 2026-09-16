@@ -607,7 +607,7 @@ bool server_up() {
 
 void need_server() {
     if (server_up()) return;
-    std::fprintf(stderr, "llmash isn't running at %s.\nStart it with:  %s serve\n", resolve_host().c_str(),
+    std::fprintf(stderr, "llmash isn't running at %s.\nStart it with:  %s start\n", resolve_host().c_str(),
                  prog_name().c_str());
     throw CliExit(1);
 }

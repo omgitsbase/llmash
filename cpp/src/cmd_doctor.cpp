@@ -320,7 +320,7 @@ void cmd_doctor() {
             d.add(ST_WARN, "updates", "%s", err.c_str());
         } else {
             const std::string rel_ver = release_version(rel.tag);
-            if (rel_ver == version_string(cfg)) {
+            if (!version_less(version_string(cfg), rel_ver)) {
                 d.add(ST_OK, "updates", "%s has %s; up to date", slug.c_str(), rel_ver.c_str());
             } else {
                 d.add(ST_WARN, "updates", "%s has %s; run `%s update`", slug.c_str(), rel_ver.c_str(), prog.c_str());

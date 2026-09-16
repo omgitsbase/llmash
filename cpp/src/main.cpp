@@ -115,9 +115,11 @@ std::string alias_of(const std::string & cmd) {
     if (cmd == "ls") {
         return "list";
     }
-    if (cmd == "start") {
+#ifndef _WIN32
+    if (cmd == "start") {  // no tray to start here
         return "serve";
     }
+#endif
     if (cmd == "set") {
         return "models";
     }
@@ -128,9 +130,12 @@ int dispatch(const std::string & prog, const std::string & cmd, const std::vecto
              bool verbose) {
     Config cfg = load_config();
 
-    if (cmd == "tray") {
+    if (cmd == "tray" || cmd == "start") {
         if (windowed_exe()) {
             return tray_main(cfg);
+        }
+        if (cmd == "start") {
+            return cmd_start(cfg);
         }
         std::string err;
         if (!cmd_tray(cfg, err)) {
@@ -194,7 +199,13 @@ int main(int argc, char ** argv) {
     }
 
     // The server is this same program, and needs none of the console setup.
-    if (!argv_all.empty() && (argv_all[0] == "serve" || argv_all[0] == "start")) {
+    // `start` is the tray on Windows and the server elsewhere.
+#ifdef _WIN32
+    const bool serving = !argv_all.empty() && argv_all[0] == "serve";
+#else
+    const bool serving = !argv_all.empty() && (argv_all[0] == "serve" || argv_all[0] == "start");
+#endif
+    if (serving) {
         return cmd_serve(std::vector<std::string>(argv_all.begin() + 1, argv_all.end()));
     }
 

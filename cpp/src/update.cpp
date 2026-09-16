@@ -89,6 +89,23 @@ std::wstring widen(const std::string & s) {
 }
 #endif
 
+const char * program_asset() {
+#ifdef _WIN32
+    return "llmash-win-x64.zip";
+#else
+    return "llmash-linux-x64.tar.gz";
+#endif
+}
+
+bool has_asset(const clidoc::Release & rel, const std::string & name) {
+    for (const auto & a : rel.assets) {
+        if (a.first == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const char * installer_name() {
 #ifdef _WIN32
     return "install.ps1";
@@ -99,10 +116,13 @@ const char * installer_name() {
 
 // Runs the installer that ships beside the program, on our console, and
 // waits for it. The installer fetches the release itself.
-int run_installer(const std::string & script, const std::string & root) {
+int run_installer(const std::string & script, const std::string & root, const std::string & tag) {
 #ifdef _WIN32
     std::wstring cmd = L"powershell -NoProfile -ExecutionPolicy RemoteSigned -File \"" + widen(script) +
                        L"\" -Dir \"" + widen(root) + L"\" -Yes";
+    if (!tag.empty()) {
+        cmd += L" -Tag \"" + widen(tag) + L"\"";
+    }
     STARTUPINFOW        si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
@@ -116,6 +136,7 @@ int run_installer(const std::string & script, const std::string & root) {
     CloseHandle(pi.hProcess);
     return static_cast<int>(code);
 #else
+    (void) tag;  // the edge build is Windows-only, so the release is what the script fetches
     const pid_t child = ::fork();
     if (child < 0) {
         return -1;
@@ -180,11 +201,10 @@ std::string fetch_installer(const clidoc::Release & rel) {
 } // namespace
 
 int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
-    bool force = false;
+    bool force = false, stable = false;
     for (const std::string & a : args) {
-        if (a == "--force") {
-            force = true;
-        }
+        force  = force || a == "--force";
+        stable = stable || a == "--stable";
     }
     const std::string prog = clidoc::prog_name();
 
@@ -205,10 +225,23 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
     if (!clidoc::latest_release(clidoc::repo_slug(), rel, err)) {
         return die("could not reach GitHub: " + err);
     }
-    const std::string here  = version_string(cfg);
-    const std::string there = clidoc::release_version(rel.tag);
-    std::printf("installed %s, %s has %s\n", here.c_str(), clidoc::repo_slug().c_str(), there.c_str());
-    if (here == there && !force) {
+    std::string there = clidoc::release_version(rel.tag);
+    std::string tag;
+    // CI builds every push to main into the `edge` prerelease; a release is
+    // cut when the runtime changes
+    clidoc::Release edge;
+    if (!stable && clidoc::release_by_tag(clidoc::repo_slug(), "edge", edge, err) && !edge.draft &&
+        has_asset(edge, program_asset()) && !clidoc::version_less(edge.name, there)) {
+        rel   = edge;
+        there = edge.name;
+        tag   = "edge";
+    }
+    const std::string here = version_string(cfg);
+    std::printf("installed %s, %s has %s%s\n", here.c_str(), clidoc::repo_slug().c_str(), there.c_str(),
+                tag.empty() ? "" : " from the latest push");
+    // an edge build of the release's number is that release plus what came after
+    const bool current = tag.empty() ? !clidoc::version_less(here, there) : here == there;
+    if (current && !force) {
         std::printf("already up to date\n");
         return 0;
     }
@@ -238,7 +271,7 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
                                    : fs::path(cfg.root).parent_path().string();
     std::printf("updating %s to %s\n\n", where.c_str(), there.c_str());
     std::fflush(stdout);
-    const int code = run_installer(script, where);
+    const int code = run_installer(script, where, tag);
     if (code != 0) {
         return die("the installer stopped: exit " + std::to_string(code));
     }

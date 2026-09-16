@@ -1,0 +1,43 @@
+name: edge
+
+# Every push to main is built into the `edge` prerelease, which `llmash
+# update` installs. Releases are cut by hand when the runtime changes.
+on:
+  push:
+    branches: [main]
+    paths: ['cpp/**', 'VERSION', 'build.py', 'install.ps1', 'install.sh', 'assets/**', '.github/workflows/edge.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: edge
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: stamp the version with the commit
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim() + '+' + $env:GITHUB_SHA.Substring(0, 7)
+          Set-Content VERSION $v -NoNewline
+          "LLMASH_EDGE=$v" | Out-File $env:GITHUB_ENV -Append
+
+      - name: build
+        run: python build.py --no-linux
+
+      - name: publish edge
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          gh release delete edge --yes --cleanup-tag
+          if ($LASTEXITCODE -ne 0) { Write-Host 'no edge build yet' }
+          gh release create edge dist/llmash-win-x64.zip install.ps1 install.sh --prerelease --target $env:GITHUB_SHA --title $env:LLMASH_EDGE --notes "Built from $env:GITHUB_SHA. ``llmash update`` installs this; the runtime comes from the latest release."
+          if ($LASTEXITCODE -ne 0) { exit 1 }

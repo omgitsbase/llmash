@@ -11,6 +11,8 @@ namespace llmash {
 // `llmash tray`: hands off to "llmashw.exe tray", hidden and detached, the
 // same program built without a console.
 bool cmd_tray(const Config & cfg, std::string & err);
+// `llmash start`: the tray, which brings the server up, then a word on where it answers.
+int  cmd_start(const Config & cfg);
 
 int tray_main(const Config & cfg);
 

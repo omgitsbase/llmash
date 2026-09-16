@@ -473,16 +473,15 @@ std::string release_version(const std::string & tag) {
     return v;
 }
 
-bool latest_release(const std::string & slug, Release & out, std::string & err) {
-    const HttpReply r = http_get("https://api.github.com/repos/" + slug + "/releases/latest",
-                                 {"Accept: application/vnd.github+json", "User-Agent: llmash"}, 15);
+static bool read_release(const std::string & url, const std::string & missing, Release & out, std::string & err) {
+    const HttpReply r = http_get(url, {"Accept: application/vnd.github+json", "User-Agent: llmash"}, 15);
     if (!r.error.empty()) {
         err = r.error;
         return false;
     }
     switch (r.status) {
         case 200: break;
-        case 404: err = slug + " has no releases yet"; return false;
+        case 404: err = missing; return false;
         case 403: err = "GitHub is rate limiting this address; try again later"; return false;
         default:  err = "GitHub answered " + std::to_string(r.status); return false;
     }
@@ -492,6 +491,7 @@ bool latest_release(const std::string & slug, Release & out, std::string & err) 
         return false;
     }
     out.tag   = j.value("tag_name", std::string());
+    out.name  = j.value("name", std::string());
     out.draft = j.value("draft", false);
     out.assets.clear();
     if (j.contains("assets") && j["assets"].is_array()) {
@@ -501,6 +501,40 @@ bool latest_release(const std::string & slug, Release & out, std::string & err) 
         }
     }
     return true;
+}
+
+bool latest_release(const std::string & slug, Release & out, std::string & err) {
+    return read_release("https://api.github.com/repos/" + slug + "/releases/latest", slug + " has no releases yet",
+                        out, err);
+}
+
+bool release_by_tag(const std::string & slug, const std::string & tag, Release & out, std::string & err) {
+    return read_release("https://api.github.com/repos/" + slug + "/releases/tags/" + tag,
+                        slug + " has no " + tag + " build", out, err);
+}
+
+std::string version_number(const std::string & v) {
+    return v.substr(0, v.find('+'));
+}
+
+bool version_less(const std::string & a, const std::string & b) {
+    const auto parts = [](const std::string & v) {
+        std::vector<long> out;
+        std::string       n;
+        for (const char c : version_number(v) + ".") {
+            if (c == '.') {
+                out.push_back(n.empty() ? 0 : std::atol(n.c_str()));
+                n.clear();
+            } else if (std::isdigit(static_cast<unsigned char>(c))) {
+                n += c;
+            }
+        }
+        return out;
+    };
+    std::vector<long> x = parts(a), y = parts(b);
+    x.resize(std::max(x.size(), y.size()), 0);
+    y.resize(x.size(), 0);
+    return x < y;
 }
 
 std::string prog_name() {
