@@ -389,14 +389,30 @@ size_t cols(const std::string & s) {
 }
 
 void test_rco_quality() {
-    check(rco_quality_text(3.9) == "matches fp8", "a wide build is level with the original");
-    check(rco_quality_text(5.0) == "matches fp8", "so is a wider one");
+    check(rco_quality_text(3.9) == "matches Q8", "a wide build is level with the original");
+    check(rco_quality_text(5.0) == "matches Q8", "so is a wider one");
+    check(rco_quality_text(3.0) == "near identical to Q8", "three bits is the near-identical rung");
     check(rco_quality_gap(2.75) > 2.5 && rco_quality_gap(2.75) < 2.7, "2.75 bits is the measured 2.6%");
     check(rco_quality_gap(3.0) > 0.6 && rco_quality_gap(3.0) < 0.8, "3 bits is the measured 0.7%");
     check(rco_quality_gap(2.875) > rco_quality_gap(3.0) && rco_quality_gap(2.875) < rco_quality_gap(2.75),
           "a width between two measured ones falls between them");
     check(rco_quality_gap(2.0) == rco_quality_gap(2.5), "below the measured range it holds the last figure");
-    check(rco_quality_text(2.75).find("under fp8") != std::string::npos, "the text names what it is under");
+    check(rco_quality_text(2.75).find("under Q8") != std::string::npos, "the text names what it is under");
+}
+
+void test_build_rows() {
+    QuantInfo custom = Q("RCO-3", 830 * 1000 * 1000);
+    custom.fetch     = 2200LL * 1000 * 1000;
+    const std::string rco = build_row(rco_row_label(custom.name), custom, "Q8 quality, Q4 size");
+    eq_str(rco, "rco 3    Q8 quality, Q4 size     2.2 GB bandwidth",
+           "the custom row names the width and the trade");
+    check(rco.find("finalized") == std::string::npos, "and promises no size it has not built");
+
+    const std::string plain = build_row("tiny", Q("IQ3_XS", 923 * 1000 * 1000), "");
+    eq_str(plain, "tiny     IQ3_XS                  923 MB", "a published build keeps its own name");
+    check(plain.size() == rco.size() - std::string(" bandwidth").size(), "and its size lands in the same column");
+
+    check(rco_row_label("RCO-3.4") == "rco 3.4", "a rung is labelled by its width");
 }
 
 void test_tradeoff() {
@@ -449,6 +465,7 @@ int main() {
     test_elide();
     test_show_info();
     test_rco_quality();
+    test_build_rows();
     test_tradeoff();
     test_prog();
 

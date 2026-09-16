@@ -474,20 +474,14 @@ std::string pad_to(const std::string & s, int width, bool left_align) {
     return left_align ? s + std::string(static_cast<size_t>(n), ' ') : std::string(static_cast<size_t>(n), ' ') + s;
 }
 
-// A build assembled here downloads one thing and leaves another, so both
-// sizes are shown: what comes down, then what is kept.
-std::string build_row(const std::string & label, const QuantInfo & q) {
-    std::string row = pad_to(label, 8, true) + " " + pad_to(q.name, 12, true) + " " +
-                      pad_to(human_bytes(q.fetch > 0 ? q.fetch : q.size), 8, false);
-    return row + (q.fetch > 0 ? " bandwidth, " + pad_to(human_bytes(q.size), 8, false) + " finalized" : "");
-}
-
 // chooseBuild lists a repository's builds and, when it ships them, its MTP
 // heads, and asks for one of each.
 bool is_rco(const std::string & name) {
     const std::string u = upper(name);
     return u.rfind("RCO", 0) == 0;
 }
+
+const char kRcoPitch[] = "Q8 quality, Q4 size";
 
 // The one choice that costs bandwidth and minutes, so it is confirmed.
 bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain) {
@@ -505,10 +499,13 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
                     static_cast<double>(custom.fetch) / static_cast<double>(ref->size), kReset);
         std::printf("  %sholds more of the model than any published build its size.%s\n", kDim, kReset);
     }
-    if (const double gap = rco_quality_gap(rco_bpw_of_quant(custom.name)); gap >= 0.05) {
+    if (const double gap = rco_quality_gap(rco_bpw_of_quant(custom.name)); gap > 1.0) {
         std::printf("\n  %sExpect about %.1f%% below the fp8 original on reasoning, maths and code,%s\n", kDim, gap,
                     kReset);
         std::printf("  %sfrom the published results for this method at this width.%s\n", kDim, kReset);
+    } else if (gap >= 0.05) {
+        std::printf("\n  %sIt answers near identically to Q8: within a point of the fp8 original on%s\n", kDim, kReset);
+        std::printf("  %sreasoning, maths and code, at a third of the bytes.%s\n", kDim, kReset);
     } else {
         std::printf("\n  %sAt this width the published results for this method sit level with the%s\n", kDim, kReset);
         std::printf("  %sfp8 original on reasoning, maths and code.%s\n", kDim, kReset);
@@ -537,8 +534,9 @@ std::string choose_width(const std::vector<QuantInfo> & custom, const std::vecto
     for (size_t i = 0; i < rungs.size(); i++) {
         // every rung is read from the same source, so the bandwidth is the same
         // on all of them; what separates them is the size kept and the quality
-        rows.push_back(pad_to(rungs[i].name, 12, true) + " " + pad_to(human_bytes(rungs[i].size), 8, false) +
-                       "   " + rco_quality_text(rco_bpw_of_quant(rungs[i].name)));
+        rows.push_back(pad_to(rco_row_label(rungs[i].name), 8, true) + " " +
+                       pad_to("about " + human_bytes(rungs[i].size), 13, true) + "  " +
+                       rco_quality_text(rco_bpw_of_quant(rungs[i].name)));
         if (equal_fold(rungs[i].name, start)) {
             cursor = static_cast<int>(i);
         }
@@ -599,25 +597,26 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     };
     std::vector<Row> basic, full;
     if (offered) {
-        basic.push_back(Row{build_row("custom", *offered), offered->name, offered->size, false});
+        basic.push_back(Row{build_row(rco_row_label(offered->name), *offered, kRcoPitch), offered->name,
+                            offered->size, false});
     }
     if (plain.size() > 1) {
         const Tiers t = tiers_of(plain);
         for (const auto & [label, idx] : {std::pair{"tiny", t.tiny}, {"medium", t.medium}, {"large", t.large}}) {
             const QuantInfo & q = plain[static_cast<size_t>(idx)];
-            basic.push_back(Row{build_row(label, q), q.name, q.size, false});
+            basic.push_back(Row{build_row(label, q, ""), q.name, q.size, false});
         }
     } else {
         for (const auto & q : plain) {
-            basic.push_back(Row{build_row("", q), q.name, q.size, false});
+            basic.push_back(Row{build_row("", q, ""), q.name, q.size, false});
         }
     }
     std::stable_sort(basic.begin(), basic.end(), [](const Row & a, const Row & b) { return a.size < b.size; });
     for (const auto & q : quants) {
-        full.push_back(Row{build_row(is_rco(q.name) ? "custom" : "", q), q.name, q.size, false});
+        full.push_back(Row{build_row("", q, ""), q.name, q.size, false});
     }
     if (registry_build) {
-        const Row own{build_row("ollama", *registry_build), "", registry_build->size, true};
+        const Row own{build_row("ollama", *registry_build, ""), "", registry_build->size, true};
         basic.push_back(own);
         full.push_back(own);
     }
@@ -1083,13 +1082,33 @@ double rco_quality_gap(double bpw) {
     return 0.0;
 }
 
+// The download is the only size known before the build runs, so it is the only
+// one quoted; `what` describes a custom build in place of its file name.
+std::string build_row(const std::string & label, const QuantInfo & q, const std::string & what) {
+    const std::string desc = what.empty() ? q.name : what;
+    std::string       row  = pad_to(label, 8, true) + " " + pad_to(desc, 21, true) + " " +
+                      pad_to(human_bytes(q.fetch > 0 ? q.fetch : q.size), 8, false);
+    return row + (q.fetch > 0 ? " bandwidth" : "");
+}
+
+// "rco 3" for RCO-3, "rco 3.4" for a rung of its own.
+std::string rco_row_label(const std::string & quant) {
+    const double bpw = rco_bpw_of_quant(quant);
+    char         buf[16];
+    std::snprintf(buf, sizeof(buf), "rco %g", bpw > 0 ? bpw : rco::DEFAULT_BPW);
+    return buf;
+}
+
 std::string rco_quality_text(double bpw) {
     const double gap = rco_quality_gap(bpw);
     if (gap < 0.05) {
-        return "matches fp8";
+        return "matches Q8";
+    }
+    if (gap <= 1.0) {
+        return "near identical to Q8";
     }
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.1f%% under fp8", gap);
+    std::snprintf(buf, sizeof(buf), "%.1f%% under Q8", gap);
     return buf;
 }
 
@@ -1123,13 +1142,15 @@ std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo
     const std::string head = pad_to("", 12, true) + "  " + std::string(20, ' ') + "  " +
                              pad_to("download", 9, false) + "  " + pad_to("on disk", 9, false);
 
-    const auto row = [&](const std::string & name, int64_t bytes, int64_t kept) {
+    // the custom build's own size is a target the allocator lands near, so it
+    // is quoted as one
+    const auto row = [&](const std::string & name, int64_t bytes, int64_t kept, const char * about) {
         return pad_to(name, 12, true) + "  " + bar_cells(bytes, top, 20) + "  " + pad_to(human_bytes(bytes), 9, false) +
-               "  " + pad_to(human_bytes(kept), 9, false);
+               "  " + pad_to(about + human_bytes(kept), 9, false);
     };
-    std::vector<std::string> out{head, row(custom.name, down, custom.size)};
+    std::vector<std::string> out{head, row(custom.name, down, custom.size, "~")};
     if (ref != nullptr) {
-        out.push_back(row(ref->name, ref->size, ref->size));
+        out.push_back(row(ref->name, ref->size, ref->size, ""));
     }
     return out;
 }

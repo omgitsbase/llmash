@@ -123,23 +123,33 @@ when the card has room, raised process priority, and DirectIO loading.
 `pull` lists a build assembled here beside the published ones. Every tensor is
 measured at each candidate type and given the one that buys the most accuracy
 per byte under a size budget, so the bits go where they change the answer. The
-tag is the target width: `RCO-3.9` averages 3.9 bits a weight.
+tag is the target width: `RCO-3` averages 3 bits a weight, and it is the one
+offered.
 
 ```
 qwen3-1.7b, which build?
-  tiny     IQ3_XS          923 MB
-  custom   RCO-3.9         2.2 GB bandwidth,   996 MB finalized
-  medium   Q4_K_M          1.1 GB
-  large    Q8_0            2.2 GB
+  tiny     IQ3_XS                  923 MB
+  rco 3    Q8 quality, Q4 size     2.2 GB bandwidth
+  medium   Q4_K_M                  1.1 GB
+  large    Q8_0                    2.2 GB
 ```
 
 Pick it and you choose the width: 2.75, 3, 3.4, 3.9, 4.4 or 5 bits a weight,
-each shown with its size on disk. It then shows the cost against the nearest
-published build and asks:
+each with what that width is worth against a Q8:
+
+```
+how small?
+  rco 2.75 about 703 MB   2.6% under Q8
+  rco 3    about 766 MB   near identical to Q8
+  rco 3.4  about 869 MB   near identical to Q8
+  rco 3.9  about 996 MB   matches Q8
+```
+
+It then shows the cost against the nearest published build and asks:
 
 ```
                                        download    on disk
-  RCO-3.9       ████████████████████     2.2 GB     996 MB
+  RCO-3         ████████████████████     2.2 GB    ~766 MB
   IQ3_XS        ████████                 923 MB     923 MB
 ```
 

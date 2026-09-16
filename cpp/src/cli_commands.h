@@ -57,6 +57,11 @@ Tiers  tiers_of(const std::vector<QuantInfo> & quants);
 const QuantInfo *        nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size);
 std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo * ref);
 
+// one line of the build picker; `what` replaces the file name for a build that
+// does not exist yet
+std::string build_row(const std::string & label, const QuantInfo & q, const std::string & what);
+std::string rco_row_label(const std::string & quant);
+
 double      rco_quality_gap(double bpw);
 std::string rco_quality_text(double bpw);
 // The quantisation tag embedded in a GGUF file name (pull.go's quantTag),
