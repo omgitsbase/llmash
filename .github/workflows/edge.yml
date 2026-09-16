@@ -29,7 +29,7 @@ jobs:
 
       - name: build
         run: |
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installerswhere.exe" -latest -products * -property installationVersion
+          & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -property installationVersion
           python build.py --no-linux
 
       - name: publish edge
