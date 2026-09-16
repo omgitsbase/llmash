@@ -475,13 +475,13 @@ double keep_alive_out(double ka) {
 std::string loose_dir(const Config & cfg) {
     const std::string from_env = env_str("LLMASH_GGUF");
     if (!from_env.empty()) {
-        return from_env;
+        return fs::path(from_env).make_preferred().string();
     }
     if (!cfg.gguf_dir.empty()) {
-        return cfg.gguf_dir;
+        return fs::path(cfg.gguf_dir).make_preferred().string();
     }
     const std::string base = cfg.models_root.empty() ? cfg.root : cfg.models_root;
-    return (fs::path(base) / "gguf").string();
+    return (fs::path(base) / "gguf").make_preferred().string();
 }
 
 std::string safe_model_name(const std::string & name) {

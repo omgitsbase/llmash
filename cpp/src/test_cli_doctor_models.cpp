@@ -125,6 +125,18 @@ int main(int argc, char ** argv) {
 
     check(walk_gguf((dir / "loose").string()).size() == 3, "walk_gguf finds every .gguf, sidecar and corrupt included");
 
+    fs::create_directories(dir / "nest" / "gguf");
+    write_gguf(dir / "nest" / "gguf" / "Nested-Q8_0.gguf", "qwen3", "blk.0.attn_norm.weight");
+    Config cfgn;
+    cfgn.root        = dir.string();
+    cfgn.models_root = (dir / "nest").string();
+    Registry regn(cfgn);
+    int nested = 0;
+    for (const auto & m : regn.all()) {
+        nested += m.name.rfind("nested", 0) == 0;
+    }
+    check(nested == 1, "a root holding another root lists each model once");
+
     const bool loose_is_gguf_folder = dir_exists((dir / "loose").string()) &&
                                      !reg0.is_ollama_store((dir / "loose").string()) &&
                                      !walk_gguf((dir / "loose").string()).empty();

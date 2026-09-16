@@ -85,6 +85,7 @@ int main() {
        "a build assembled here is tagged by its width");
     eq(loose_name("D:/m/Qwen3-8B-Q4_K_M-00001-of-00002.gguf"), "qwen3-8b:q4_k_m", "shards resolve to one name");
     eq(loose_name("D:/m/Some_Model.gguf"), "some-model:gguf", "underscores in the name become dashes");
+    eq(loose_name("D:/m/Model.i1-Q6_K.gguf"), "model:q6_k", "an imatrix marker is not part of the name");
 
     const std::optional<Model> qwen = reg.find("qwen3-8b");
     check(qwen.has_value(), "a model at the top level is found");

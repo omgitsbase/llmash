@@ -1056,8 +1056,8 @@ std::string resolve_gguf_repo(const std::string & repo, const std::string & quan
     if (!err.empty() || usable(files)) {
         return err.empty() ? repo : "";
     }
-    // the mirror carrying the build asked for, then the fullest one, then the
-    // hub's own order
+    // the mirror carrying the build asked for (the widest source, for a custom
+    // build), then the fullest one, then the hub's own order
     struct Cand {
         std::string         id;
         std::vector<HfFile> files;
@@ -1072,7 +1072,9 @@ std::string resolve_gguf_repo(const std::string & repo, const std::string & quan
             continue;
         }
         int score = static_cast<int>(quants_of(afiles).size());
-        if (bpw <= 0 && !quant.empty() && equal_fold(quant_tag(pick_gguf(afiles, quant).front().name), quant)) {
+        if (bpw > 0) {
+            score += static_cast<int>(bits_of_quant(quant_tag(pick_rco_source(afiles, bpw).front().name)) * 100);
+        } else if (!quant.empty() && equal_fold(quant_tag(pick_gguf(afiles, quant).front().name), quant)) {
             score += 1000;
         }
         cands.push_back({alt, std::move(afiles), score});
@@ -2124,7 +2126,8 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
     }
     const std::string mtp_prefix = rco::mtp_block_prefix(all_names);
     if (!mtp_prefix.empty()) {
-        emit(json{{"status", "  " + pad_right("mtp head", 12) + mtp_prefix + " stays wide, it drafts"}});
+        const std::string block = mtp_prefix.substr(0, mtp_prefix.size() - (mtp_prefix.back() == '.' ? 1 : 0));
+        emit(json{{"status", "  " + pad_right("mtp head", 12) + block + " stays wide, it drafts"}});
     }
     if (work.empty()) {
         emit(error_obj("nothing in this build can be requantized"));
@@ -2250,6 +2253,9 @@ std::string rco_build(const RcoSource & src, double bpw, const std::string & as,
             stem.erase(at, up.size() + 1);
             break;
         }
+    }
+    if (const std::string l = lower(stem); l.size() > 3 && (l.compare(l.size() - 3, 3, ".i1") == 0 || l.compare(l.size() - 3, 3, "-i1") == 0)) {
+        stem.erase(stem.size() - 3);  // mradermacher's imatrix marker
     }
     const std::string dest = (fs::path(dest_dir) / (stem + "-" + rco_quant_name(bpw) + ".gguf")).string();
     const std::string tmp  = dest + ".part";

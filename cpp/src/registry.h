@@ -62,15 +62,15 @@ private:
     bool               loaded_ = false;
 
     void scan();
-    void scan_library(const std::string & dir, std::vector<Model> & out) const;
+    void scan_library(const std::string & dir, std::vector<Model> & out, const std::vector<std::string> & skip) const;
     void scan_ollama_store(const std::string & root, std::vector<Model> & out) const;
 };
 
 // Subfolders included, hidden folders and links skipped.
-std::vector<std::string> walk_gguf(const std::string & dir);
+std::vector<std::string> walk_gguf(const std::string & dir, const std::vector<std::string> & skip = {});
 
 // The `<name>.gguf.part` files a stopped pull left behind.
-std::vector<std::string> walk_partials(const std::string & dir);
+std::vector<std::string> walk_partials(const std::string & dir, const std::vector<std::string> & skip = {});
 
 // loose_name with `.partial` appended to the tag.
 std::string partial_name(const std::string & path);

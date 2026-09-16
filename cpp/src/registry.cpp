@@ -223,6 +223,9 @@ std::string loose_name(const std::string & path) {
         stem = stem.substr(0, static_cast<size_t>(q.position(0)));
     }
     stem = lower(stem);
+    if (ends_with(stem, ".i1") || ends_with(stem, "-i1")) {  // mradermacher's imatrix marker
+        stem.erase(stem.size() - 3);
+    }
     std::replace(stem.begin(), stem.end(), '_', '-');
     return stem + ":" + tag;
 }
@@ -230,7 +233,7 @@ std::string loose_name(const std::string & path) {
 namespace {
 
 // walk_gguf and walk_partials differ only in what they keep.
-std::vector<std::string> walk_ext(const std::string & dir, bool want_part) {
+std::vector<std::string> walk_ext(const std::string & dir, bool want_part, const std::vector<std::string> & skip) {
     std::vector<std::string> out;
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) {
@@ -249,7 +252,9 @@ std::vector<std::string> walk_ext(const std::string & dir, bool want_part) {
         const fs::path p = it->path();
         const std::string base = p.filename().string();
         if (it->is_directory(ec)) {
-            if (!base.empty() && base[0] == '.') {
+            const bool own_root = std::any_of(skip.begin(), skip.end(),
+                                              [&](const std::string & s) { return same_dir(p.string(), s); });
+            if ((!base.empty() && base[0] == '.') || own_root) {
                 it.disable_recursion_pending();
             }
             continue;
@@ -269,9 +274,13 @@ std::vector<std::string> walk_ext(const std::string & dir, bool want_part) {
 
 } // namespace
 
-std::vector<std::string> walk_gguf(const std::string & dir) { return walk_ext(dir, false); }
+std::vector<std::string> walk_gguf(const std::string & dir, const std::vector<std::string> & skip) {
+    return walk_ext(dir, false, skip);
+}
 
-std::vector<std::string> walk_partials(const std::string & dir) { return walk_ext(dir, true); }
+std::vector<std::string> walk_partials(const std::string & dir, const std::vector<std::string> & skip) {
+    return walk_ext(dir, true, skip);
+}
 
 std::string partial_name(const std::string & path) {
     const std::string name = loose_name(fs::path(path).stem().string());
@@ -340,9 +349,10 @@ bool Registry::in_library(const std::string & path) const {
     return false;
 }
 
-void Registry::scan_library(const std::string & dir, std::vector<Model> & out) const {
+void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
+                            const std::vector<std::string> & skip) const {
     const std::map<std::string, std::string> aliases = read_aliases(dir);
-    for (const auto & path : walk_gguf(dir)) {
+    for (const auto & path : walk_gguf(dir, skip)) {
         const std::string stem = stem_of(path);
         if (is_sidecar(stem)) {
             continue;
@@ -388,7 +398,7 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out) c
 
     // A stopped pull holds its bytes whether or not anything can read them, so
     // the header is not parsed here: only the name, the size and the date.
-    for (const auto & path : walk_partials(dir)) {
+    for (const auto & path : walk_partials(dir, skip)) {
         Model mo;
         mo.name       = partial_name(path);
         mo.path       = path;
@@ -518,8 +528,10 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
 
 void Registry::scan() {
     std::vector<Model> found;
-    for (const auto & d : library_dirs()) {
-        scan_library(d, found);
+    // a root inside another is walked once, by its own scan
+    const std::vector<std::string> dirs = library_dirs();
+    for (const auto & d : dirs) {
+        scan_library(d, found, dirs);
     }
     // The quantisation is already in the tag, so a clash now means two files
     // of the same name and the same build. A counter is all that is left.
