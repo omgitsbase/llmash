@@ -32,14 +32,27 @@ def cmake() -> str:
     raise SystemExit("cmake not found; install Visual Studio 2022 with the C++ workload")
 
 
+def vswhere(prop: str) -> str:
+    exe = pathlib.Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+    return subprocess.run([str(exe), "-latest", "-products", "*", "-property", prop],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def generator() -> str:
+    """The newest Visual Studio on the machine; CI runners move on before we do."""
+    major = (vswhere("installationVersion").split(".") or ["17"])[0]
+    return {"18": "Visual Studio 18 2026"}.get(major, "Visual Studio 17 2022")
+
+
 def crt_dlls() -> list:
-    vswhere = pathlib.Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio/Installer/vswhere.exe"
-    vs = subprocess.run([str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
-                        capture_output=True, text=True).stdout.strip()
+    vs = vswhere("installationPath")
     redist = sorted((pathlib.Path(vs) / "VC/Redist/MSVC").glob("14.*"))
     if not redist:
         raise SystemExit("no Visual C++ redistributable found next to the compiler")
-    crt = redist[-1] / "x64/Microsoft.VC143.CRT"
+    crts = sorted((redist[-1] / "x64").glob("Microsoft.VC*.CRT"))
+    if not crts:
+        raise SystemExit("no Visual C++ runtime folder under " + str(redist[-1]))
+    crt = crts[-1]
     names = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
     return [crt / n for n in names]
 
@@ -50,8 +63,7 @@ def build() -> None:
     # VERSION with a warm cache ships a binary reporting the old number.
     cache = BUILD / "CMakeCache.txt"
     if not cache.exists() or (HERE / "VERSION").stat().st_mtime > cache.stat().st_mtime:
-        subprocess.run([cm, "-S", str(CPP), "-B", str(BUILD), "-G", "Visual Studio 17 2022", "-A", "x64"],
-                       check=True)
+        subprocess.run([cm, "-S", str(CPP), "-B", str(BUILD), "-G", generator(), "-A", "x64"], check=True)
     subprocess.run([cm, "--build", str(BUILD), "--config", "Release", "--target", "llmash", "llmashw"],
                    check=True)
     OUT.mkdir(parents=True, exist_ok=True)
