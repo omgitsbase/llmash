@@ -191,6 +191,7 @@ Environment Variables:
       LLMASH_PUBLIC_PORT           Keyed public listener for )HELP" "`ollama link`" R"HELP( (default 11435, 0 = off)
       LLMASH_CTX                   Context length: the default, and the most any request gets (default 8192)
       LLMASH_KV                    Quantization type for the K/V cache (default "f16")
+      LLMASH_YARN_MAX              How far past its trained context a model may be asked to run, under YaRN (default 4)
       LLMASH_LOAD_MODE             How weights reach VRAM: dio or mmap (default "dio")
       LLMASH_VRAM_GB               VRAM budget for resident models (default 80)
       LLMASH_PIN                   Comma-separated models never evicted

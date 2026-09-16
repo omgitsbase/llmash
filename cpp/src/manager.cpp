@@ -1237,28 +1237,30 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         }
     }
 
-    // manager.go: the trained context is the ceiling unless local.json
-    // forces one (ctx_override) or lifts it (ctx_max).
-    const int    native  = m->ctx_train > 0 ? m->ctx_train : (cfg_.ctx > 0 ? cfg_.ctx : 8192);
-    const int    forced  = ctx_target(cfg_, m->name);
-    const int    ceiling = ctx_ceiling(cfg_, m->name, native);
-    const double weights = static_cast<double>(m->size) / static_cast<double>(1ull << 30);
-    double       need    = weights * 1.05;
+    // The trained context is the ceiling unless local.json forces one
+    // (ctx_override) or lifts it (ctx_max), or the request itself asks past it:
+    // then the model runs under YaRN, up to four times its length.
+    const int    native   = m->ctx_train > 0 ? m->ctx_train : (cfg_.ctx > 0 ? cfg_.ctx : 8192);
+    const int    forced   = ctx_target(cfg_, m->name);
+    const int    yarn_max = m->ctx_train > 0 ? std::max(1, env_int("LLMASH_YARN_MAX", 4)) * native : native;
+    const int    ceiling  = std::max(ctx_ceiling(cfg_, m->name, native), std::min(ctx, yarn_max));
     if (forced > 0) {
-        ctx  = forced;
-        need = weights * 1.05 + weights * 0.4 * (static_cast<double>(ctx) / kCtxTrainNative);
-    } else if (ceiling > native) {
+        ctx = forced;
+    } else {
         if (ctx > ceiling) {
             ctx = ceiling;
         }
-        ctx  = fit_ctx(*m, ctx);
-        need = weights * 1.05 + weights * 0.4 * (static_cast<double>(ctx) / kCtxTrainNative);
-    } else {
-        if (ctx > native) {
-            ctx = native;
-        }
         ctx = fit_ctx(*m, ctx);
     }
+    if (ctx > native) {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "ctx %d is past the trained %d: running under YaRN x%.2f", ctx, native,
+                      static_cast<double>(ctx) / native);
+        log_line(m->name + ": " + buf);
+    }
+    const double weights = static_cast<double>(m->size) / static_cast<double>(1ull << 30);
+    const double need    = weights * 1.05 + (m->kv_bytes_tok * kv_type_scale(cfg_.kv_type) * ctx + m->state_bytes) /
+                                                static_cast<double>(1ull << 30);
 
     std::lock_guard<std::mutex> load_lock(g_load_mu);
     Instance *                  inst  = nullptr;
