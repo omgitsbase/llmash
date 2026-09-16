@@ -654,10 +654,10 @@ function PortBusy { try { $null = Invoke-WebRequest 'http://127.0.0.1:11434/' -U
 $busy = PortBusy
 if ($busy) {
     if ($upgrade) {
-        Warn 'something else is already on 11434 (an older llmash?); restart it with:  llmash tray'
+        Warn 'something else is already on 11434 (an older llmash?); restart it with:  llmash start'
     } else {
         Warn 'port 11434 is already in use, not starting a second server'
-        Say  'stop whatever holds it, then run:  llmash tray'
+        Say  'stop whatever holds it, then run:  llmash start'
     }
 } else {
     $started = $true
@@ -670,11 +670,11 @@ if ($busy) {
             Warn 'your antivirus blocked llmashw.exe from starting'
             Say  'Everything is installed and the command line works; only the tray was stopped.'
             Say  'llmash is unsigned, and a freshly built program with no reputation is a common false positive.'
-            Say  'Allow it in your antivirus (in Windows Security it is under Protection history), then:  llmash tray'
+            Say  'Allow it in your antivirus (in Windows Security it is under Protection history), then:  llmash start'
             Say  'Reporting it also helps everyone else: https://www.microsoft.com/en-us/wdsi/filesubmission'
         } else {
             Warn "could not start the tray: $msg"
-            Say  'Everything is installed; start it yourself with:  llmash tray'
+            Say  'Everything is installed; start it yourself with:  llmash start'
         }
     }
     $ok = $false
@@ -683,7 +683,7 @@ if ($busy) {
         Start-Sleep -Milliseconds 400
         if (PortBusy) { $ok = $true; break }
     }
-    if ($ok) { Good 'listening on 127.0.0.1:11434 - look for the icon in the tray' } elseif ($null -eq $ok) { } else { Warn 'not answering yet; try:  llmash tray' }
+    if ($ok) { Good 'listening on 127.0.0.1:11434 - look for the icon in the tray' } elseif ($null -eq $ok) { } else { Warn 'not answering yet; try:  llmash start' }
 }
 
 Write-Host ''
@@ -692,7 +692,7 @@ Write-Host ''
 Write-Host '    llmash install qwen3.6:a3b'
 Write-Host '    llmash run qwen3.6:a3b'
 Write-Host '    llmash list'
-Write-Host '    llmash tray        (if you closed it)'
+Write-Host '    llmash start        (if you closed it)'
 Write-Host ''
 if (-not $NoOllama) { Say '`ollama` now runs llmash too, so anything already pointed at Ollama keeps working.' }
 Say 'Open a new terminal to pick up the PATH change.   Remove with:  llmash uninstall'
