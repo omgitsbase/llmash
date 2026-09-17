@@ -246,11 +246,11 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
         return 0;
     }
 
-    std::string script = find_installer(cfg);
+    // the release's own installer, so what runs matches what it installs;
+    // the copy beside the program is the fallback when GitHub will not serve it
+    std::string script = fetch_installer(rel);
     if (script.empty()) {
-        std::printf("fetching the installer for %s\n", there.c_str());
-        std::fflush(stdout);
-        script = fetch_installer(rel);
+        script = find_installer(cfg);
     }
     if (script.empty()) {
 #ifdef _WIN32
