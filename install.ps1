@@ -387,9 +387,23 @@ Good "llmash $version, nothing else to install"
 Step 'Checking llama.cpp'
 $rtInfo = $null
 $have = (Test-Path $RtExe) -or (Get-Command llama-server -ErrorAction SilentlyContinue) -or $env:LLAMA_BIN
+# a runtime already here is kept unless the release names a newer one: its RUNTIME.txt
+# asset carries the stamp the zip was built from, and the installed copy carries its own
+$stale = $false
+$stampHere = Join-Path $RtDir 'RUNTIME.txt'
+if ($Runtime -eq 'auto' -and (Test-Path $RtExe) -and (Test-Path $stampHere)) {
+    $stampAsset = $release.assets | Where-Object { $_.name -eq 'RUNTIME.txt' } | Select-Object -First 1
+    if ($stampAsset) {
+        try {
+            $theirs = ([string](Invoke-RestMethod $stampAsset.browser_download_url -TimeoutSec 30)).Trim()
+            $mine   = (Get-Content $stampHere -Raw).Trim()
+            if ($theirs -and $mine -ne $theirs) { $stale = $true; Say "runtime here is $mine; the release carries $theirs" }
+        } catch { }
+    }
+}
 if ($Runtime -eq 'none') {
     if ($have) { Good 'found' } else { Warn ('skipped; set LLAMA_BIN or drop llama-server.exe into ' + $RtDir) }
-} elseif ($have -and $Runtime -eq 'auto') {
+} elseif ($have -and $Runtime -eq 'auto' -and -not $stale) {
     Good 'found'
 } else {
     $kind = $Runtime
