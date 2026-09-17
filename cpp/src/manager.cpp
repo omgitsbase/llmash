@@ -616,8 +616,9 @@ bool Instance::on_gpu() const {
 }
 
 double Instance::vram_gb() const {
-    const double GB = static_cast<double>(1ull << 30);
-    return static_cast<double>(model.size) / GB * 1.05 + (model.kv_bytes_tok * ctx + model.state_bytes) / GB;
+    const double GB    = static_cast<double>(1ull << 30);
+    const double cache = kv_on_gpu ? model.kv_bytes_tok * kv_type_scale(kv_type) * ctx : 0.0;
+    return static_cast<double>(model.size) / GB * 1.05 + (cache + model.state_bytes) / GB;
 }
 
 bool Instance::alive() const {
@@ -793,8 +794,12 @@ std::vector<std::string> Instance::args() {
     }
 
     const int parallel = cfg_->parallel > 0 ? cfg_->parallel : 1;
+    const std::string kv = kv_type.empty() ? cfg_->kv_type : kv_type;
     a.insert(a.end(), {"-c", std::to_string(ctx * parallel), "--jinja", "--no-webui", "-fa", "on", "--cache-type-k",
-                       cfg_->kv_type, "--cache-type-v", cfg_->kv_type, "--parallel", std::to_string(parallel)});
+                       kv, "--cache-type-v", kv, "--parallel", std::to_string(parallel)});
+    if (!kv_on_gpu) {
+        a.push_back("--no-kv-offload");  // the cache stays in system RAM, the weights on the card
+    }
 
     if (!plain_args_) {
         // only a build of ours is known to take these
@@ -1163,43 +1168,89 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
     }
 }
 
-int Manager::fit_ctx(const Model & m, int ctx) {
-    const double GB       = static_cast<double>(1ull << 30);
-    const int    parallel = cfg_.parallel > 0 ? cfg_.parallel : 1;
-    const double weights  = static_cast<double>(m.size) / GB;
-    const double per_tok  = m.kv_bytes_tok * kv_type_scale(cfg_.kv_type) / GB;
-    if (ctx <= 0 || per_tok <= 0) {
-        return ctx;  // an architecture the header did not describe: llama.cpp fits what it can
-    }
-    double freeV = free_vram_gb().first;
+Manager::Fit Manager::fit_report(const Model & m) {
+    const double GB = static_cast<double>(1ull << 30);
+    Fit          f;
+    f.weights_gb = static_cast<double>(m.size) / GB;
+    f.per_tok_gb = m.kv_bytes_tok / GB;
+    f.state_gb   = m.state_bytes / GB;
+    f.native     = m.ctx_train;
+    f.free_gb    = free_vram_gb().first;
     {
         std::lock_guard<std::mutex> lock(mu_);
         if (Instance * cur = find_by_name(live_, m.name)) {
-            freeV += cur->vram_gb();
+            f.free_gb += cur->vram_gb();
         }
     }
-    const double headroom = env_float("LLMASH_VRAM_HEADROOM", 6);
-    const double room     = std::max(2.0, freeV - headroom);
-    // compute buffers: the logits of a full micro-batch and the attention scratch
-    const double compute = total_vram_gb() > 24 ? 1.5 : 0.8;
-    const double fixed   = weights * 1.05 + m.state_bytes * parallel / GB + compute;
-    const double need    = fixed + per_tok * ctx * parallel;
-    if (need <= room) {
-        return ctx;
-    }
-    const double step   = 4096.0;
-    const int    fitted = static_cast<int>(std::max(step, std::floor((room - fixed) / (per_tok * parallel) / step) * step));
-    if (fitted < ctx) {
-        char buf[240];
-        std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free: using %d",
-                      ctx, need, weights, per_tok * ctx * parallel, freeV, fitted);
-        log_line(std::string(m.name) + ": " + buf);
-        return fitted;
-    }
-    return ctx;
+    f.total_gb   = total_vram_gb();
+    f.compute_gb = f.total_gb > 24 ? 1.5 : 0.8;  // a micro-batch of logits and the attention scratch
+    return f;
 }
 
-Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err) {
+double Manager::fit_room(const Fit & f) const {
+    return std::max(2.0, f.free_gb - env_float("LLMASH_VRAM_HEADROOM", 6));
+}
+
+// The largest context at or under `ctx` whose cache, at `kv_scale` of f16, fits.
+int Manager::fit_at(const Fit & f, int ctx, double kv_scale) const {
+    const int    parallel = cfg_.parallel > 0 ? cfg_.parallel : 1;
+    const double fixed    = f.weights_gb * 1.05 + f.state_gb * parallel + f.compute_gb;
+    const double per_tok  = f.per_tok_gb * kv_scale * parallel;
+    const double room     = fit_room(f);
+    if (per_tok <= 0 || fixed + per_tok * ctx <= room) {
+        return ctx;
+    }
+    const double step = 4096.0;
+    const int    fits = static_cast<int>(std::max(step, std::floor((room - fixed) / per_tok / step) * step));
+    return std::min(fits, ctx);
+}
+
+nlohmann::json Manager::fit_json(const Model & m, int ctx) {
+    const Fit    f     = fit_report(m);
+    const int    asked = ctx > 0 ? ctx : (f.native > 0 ? f.native : 8192);
+    const double f16   = kv_type_scale(cfg_.kv_type);
+    const double q8    = kv_type_scale("q8_0");
+    const int    parallel = cfg_.parallel > 0 ? cfg_.parallel : 1;
+    return nlohmann::json{{"model", m.name},
+                          {"native", f.native},
+                          {"asked", asked},
+                          {"kv_type", cfg_.kv_type},
+                          {"known", f.per_tok_gb > 0},
+                          {"free_gb", f.free_gb},
+                          {"total_gb", f.total_gb},
+                          {"room_gb", fit_room(f)},
+                          {"weights_gb", f.weights_gb},
+                          {"state_gb", f.state_gb},
+                          {"compute_gb", f.compute_gb},
+                          {"cache_gb", f.per_tok_gb * f16 * asked * parallel},
+                          {"cache_gb_q8", f.per_tok_gb * q8 * asked * parallel},
+                          {"fitted", fit_at(f, asked, f16)},
+                          {"fitted_q8", fit_at(f, asked, q8)}};
+}
+
+int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
+    if (ctx <= 0 || !prefs.kv_on_gpu) {
+        return ctx;  // a cache in system RAM has nothing to fit on the card
+    }
+    const Fit f = fit_report(m);
+    if (f.per_tok_gb <= 0) {
+        return ctx;  // an architecture the header did not describe: llama.cpp fits what it can
+    }
+    const double scale  = kv_type_scale(prefs.kv_type.empty() ? cfg_.kv_type : prefs.kv_type);
+    const int    fitted = fit_at(f, ctx, scale);
+    if (fitted < ctx) {
+        char buf[240];
+        std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free: using %d", ctx,
+                      f.weights_gb * 1.05 + f.state_gb + f.compute_gb + f.per_tok_gb * scale * ctx, f.weights_gb,
+                      f.per_tok_gb * scale * ctx, f.free_gb, fitted);
+        log_line(std::string(m.name) + ": " + buf);
+    }
+    return fitted;
+}
+
+Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err,
+                        const LoadPrefs & prefs) {
+    const std::string kv = prefs.kv_type.empty() ? cfg_.kv_type : lower(prefs.kv_type);
     drop_dead();
     const std::optional<Model> m = reg_->find(name);
     if (!m) {
@@ -1231,7 +1282,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
             erase_ptr(live_, cur);
             cur = nullptr;
         }
-        if (cur != nullptr && cur->ready() && cur->ctx >= ctx) {
+        if (cur != nullptr && cur->ready() && cur->ctx >= ctx && cur->kv_type == kv && cur->kv_on_gpu == prefs.kv_on_gpu) {
             cur->set_keep_alive(keep_alive);
             return cur;
         }
@@ -1250,7 +1301,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         if (ctx > ceiling) {
             ctx = ceiling;
         }
-        ctx = fit_ctx(*m, ctx);
+        ctx = fit_ctx(*m, ctx, prefs);
     }
     if (ctx > native) {
         char buf[96];
@@ -1259,8 +1310,8 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         log_line(m->name + ": " + buf);
     }
     const double weights = static_cast<double>(m->size) / static_cast<double>(1ull << 30);
-    const double need    = weights * 1.05 + (m->kv_bytes_tok * kv_type_scale(cfg_.kv_type) * ctx + m->state_bytes) /
-                                                static_cast<double>(1ull << 30);
+    const double cache   = prefs.kv_on_gpu ? m->kv_bytes_tok * kv_type_scale(kv) * ctx : 0.0;
+    const double need    = weights * 1.05 + (cache + m->state_bytes) / static_cast<double>(1ull << 30);
 
     std::lock_guard<std::mutex> load_lock(g_load_mu);
     Instance *                  inst  = nullptr;
@@ -1268,9 +1319,10 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
     {
         std::lock_guard<std::mutex> lock(mu_);
         inst = find_by_name(live_, m->name);
-        if (inst != nullptr && inst->ctx < ctx) {
-            log_line("reloading " + m->name + " for a larger context (" + std::to_string(inst->ctx) + " -> " +
-                     std::to_string(ctx) + ")");
+        if (inst != nullptr && (inst->ctx < ctx || inst->kv_type != kv || inst->kv_on_gpu != prefs.kv_on_gpu)) {
+            log_line("reloading " + m->name + " for a larger context or another cache (" + std::to_string(inst->ctx) +
+                     " " + inst->kv_type + (inst->kv_on_gpu ? "" : " in RAM") + " -> " + std::to_string(ctx) + " " + kv +
+                     (prefs.kv_on_gpu ? "" : " in RAM") + ")");
             inst->stop();
             erase_ptr(live_, inst);
             inst = nullptr;
@@ -1280,6 +1332,8 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
     if (fresh) {
         evict_for(need, m->name);
         auto       owned = std::make_unique<Instance>(*m, ctx, vision, &cfg_);
+        owned->kv_type   = kv;
+        owned->kv_on_gpu = prefs.kv_on_gpu;
         Instance * raw   = owned.get();
         {
             std::lock_guard<std::mutex> lock(mu_);

@@ -5,10 +5,17 @@
 
 #include <memory>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
 namespace llmash {
+
+// How a client wants the cache: its type, and whether it sits on the card.
+struct LoadPrefs {
+    std::string kv_type;         // empty: the server's default
+    bool        kv_on_gpu = true;
+};
 
 class Instance {
 public:
@@ -30,6 +37,8 @@ public:
     Model  model;
     int    ctx = 0;
     bool   vision = false;
+    std::string kv_type;         // the cache type it was started with
+    bool        kv_on_gpu = true;
     int    port = 0;
     double last_used = 0;
     double expires_at = 0;
@@ -59,7 +68,19 @@ public:
 
     std::vector<Instance *> loaded(); // ready ones only
     std::vector<Instance *> live();   // every instance, still loading included
-    Instance *              get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err);
+    Instance *              get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err,
+                                const LoadPrefs & prefs = {});
+
+    // What a context costs on this card, from the model's header.
+    struct Fit {
+        double weights_gb = 0, state_gb = 0, compute_gb = 0, free_gb = 0, total_gb = 0;
+        double per_tok_gb = 0;  // an f16 cache, per token
+        int    native     = 0;
+    };
+    Fit            fit_report(const Model & m);
+    double         fit_room(const Fit & f) const;
+    int            fit_at(const Fit & f, int ctx, double kv_scale) const;
+    nlohmann::json fit_json(const Model & m, int ctx);
     bool                    unload(const std::string & name);
     Instance *              find(const std::string & name);
     void                    shutdown();
@@ -73,7 +94,7 @@ private:
 
     void   evict_for(double need_gb, const std::string & keep);
     void   drop_dead();
-    int    fit_ctx(const Model & m, int ctx);
+    int    fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs);
 };
 
 struct Tuning {
