@@ -118,6 +118,20 @@ json sampling_override(const Knobs & k, const std::string & name) {
     return json::object();
 }
 
+// options.kv_type and options.kv_offload: how the client wants the cache.
+LoadPrefs load_prefs(const json & opts) {
+    LoadPrefs p;
+    if (opts.is_object()) {
+        if (opts.contains("kv_type") && opts["kv_type"].is_string()) {
+            p.kv_type = opts["kv_type"].get<std::string>();
+        }
+        if (opts.contains("kv_offload") && opts["kv_offload"].is_boolean()) {
+            p.kv_on_gpu = opts["kv_offload"].get<bool>();
+        }
+    }
+    return p;
+}
+
 std::mutex g_log_mu;
 
 void log_chat(const std::string & s) {
@@ -417,7 +431,7 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
     std::string  err;
     const json   ka   = body.contains("keep_alive") ? body["keep_alive"] : json();
     Instance *   inst = mgr.get(name, static_cast<int>(jnum(opts, "num_ctx")),
-                                parse_keep_alive(ka, cfg.keep_alive), turn_has_media(body), err);
+                                parse_keep_alive(ka, cfg.keep_alive), turn_has_media(body), err, load_prefs(opts));
     if (inst == nullptr) {
         load_error(res, name, err, false);
         return false;
@@ -706,7 +720,8 @@ void handle_generate(const httplib::Request & req, httplib::Response & res, Conf
         const int   ctx = body.contains("options") && body["options"].is_object()
                               ? static_cast<int>(jnum(body["options"], "num_ctx"))
                               : 0;
-        if (mgr.get(name, ctx, parse_keep_alive(ka, cfg.keep_alive), false, err) == nullptr) {
+        if (mgr.get(name, ctx, parse_keep_alive(ka, cfg.keep_alive), false, err,
+                    load_prefs(body.contains("options") ? body["options"] : json::object())) == nullptr) {
             load_error(res, name, err, false);
             return;
         }

@@ -3,6 +3,7 @@
 #include "cli_format.h"
 #include "cli_http.h"
 #include "cli_run.h"
+#include "cli_util.h"
 #include "config.h"
 #include "progress.h"
 #include "readline.h"
@@ -498,7 +499,10 @@ namespace {
 std::string resolve_host() {
     const char * env = std::getenv("OLLAMA_HOST");
     std::string  h   = (env && *env) ? env : "";
-    if (h.empty()) h = "http://127.0.0.1:11434";
+    if (h.empty()) {
+        const char * port = std::getenv("LLMASH_PORT");  // the same server every other command talks to
+        h = "http://127.0.0.1:" + std::string(port && *port ? port : "11434");
+    }
     if (h.rfind("http", 0) != 0) h = "http://" + h;
     while (!h.empty() && h.back() == '/') h.pop_back();
     return h;
@@ -780,6 +784,95 @@ std::pair<json, int> show_model(const std::string & name) {
     const HttpResult r = http_call_json("POST", "/api/show", &body, 60);
     if (!r.ok) die("Error: " + r.error);
     return {r.body, r.status};
+}
+
+std::string ctx_text(int n) { return n >= 1000 ? std::to_string(n / 1000) + "k" : std::to_string(n); }
+
+std::string gb_text(double gb) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f GB", gb);
+    return buf;
+}
+
+// The context a run asks for: the model's whole window unless --ctx said
+// otherwise. When that does not fit the card, the choice is the user's:
+// less context, a q8_0 cache, or the cache in system RAM. A choice is kept
+// in local.json under "fit" and reused until --ctx names something else.
+void fit_context(RunOptions & o, const json & info, int asked_ctx, bool interactive) {
+    const Config cfg   = load_config();
+    json         local = clidoc::read_local_json(cfg.root);
+    const json   kept  = j_sub(j_sub(local, "fit"), o.model);
+    if (asked_ctx <= 0 && kept.is_object() && kept.contains("ctx")) {
+        o.options["num_ctx"] = kept["ctx"];
+        if (kept.contains("kv_type")) o.options["kv_type"] = kept["kv_type"];
+        if (kept.contains("kv_offload")) o.options["kv_offload"] = kept["kv_offload"];
+        return;
+    }
+    (void) info;
+    const HttpResult r = http_call_json("GET", "/api/fit?model=" + url_query_escape(o.model) + "&ctx=" + std::to_string(std::max(asked_ctx, 0)), nullptr, 30);
+    if (!r.ok || r.status != 200 || !r.body.value("known", false)) {
+        if (asked_ctx > 0) o.options["num_ctx"] = asked_ctx;
+        return;
+    }
+    const json & f      = r.body;
+    const int    asked  = static_cast<int>(j_num(f, "asked"));  // --ctx, else the trained window
+    const int    fitted = static_cast<int>(j_num(f, "fitted"));
+    if (asked <= 0) return;
+    if (fitted >= asked) {
+        o.options["num_ctx"] = asked;
+        return;
+    }
+    if (!interactive) {
+        o.options["num_ctx"] = asked;  // the server fits it and says so in its log
+        return;
+    }
+    const int    fitted_q8  = static_cast<int>(j_num(f, "fitted_q8"));
+    const double weights    = j_num(f, "weights_gb");
+    const double fixed      = weights * 1.05 + j_num(f, "state_gb") + j_num(f, "compute_gb");
+    const double per_tok    = j_num(f, "cache_gb") / asked;
+    const double per_tok_q8 = j_num(f, "cache_gb_q8") / asked;
+    std::printf("\n%s at %s context needs %s on the card; %s is free.\n", o.model.c_str(), ctx_text(asked).c_str(),
+                gb_text(fixed + j_num(f, "cache_gb")).c_str(), gb_text(j_num(f, "free_gb")).c_str());
+    struct Choice { std::string text; int ctx; std::string kv; bool on_gpu; };
+    std::vector<Choice> choices;
+    choices.push_back({ctx_text(fitted) + " context, on the card", fitted, "", true});
+    if (fitted_q8 > fitted) {
+        choices.push_back({ctx_text(fitted_q8) + " context, with a q8_0 cache", fitted_q8, "q8_0", true});
+    }
+    choices.push_back({ctx_text(asked) + " context, cache in system RAM", asked, "", false});
+    size_t width = 0;
+    for (const Choice & c : choices) width = std::max(width, c.text.size());
+    std::vector<std::string> rows;
+    for (const Choice & c : choices) {
+        std::string note;
+        if (!c.on_gpu) {
+            note = gb_text(per_tok * c.ctx) + " of RAM, slower as the chat grows";
+        } else {
+            note = "fits, " + gb_text(fixed + (c.kv == "q8_0" ? per_tok_q8 : per_tok) * c.ctx) +
+                   (c.kv == "q8_0" ? "; the cache keeps 8 bits" : "");
+        }
+        rows.push_back(c.text + std::string(width - c.text.size() + 4, ' ') + note);
+    }
+    const int n = pick_menu("Which?", rows, 0, "\xe2\x86\x91\xe2\x86\x93 move   enter choose   esc let llmash decide", "");
+    if (n < 0 || n >= static_cast<int>(choices.size())) {
+        o.options["num_ctx"] = asked;
+        return;
+    }
+    const Choice & c = choices[static_cast<size_t>(n)];
+    o.options["num_ctx"] = c.ctx;
+    if (!c.kv.empty()) o.options["kv_type"] = c.kv;
+    if (!c.on_gpu) o.options["kv_offload"] = false;
+    if (asked_ctx <= 0) {
+        json entry = json{{"ctx", c.ctx}};
+        if (!c.kv.empty()) entry["kv_type"] = c.kv;
+        if (!c.on_gpu) entry["kv_offload"] = false;
+        if (!local.is_object()) local = json::object();
+        local["fit"][o.model] = entry;
+        std::string err;
+        if (clidoc::write_local_json(cfg.root, local, err)) {
+            std::printf("%skept for next time; llmash run --ctx N changes it%s\n", kDim, kReset);
+        }
+    }
 }
 
 json show_or_pull(RunOptions & o) {
@@ -1516,6 +1609,7 @@ int cmd_run(const RunArgs & args) {
         if (!is_console(stdout)) interactive = false;
 
         json info      = show_or_pull(opts);
+        fit_context(opts, info, args.ctx, interactive);
         opts.parent_model = j_str(j_sub(info, "details"), "parent_model");
         infer_thinking(info, opts, args.think_set);
         opts.multi_modal = has_cap(info, "vision") || has_cap(info, "audio");

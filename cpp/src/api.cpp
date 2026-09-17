@@ -339,6 +339,19 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     mount(srv, "/api/resolve", [&cfg, &reg](const Request & req, Response & res) {
         handle_resolve(req, res, cfg, reg);
     });
+    // what a context costs on this card, so a client can ask before loading
+    mount(srv, "/api/fit", [&mgr, &reg](const Request & req, Response & res) {
+        const std::string          name = req.get_param_value("model");
+        const std::optional<Model> m    = reg.find(name);
+        if (!m) {
+            res.status = 404;
+            res.set_content(json{{"error", "model '" + name + "' not found"}}.dump() + "\n", "application/json");
+            return;
+        }
+        const int ctx = std::atoi(req.get_param_value("ctx").c_str());
+        res.status    = 200;
+        res.set_content(mgr.fit_json(*m, ctx).dump() + "\n", "application/json");
+    });
 
     // -------------------------------------------------------- generation
 
