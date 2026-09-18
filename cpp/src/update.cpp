@@ -265,10 +265,12 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
         return 1;
     }
 
+    // the install is where this program lives; the script's own folder only
+    // says so when the script came from beside the program
     const std::string target = fs::path(script).parent_path().string();
-    const std::string where  = fs::is_regular_file(fs::path(target) / "llmash.exe", ec)
-                                   ? target
-                                   : fs::path(cfg.root).parent_path().string();
+    const std::string where  = fs::is_regular_file(fs::path(cfg.root) / "llmash.exe", ec) ? cfg.root
+                               : fs::is_regular_file(fs::path(target) / "llmash.exe", ec) ? target
+                                                                                          : cfg.root;
     std::printf("updating %s to %s\n\n", where.c_str(), there.c_str());
     std::fflush(stdout);
     const int code = run_installer(script, where, tag);

@@ -178,6 +178,11 @@ function Download ($url, $dest, $label) {
 # ---------------------------------------------------------------- location
 if ($Dir) {
     $Root = $Dir
+    # an updater that named the folder above an install: the install is the target
+    if (-not (Test-Path (Join-Path $Dir 'llmash.exe')) -and (Test-Path (Join-Path $Dir 'llmash\llmash.exe'))) {
+        $Root = Join-Path $Dir 'llmash'
+        Say "installing into $Root, where llmash already is"
+    }
 } else {
     $Root = Join-Path $env:ProgramData 'llmash'
     try {
