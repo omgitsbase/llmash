@@ -231,15 +231,22 @@ both have a switch.
 
 A model runs at its trained context; past it, llmash runs it under YaRN, up
 to four times the trained length. `llmash ctx MODEL 1m` sets a million tokens
-for every client, including ones that cannot ask for one, and `--keep` holds
-the model loaded. The running server takes the change at once, and `pull` and
-`run` say what a window costs on the card before loading it.
+for every client, including ones that cannot ask for one, `--kv q8_0` halves
+the cache, and `--keep` holds the model loaded. The running server takes the
+change at once, and `pull` and `run` say what a window costs on the card
+before loading it.
 
 ```
-llmash ctx qwen3.8-27b:rco-3 1m --keep
-qwen3.8-27b:rco-3 runs at 1M (YaRN x4 over the trained 256k); 78 GB on the card at f16, 90 free
+llmash ctx qwen3.8-27b:rco-3 768k --keep
+qwen3.8-27b:rco-3 runs at 768k (YaRN x3 over the trained 256k); 59 GB on the card at f16, 92 free
 loading and keeping it ... loaded
 ```
+
+On Windows one process may hold about three quarters of the card, however
+much of it is free; llmash measures the exact figure and fits within it, and
+`ctx` says when a window is over it rather than over the card. On a 96 GB
+card that is 71 GB: a 27B model runs a million tokens at q8_0, or 768k at
+f16. A cache too large for one allocation is laid out across several.
 
 ## Commands
 
@@ -254,7 +261,7 @@ loading and keeping it ... loaded
 | `update` | install the latest push; `--stable` for the latest release |
 | `ctx` | the context a model runs at, up to 4x its trained length under YaRN; `--keep` holds it loaded |
 | `launch` | point Claude Code, Codex, Droid and others at this server |
-| `link` | expose the API over a Tailscale funnel, with a key |
+| `link` | expose the API over a Tailscale funnel, with a key; says where the bare host name goes when that is not llmash |
 | `uninstall` | remove everything the installer created |
 
 `ollama` is installed as an alias.
@@ -270,6 +277,8 @@ Optional. `local.json` next to the program, or environment variables.
 | `LLMASH_PORT` | local API port (default 11434) |
 | `LLMASH_CTX` | default context length (default 8192) |
 | `LLMASH_KV` | K/V cache type, `f16` or `q8_0` |
+| `LLMASH_YARN_MAX` | how far past its trained context a model may run under YaRN (default 4) |
+| `LLMASH_GPU_BUDGET_GB` | what one process may hold on the card, if the measured figure is wrong |
 | `LLMASH_PARALLEL` | server slots (default 1; raise it to serve several at once) |
 | `LLMASH_VRAM_GB` | budget for resident models |
 | `LLMASH_PIN` | comma-separated models never evicted |

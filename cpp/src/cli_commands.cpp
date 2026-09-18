@@ -1891,12 +1891,16 @@ int cmd_ctx(const std::vector<std::string> & args, ApiClient & api, const Config
         std::printf("%s runs at %s", model.c_str(), ctx_text(ctx).c_str());
         if (trained > 0 && ctx > trained) std::printf(" (YaRN x%.2g over the trained %s)", static_cast<double>(ctx) / trained, ctx_text(trained).c_str());
         if (r.ok && r.status == 200 && f.value("known", false)) {
-            const double need = j_num(f, "weights_gb") * 1.05 + j_num(f, "state_gb") + j_num(f, "scratch_gb") + j_num(f, "cache_gb");
-            std::printf("; %.0f GB on the card at f16, %.0f free", need, j_num(f, "free_gb"));
+            const json  fitp = local.contains("fit") && local["fit"].contains(model) ? local["fit"][model] : json::object();
+            std::string kv   = o.has_val("--kv") ? o.val("--kv") : j_str(fitp, "kv_type");
+            if (kv.empty()) kv = j_str(f, "kv_type");
+            const bool   q8   = kv == "q8_0";
+            const double need = j_num(f, "weights_gb") * 1.05 + j_num(f, "state_gb") + j_num(f, "scratch_gb") + j_num(f, q8 ? "cache_gb_q8" : "cache_gb");
+            std::printf("; %.0f GB on the card at %s, %.0f free", need, q8 ? "q8_0" : "f16", j_num(f, "free_gb"));
             if (need > j_num(f, "room_gb")) {
                 const double budget = j_num(f, "budget_gb");
                 if (budget > 0 && need > budget - 1.0) {
-                    std::printf("\n%sthat is more than the %.0f GB the OS lets one process hold on this card: --kv q8_0 halves the cache, or ask for less%s", kDim, budget, kReset);
+                    std::printf("\n%sthat is more than the %.0f GB one process may hold on this card: --kv q8_0 halves the cache, or ask for less%s", kDim, budget, kReset);
                 } else {
                     std::printf("\n%sthat does not fit: --kv q8_0 halves the cache, or ask for less%s", kDim, kReset);
                 }
