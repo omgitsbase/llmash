@@ -388,17 +388,9 @@ size_t cols(const std::string & s) {
     return n;
 }
 
-void test_rco_quality() {
-    check(rco_quality_text(3.9) == "matches Q8", "a wide build is level with the original");
-    check(rco_quality_text(5.0) == "matches Q8", "so is a wider one");
-    check(rco_quality_text(3.0) == "near identical to Q8", "three bits is the near-identical rung");
-    check(rco_quality_gap(2.75) > 2.5 && rco_quality_gap(2.75) < 2.7, "2.75 bits is the measured 2.6%");
-    check(rco_quality_gap(3.0) > 0.6 && rco_quality_gap(3.0) < 0.8, "3 bits is the measured 0.7%");
-    check(rco_quality_gap(2.875) > rco_quality_gap(3.0) && rco_quality_gap(2.875) < rco_quality_gap(2.75),
-          "a width between two measured ones falls between them");
-    check(rco_quality_gap(2.4) > 3.8 && rco_quality_gap(2.4) < 4.0, "2.4 bits is the 3.9% rung");
-    check(rco_quality_gap(2.0) == rco_quality_gap(2.4), "below the measured range it holds the last figure");
-    check(rco_quality_text(2.75).find("under Q8") != std::string::npos, "the text names what it is under");
+void test_rco_pitch() {
+    check(rco_pitch_text(3.0) == "answers like 4 bits", "three bits reads as a bit more");
+    check(rco_pitch_text(2.4) == "answers like 3.4 bits", "so does a rung of its own");
 }
 
 void test_build_rows() {
@@ -465,7 +457,7 @@ int main() {
     test_render_tables();
     test_elide();
     test_show_info();
-    test_rco_quality();
+    test_rco_pitch();
     test_build_rows();
     test_tradeoff();
     test_prog();

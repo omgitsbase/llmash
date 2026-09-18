@@ -63,8 +63,7 @@ std::vector<std::string> tradeoff_rows(const QuantInfo & custom, const QuantInfo
 std::string build_row(const std::string & label, const QuantInfo & q, const std::string & what);
 std::string rco_row_label(const std::string & quant);
 
-double      rco_quality_gap(double bpw);
-std::string rco_quality_text(double bpw);
+std::string rco_pitch_text(double bpw);
 // The quantisation tag embedded in a GGUF file name (pull.go's quantTag),
 // e.g. "Qwen3-8B-Q4_K_M-00001-of-00002.gguf" -> "Q4_K_M".
 std::string quant_tag(const std::string & file_name);
@@ -104,6 +103,7 @@ int cmd_stop(const std::vector<std::string> & args, ApiClient & api);
 int cmd_pull(const std::vector<std::string> & args, ApiClient & api);
 int cmd_create(const std::vector<std::string> & args, ApiClient & api);
 int cmd_rco(const std::vector<std::string> & args, ApiClient & api);
+int cmd_ctx(const std::vector<std::string> & args, ApiClient & api, const Config & cfg);
 int cmd_cp(const std::vector<std::string> & args, ApiClient & api);
 int cmd_push();
 int cmd_signin();

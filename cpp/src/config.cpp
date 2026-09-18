@@ -216,6 +216,21 @@ Config load_config() {
         }
     }
 
+    if (const auto it = local.find("fit"); it != local.end() && it->is_object()) {
+        for (const auto & [k, v] : it->items()) {
+            if (!v.is_object()) {
+                continue;
+            }
+            Config::FitEntry e;
+            e.ctx = v.value("ctx", 0);
+            if (v.contains("kv_type") && v["kv_type"].is_string()) {
+                e.kv_type = v["kv_type"].get<std::string>();
+            }
+            e.kv_on_gpu = v.value("kv_offload", true);
+            c.fit[k] = e;
+        }
+    }
+
     if (const auto it = local.find("launch_extra"); it != local.end() && it->is_object()) {
         for (const auto & [k, v] : it->items()) {
             std::vector<std::string> flags;
@@ -290,6 +305,27 @@ int match_key(const std::map<std::string, int> & table, const std::string & name
 } // namespace
 
 int ctx_target(const Config & cfg, const std::string & name) { return match_key(cfg.ctx_override, name); }
+
+int parse_ctx_size(const std::string & s) {
+    size_t i = 0;
+    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+        i++;
+    }
+    if (i == 0) {
+        return 0;
+    }
+    long long   n    = std::atoll(s.substr(0, i).c_str());
+    std::string unit = s.substr(i);
+    std::transform(unit.begin(), unit.end(), unit.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (unit == "k") {
+        n *= 1024;
+    } else if (unit == "m") {
+        n *= 1024 * 1024;
+    } else if (!unit.empty()) {
+        return 0;
+    }
+    return n > 0 && n < (1ll << 31) ? static_cast<int>(n) : 0;
+}
 
 int ctx_ceiling(const Config & cfg, const std::string & name, int native) {
     const int v = match_key(cfg.ctx_max, name);

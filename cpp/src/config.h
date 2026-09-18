@@ -23,6 +23,13 @@ struct Config {
     std::string keep_alive   = "15m";
     std::map<std::string, int> ctx_override; // local.json ctx_override, keys lowercased
     std::map<std::string, int> ctx_max;      // local.json ctx_max
+    // local.json "fit": how a model's cache was chosen, by exact name
+    struct FitEntry {
+        int         ctx       = 0;
+        std::string kv_type;
+        bool        kv_on_gpu = true;
+    };
+    std::map<std::string, FitEntry> fit;
     std::map<std::string, std::vector<std::string>> launch_extra; // extra llama-server flags, by name fragment
     std::vector<std::string> no_mmproj;      // names whose projector is not loaded up front
     std::vector<std::string> pin;            // LLMASH_PIN, or local.json pin: never evicted
@@ -33,6 +40,8 @@ Config load_config();
 
 // A forced context for a model whose name contains a ctx_override key, else 0.
 int ctx_target(const Config & cfg, const std::string & name);
+// "1m" -> 1048576, "512k" -> 524288, "4096" -> 4096; 0 when it is not a size.
+int parse_ctx_size(const std::string & s);
 // ctx_max lifts the trained context when its key matches and it is larger.
 int ctx_ceiling(const Config & cfg, const std::string & name, int native);
 

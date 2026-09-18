@@ -195,7 +195,7 @@ int cmd_serve(const std::vector<std::string> & args) {
         } else if (a == "--host" && val) {
             host = args[++i];
         } else if (a == "--ctx" && val) {
-            cfg.ctx     = std::atoi(args[++i].c_str());
+            cfg.ctx     = parse_ctx_size(args[++i]);
             cfg.ctx_cap = cfg.ctx;
         } else if (a == "--kv" && val) {
             cfg.kv_type = args[++i];

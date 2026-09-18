@@ -327,8 +327,10 @@ json tags_json(const std::vector<Model> & models, const Config & cfg) {
     return json{{"models", rows}};
 }
 
-json v1_entry_json(const Model & m, const Config & cfg) {
-    const int ctx = advertised_ctx(m, cfg);
+json v1_entry_json(const Model & m, const Config & cfg, int ctx) {
+    if (ctx <= 0) {
+        ctx = advertised_ctx(m, cfg);
+    }
     return json{
         {"id", m.name},
         {"object", "model"},
@@ -351,6 +353,17 @@ json v1_models_json(const std::vector<Model> & models, const Config & cfg) {
     return json{{"object", "list"}, {"data", data}};
 }
 
+json v1_models_json(const std::vector<Model> & models, const Config & cfg,
+                    const std::function<int(const Model &)> & ctx_of) {
+    json data = json::array();
+    for (const auto & m : models) {
+        if (file_exists(m.path) && loadable(m) && !m.incomplete) {
+            data.push_back(v1_entry_json(m, cfg, ctx_of(m)));
+        }
+    }
+    return json{{"object", "list"}, {"data", data}};
+}
+
 json show_json(const Model & m, const Config & cfg) {
     const std::string arch = m.family.empty() ? "llama" : m.family;
     const int         ctx  = advertised_ctx(m, cfg);
@@ -358,6 +371,7 @@ json show_json(const Model & m, const Config & cfg) {
         {"license", ""},
         {"modelfile", "FROM " + m.path},
         {"mtp", m.has_mtp},
+        {"trained_context", m.ctx_train},
         {"parameters", m.params_text},
         {"template", m.tmpl},
         {"system", m.system},

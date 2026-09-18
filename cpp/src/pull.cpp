@@ -934,8 +934,9 @@ std::string quant_tag(const std::string & name) {
     static const std::regex re(
         R"((?:^|[-_.])((?:UD-)?(?:IQ|Q|TQ)[1-8](?:_[0-9A-Z]+)*|BF16|F16|F32|MXFP4(?:_MOE)?|NVFP4)(?:[-_.]|$))",
         std::regex::icase);
-    std::smatch m;
-    if (!std::regex_search(name, m, re)) {
+    const std::string base = name.substr(name.find_last_of("/\\") + 1);  // a repo may keep each build in a folder
+    std::smatch       m;
+    if (!std::regex_search(base, m, re)) {
         return "";
     }
     return upper(m[1].str());
@@ -1044,6 +1045,37 @@ namespace {
 std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files, double bpw);
 }
 
+std::vector<QuantInfo> gsq_rco_quants(const std::string & repo) {
+    std::vector<QuantInfo> out;
+    std::string            base = repo.substr(repo.find('/') + 1);
+    for (const char * drop : {"-i1-GGUF", "-GGUF", "-gguf", "-GSQ-RCO"}) {
+        if (const size_t at = base.find(drop); at != std::string::npos) {
+            base.erase(at, std::strlen(drop));
+        }
+    }
+    std::string found;
+    for (const HubModel & m : hub_search(base + " GSQ-RCO", 10)) {
+        const std::string low = lower(m.id);
+        if (low.find("gsq-rco") == std::string::npos || low.find("gguf") == std::string::npos || equal_fold(m.id, repo)) {
+            continue;
+        }
+        if (found.empty() || starts_with(low, "ista-daslab/")) {
+            found = m.id;
+        }
+    }
+    if (found.empty()) {
+        return out;
+    }
+    std::string err;
+    for (QuantInfo q : quants_of(hf_files(found, &err))) {
+        if (err.empty()) {
+            q.repo = found;
+            out.push_back(q);
+        }
+    }
+    return out;
+}
+
 // The repo itself when it carries a GGUF build, otherwise the best-placed
 // repo on the hub carrying one of the same model, otherwise empty. `files`
 // comes back holding the chosen repo's listing.
@@ -1063,8 +1095,15 @@ std::string resolve_gguf_repo(const std::string & repo, const std::string & quan
         std::vector<HfFile> files;
         int                 score = 0;
     };
+    // the model's own name, as a GGUF repo would carry it
+    std::string base = lower(repo.substr(repo.find('/') + 1));
+    for (const char * drop : {"-mlx", "-exl3", "-exl2", "-awq", "-gptq", "-4bit", "-8bit", "-bf16", "-fp8", "-i1-gguf", "-gguf"}) {
+        for (size_t at = base.find(drop); at != std::string::npos; at = base.find(drop)) {
+            base.erase(at, std::strlen(drop));
+        }
+    }
     std::vector<Cand> cands;
-    for (const std::string & alt : gguf_repos_for(repo, 5)) {
+    for (const std::string & alt : gguf_repos_for(repo, 8)) {
         std::string           aerr;
         std::set<std::string> aothers;
         std::vector<HfFile>   afiles = hf_files(alt, &aerr, &aothers);
@@ -1072,6 +1111,15 @@ std::string resolve_gguf_repo(const std::string & repo, const std::string & quan
             continue;
         }
         int score = static_cast<int>(quants_of(afiles).size());
+        std::string an = lower(alt.substr(alt.find('/') + 1));
+        for (const char * drop : {"-i1-gguf", "-gguf"}) {
+            if (const size_t at = an.rfind(drop); at != std::string::npos && at + std::strlen(drop) == an.size()) {
+                an.erase(at);
+            }
+        }
+        if (an == base) {
+            score += 10000;  // the model itself, not a fine-tune of it
+        }
         if (bpw > 0) {
             score += static_cast<int>(bits_of_quant(quant_tag(pick_rco_source(afiles, bpw).front().name)) * 100);
         } else if (!quant.empty() && equal_fold(quant_tag(pick_gguf(afiles, quant).front().name), quant)) {
@@ -3487,6 +3535,12 @@ json api_quants(const std::string & repo_arg) {
     }
     std::vector<QuantInfo> quants = quants_of(files);
 
+    // A published GSQ-RCO build of the same model, when the hub has one: the
+    // real thing, offered ahead of anything assembled here. Looked for quietly.
+    for (const QuantInfo & q : gsq_rco_quants(from.empty() ? repo : from)) {
+        quants.push_back(q);
+    }
+
     // Assembled here rather than downloaded, so it is offered whenever an
     // allocation exists for this architecture.
     std::string arch, rco_source;
@@ -3504,7 +3558,7 @@ json api_quants(const std::string & repo_arg) {
         const double ref = bits_of_quant(quant_tag(src.front().name));
         // the ladder is fixed and holds DEFAULT_BPW, which is only the rung the
         // picker starts on
-        for (const double b : {5.0, 4.4, 3.9, 3.0, 2.75, 2.4}) {
+        for (const double b : {3.0, 2.75, 2.4}) {
             const int64_t size = ref > 0 ? static_cast<int64_t>(static_cast<double>(src_bytes) * b / ref) : 0;
             quants.push_back(QuantInfo{rco_quant_name(b), size, 1, src_bytes});
         }
@@ -3523,7 +3577,7 @@ json api_quants(const std::string & repo_arg) {
     const auto to_json = [](const std::vector<QuantInfo> & v) {
         json arr = json::array();
         for (const auto & q : v) {
-            arr.push_back(json{{"name", q.name}, {"size", q.size}, {"files", q.files}, {"fetch", q.fetch}});
+            arr.push_back(json{{"name", q.name}, {"size", q.size}, {"files", q.files}, {"fetch", q.fetch}, {"repo", q.repo}});
         }
         return arr;
     };
