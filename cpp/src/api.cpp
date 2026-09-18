@@ -171,6 +171,26 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
         write_json(res, 200, v1_models_json(reg.all(), cfg));
     });
 
+    // What llama-server answers, so a client that looks for one (Hermes probes
+    // /props for build_info, then /models) finds this server and lists its
+    // models through /v1/models.
+    mount(srv, "/props", [&cfg, &mgr](const Request &, Response & res) {
+        const InstanceView * last = nullptr;
+        const auto           live = live_views(mgr);
+        for (const InstanceView & v : live) {
+            if (last == nullptr || v.last_used > last->last_used) {
+                last = &v;
+            }
+        }
+        write_json(res, 200,
+                   json{{"build_info", std::string(kServerBuild) + " " + kServerVersion},
+                        {"model_path", last ? last->model.path : ""},
+                        {"default_generation_settings", json{{"n_ctx", last ? last->ctx : cfg.ctx}}}});
+    });
+    mount(srv, "/models", [&cfg, &reg](const Request &, Response & res) {
+        write_json(res, 200, v1_models_json(reg.all(), cfg));
+    });
+
     // A model name can hold both ':' and '/', so the id is everything after
     // the prefix, the way Go's TrimPrefix takes it.
     mount(srv, R"(/v1/models/(.*))", [&cfg, &reg](const Request & req, Response & res) {
