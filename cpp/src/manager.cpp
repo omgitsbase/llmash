@@ -226,8 +226,10 @@ double gpu_process_budget_gb(const std::string &) {
     if (!GlobalMemoryStatusEx(&ms)) {
         return 0.0;
     }
+    // a bare process reaches avail minus 1.5; llama-server also holds a few GB
+    // of host memory out of the same commit
     const double avail = static_cast<double>(ms.ullAvailPageFile) / static_cast<double>(1ull << 30);
-    return std::max(0.0, avail - 1.5);
+    return std::max(0.0, avail - 5.0);
 }
 #else
 double gpu_process_budget_gb(const std::string &) { return env_float("LLMASH_GPU_BUDGET_GB", 0); }
