@@ -210,76 +210,24 @@ double total_vram_gb() {
     return g_vram_total;
 }
 
-// What one process may hold on the card. Under WDDM the driver refuses a
-// process past about three quarters of the card however much is free (71 of
-// 96 GB measured), and every llama-server is one process, so a model and its
-// cache have to fit in that, not in the card. DXGI's video memory budget does
-// not report this cap, so it is measured: ask the runtime's cudart for memory
-// until refused, then give it all back. A second's work, once, before
-// anything is loaded.
+// What one process may hold on the card. Under WDDM every video allocation is
+// backed by commit charge, RAM plus pagefile, so a process is refused once it
+// has taken what is left of that, however much of the card is free: measured
+// at 79 GiB with 80.5 GiB of commit free, 59 with 60. A llama-server is one
+// process, so a model and its cache have to fit in this, not in the card. A
+// larger pagefile raises it. Read live, since other programs move it.
 #ifdef _WIN32
-double gpu_process_budget_gb(const std::string & runtime) {
-    static double cached = -1.0;
-    if (cached >= 0) {
-        return cached;
-    }
-    cached = 0.0;
+double gpu_process_budget_gb(const std::string &) {
     if (!env_str("LLMASH_GPU_BUDGET_GB").empty()) {
-        cached = env_float("LLMASH_GPU_BUDGET_GB", 0);
-        return cached;
+        return env_float("LLMASH_GPU_BUDGET_GB", 0);
     }
-    std::string     dll;
-    std::error_code ec;
-    for (const auto & e : fs::directory_iterator(runtime, ec)) {
-        const std::string n = e.path().filename().string();
-        if (n.rfind("cudart64_", 0) == 0 && n.size() > 4 && n.compare(n.size() - 4, 4, ".dll") == 0) {
-            dll = e.path().string();
-            break;
-        }
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof(ms);
+    if (!GlobalMemoryStatusEx(&ms)) {
+        return 0.0;
     }
-    if (dll.empty()) {
-        return cached;
-    }
-    HMODULE h = LoadLibraryA(dll.c_str());  // stays loaded: cudart does not take kindly to being unloaded
-    if (!h) {
-        return cached;
-    }
-    using malloc_fn = int(__cdecl *)(void **, size_t);
-    using free_fn   = int(__cdecl *)(void *);
-    using info_fn   = int(__cdecl *)(size_t *, size_t *);
-    using reset_fn  = int(__cdecl *)();
-    const auto cu_malloc = reinterpret_cast<malloc_fn>(GetProcAddress(h, "cudaMalloc"));
-    const auto cu_free   = reinterpret_cast<free_fn>(GetProcAddress(h, "cudaFree"));
-    const auto cu_info   = reinterpret_cast<info_fn>(GetProcAddress(h, "cudaMemGetInfo"));
-    const auto cu_reset  = reinterpret_cast<reset_fn>(GetProcAddress(h, "cudaDeviceReset"));
-    size_t     free_b = 0, total_b = 0;
-    if (!cu_malloc || !cu_free || !cu_info || cu_info(&free_b, &total_b) != 0) {
-        return cached;
-    }
-    std::vector<void *> held;
-    size_t              got = 0;
-    for (const size_t step : {static_cast<size_t>(4) << 30, static_cast<size_t>(1) << 30}) {
-        for (;;) {
-            void * p = nullptr;
-            if (got + step > total_b || cu_malloc(&p, step) != 0) {
-                break;
-            }
-            held.push_back(p);
-            got += step;
-        }
-    }
-    for (void * p : held) {
-        cu_free(p);
-    }
-    if (cu_reset) {
-        cu_reset();  // the probe's context would otherwise hold a few hundred MB for the life of the process
-    }
-    // refused well short of what was free: that is the cap. Refused only at
-    // the end of free memory: no cap worth reporting.
-    if (got + (static_cast<size_t>(2) << 30) < free_b) {
-        cached = static_cast<double>(got) / static_cast<double>(1ull << 30);
-    }
-    return cached;
+    const double avail = static_cast<double>(ms.ullAvailPageFile) / static_cast<double>(1ull << 30);
+    return std::max(0.0, avail - 1.5);
 }
 #else
 double gpu_process_budget_gb(const std::string &) { return env_float("LLMASH_GPU_BUDGET_GB", 0); }
@@ -419,7 +367,8 @@ std::string explain_load_failure(const std::string & raw, const Config & cfg) {
         return "The runtime's llama.cpp does not know this model's architecture" + (arch.empty() ? "" : " (" + arch + ")") +
                ": the model is newer than the runtime in " + runtime_dir(cfg) + ". " +
                (own_runtime(cfg) ? "It needs a newer llmash runtime; nothing about the file is wrong."
-                                 : "Run `llmash update -Runtime cuda` (or vulkan, or cpu) to replace it.");
+                                 : "Run `llmash update -Runtime cuda` (or vulkan, or cpu) to replace it.") +
+               " A newer llama-server can serve this model on its own: name its folder under runtime in local.json, keyed by the model's name.";
     }
     if (has("wrong number of tensors") || has("check_tensor_dims")) {
         return "llama.cpp cannot load this Ollama-packaged build: it does not carry the tensors llama.cpp expects "
@@ -857,7 +806,13 @@ std::vector<std::string> drop_overridden(const std::vector<std::string> & tuned,
 }
 
 std::vector<std::string> Instance::args() {
-    std::vector<std::string> a{cfg_->llama_bin, "-m", model.path, "--host", "127.0.0.1", "--port", std::to_string(port)};
+    // Another llama-server named for this model gets only the flags every build takes.
+    const std::string named   = runtime_for(*cfg_, model.name);
+    const bool        foreign = !named.empty();
+    if (foreign) {
+        plain_args_ = true;
+    }
+    std::vector<std::string> a{foreign ? named : cfg_->llama_bin, "-m", model.path, "--host", "127.0.0.1", "--port", std::to_string(port)};
 
     // -ngl is left unset: llama.cpp defaults it to auto and fits what it can on
     // the card, keeping the rest in RAM. Naming a number takes that away.
@@ -919,6 +874,10 @@ std::vector<std::string> Instance::args() {
     // no GPU: speculation costs more than it saves.
     if (!free_vram_gb().second) {
         spec_note = "none (no GPU)";
+        return a;
+    }
+    if (foreign) {
+        spec_note = "none (other runtime)";
         return a;
     }
 
@@ -1251,7 +1210,9 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
 Manager::Fit Manager::fit_report(const Model & m) {
     const double GB = static_cast<double>(1ull << 30);
     Fit          f;
-    f.weights_gb = static_cast<double>(m.size) / GB;
+    const uint64_t in_ram = std::min(m.size, m.input_bytes);
+    f.weights_gb = static_cast<double>(m.size - in_ram) / GB;
+    f.ram_gb     = static_cast<double>(in_ram) / GB;
     f.per_tok_gb = m.kv_bytes_tok / GB;
     f.state_gb   = m.state_bytes / GB;
     f.native     = m.ctx_train;
@@ -1309,6 +1270,7 @@ nlohmann::json Manager::fit_json(const Model & m, int ctx) {
                           {"room_gb", fit_room(f)},
                           {"budget_gb", gpu_process_budget_gb(runtime_dir(cfg_))},
                           {"weights_gb", f.weights_gb},
+                          {"ram_gb", f.ram_gb},
                           {"state_gb", f.state_gb},
                           {"compute_gb", f.compute_gb},
                           {"scratch_gb", scratch_gb(asked)},
@@ -1366,7 +1328,7 @@ int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
         std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free%s: using %d", ctx,
                       f.weights_gb * 1.05 + f.state_gb + f.compute_gb + f.per_tok_gb * scale * ctx, f.weights_gb,
                       f.per_tok_gb * scale * ctx, f.free_gb,
-                      budget > 0 && budget - 1.0 < f.free_gb - 6 ? (", " + std::to_string(static_cast<int>(budget)) + " GB the most one process may hold").c_str() : "",
+                      budget > 0 && budget - 1.0 < f.free_gb - 6 ? (", " + std::to_string(static_cast<int>(budget)) + " GB the most Windows will back for one process").c_str() : "",
                       fitted);
         log_line(std::string(m.name) + ": " + buf);
     }

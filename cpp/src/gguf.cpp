@@ -274,9 +274,12 @@ GGUFInfo read_gguf(const std::string & path) {
             info.has_vision = true;
         }
     }
-    if (r.bad || info.arch.empty()) {
+    if (r.bad) {
         return info;
     }
+    // A later shard of a split carries no architecture: not a model on its
+    // own, but its tensors still count.
+    const bool shard_only = info.arch.empty();
     // the kv head count on a full layer, and on a windowed one, when they differ
     for (size_t i = 0; i < head_kv_per_layer.size(); i++) {
         const bool windowed = i < swa_pattern.size() && swa_pattern[i] != 0;
@@ -292,6 +295,7 @@ GGUFInfo read_gguf(const std::string & path) {
         info.head_kv = info.head_kv_swa;
     }
 
+    std::vector<std::pair<uint64_t, bool>> spans;  // data offset, and whether it is an input-layer tensor
     for (uint64_t i = 0; i < n_tensors && !r.bad; i++) {
         const std::string name = r.str();
         const uint32_t    dims = r.num<uint32_t>();
@@ -302,13 +306,31 @@ GGUFInfo read_gguf(const std::string & path) {
             r.num<uint64_t>();
         }
         r.num<uint32_t>(); // ggml type
-        r.num<uint64_t>(); // offset
+        const uint64_t offset = r.num<uint64_t>();
         if (contains(name, "nextn") || contains(name, "mtp")) {
             info.has_mtp = true;
         }
+        spans.emplace_back(offset, name == "token_embd.weight" || name == "per_layer_token_embd.weight");
+    }
+    // A tensor's bytes are the gap to the next offset. The data begins where
+    // the header ends, at the next 32-byte boundary.
+    if (!r.bad && !spans.empty()) {
+        const uint64_t header_end = static_cast<uint64_t>(r.in.tellg());
+        const uint64_t data_start = (header_end + 31) / 32 * 32;
+        r.in.seekg(0, std::ios::end);
+        const uint64_t file_size = static_cast<uint64_t>(r.in.tellg());
+        const uint64_t data_size = file_size > data_start ? file_size - data_start : 0;
+        std::sort(spans.begin(), spans.end());
+        for (size_t i = 0; i < spans.size(); i++) {
+            if (!spans[i].second) {
+                continue;
+            }
+            const uint64_t end = i + 1 < spans.size() ? spans[i + 1].first : data_size;
+            info.input_bytes += end > spans[i].first ? end - spans[i].first : 0;
+        }
     }
 
-    info.ok = !r.bad;
+    info.ok = !r.bad && !shard_only;
     return info;
 }
 

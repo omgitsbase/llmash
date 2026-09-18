@@ -17,6 +17,7 @@ struct Model {
     std::string quant;
     std::string arch;
     uint64_t    size = 0;
+    uint64_t    input_bytes = 0;      // of that, what llama.cpp keeps in RAM as the input layer
     bool        has_mtp = false;
     bool        in_library = false;   // read-only: never deleted from
     bool        incomplete = false;   // a `.part` file: listed and removable, never loaded

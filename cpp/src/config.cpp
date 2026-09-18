@@ -249,6 +249,26 @@ Config load_config() {
             }
         }
     }
+    if (const auto it = local.find("runtime"); it != local.end() && it->is_object()) {
+        for (const auto & [k, v] : it->items()) {
+            if (!v.is_string() || v.get<std::string>().empty()) {
+                continue;
+            }
+            std::string low = k;
+            std::transform(low.begin(), low.end(), low.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            fs::path        p = v.get<std::string>();
+            std::error_code ec;
+            if (fs::is_directory(p, ec)) {
+#ifdef _WIN32
+                p /= "llama-server.exe";
+#else
+                p /= "llama-server";
+#endif
+            }
+            c.runtime[low] = p.string();
+        }
+    }
     if (const auto it = local.find("no_mmproj"); it != local.end() && it->is_array()) {
         for (const auto & e : *it) {
             if (e.is_string()) {
@@ -343,6 +363,18 @@ std::vector<std::string> launch_extra_for(const Config & cfg, const std::string 
         }
     }
     return out;
+}
+
+std::string runtime_for(const Config & cfg, const std::string & name) {
+    std::string low = name;
+    std::transform(low.begin(), low.end(), low.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    for (const auto & [k, exe] : cfg.runtime) {
+        if (low.find(k) != std::string::npos) {
+            return exe;
+        }
+    }
+    return "";
 }
 
 bool mmproj_blocked(const Config & cfg, const std::string & name) {

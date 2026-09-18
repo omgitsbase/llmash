@@ -31,6 +31,7 @@ struct Config {
     };
     std::map<std::string, FitEntry> fit;
     std::map<std::string, std::vector<std::string>> launch_extra; // extra llama-server flags, by name fragment
+    std::map<std::string, std::string> runtime;  // local.json runtime: another llama-server for models, by name fragment
     std::vector<std::string> no_mmproj;      // names whose projector is not loaded up front
     std::vector<std::string> pin;            // LLMASH_PIN, or local.json pin: never evicted
 };
@@ -47,6 +48,8 @@ int ctx_ceiling(const Config & cfg, const std::string & name, int native);
 
 // The launch_extra entries whose key appears in the model's name.
 std::vector<std::string> launch_extra_for(const Config & cfg, const std::string & name);
+// The llama-server named for this model in local.json, or empty for the runtime's own.
+std::string runtime_for(const Config & cfg, const std::string & name);
 bool mmproj_blocked(const Config & cfg, const std::string & name);
 
 std::string exe_dir();
