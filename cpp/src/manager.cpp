@@ -2,12 +2,6 @@
 
 #include "gguf.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#include <dxgi1_4.h>
-#pragma comment(lib, "dxgi.lib")
-#endif
-
 #include "draft.h"
 #include "log.h"
 #include "platform.h"
@@ -216,11 +210,15 @@ double total_vram_gb() {
     return g_vram_total;
 }
 
-// What Windows lets one process hold on the card: about seven tenths of it
-// under WDDM, however much is free. Every llama-server is one process, so a
-// model and its cache have to fit in this, not in the card.
+// What one process may hold on the card. Under WDDM the driver refuses a
+// process past about three quarters of the card however much is free (71 of
+// 96 GB measured), and every llama-server is one process, so a model and its
+// cache have to fit in that, not in the card. DXGI's video memory budget does
+// not report this cap, so it is measured: ask the runtime's cudart for memory
+// until refused, then give it all back. A second's work, once, before
+// anything is loaded.
 #ifdef _WIN32
-double gpu_process_budget_gb() {
+double gpu_process_budget_gb(const std::string & runtime) {
     static double cached = -1.0;
     if (cached >= 0) {
         return cached;
@@ -230,27 +228,61 @@ double gpu_process_budget_gb() {
         cached = env_float("LLMASH_GPU_BUDGET_GB", 0);
         return cached;
     }
-    IDXGIFactory4 * factory = nullptr;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory4), reinterpret_cast<void **>(&factory))) || !factory) {
+    std::string     dll;
+    std::error_code ec;
+    for (const auto & e : fs::directory_iterator(runtime, ec)) {
+        const std::string n = e.path().filename().string();
+        if (n.rfind("cudart64_", 0) == 0 && n.size() > 4 && n.compare(n.size() - 4, 4, ".dll") == 0) {
+            dll = e.path().string();
+            break;
+        }
+    }
+    if (dll.empty()) {
         return cached;
     }
-    IDXGIAdapter1 * adapter = nullptr;
-    for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
-        IDXGIAdapter3 * a3 = nullptr;
-        if (SUCCEEDED(adapter->QueryInterface(__uuidof(IDXGIAdapter3), reinterpret_cast<void **>(&a3))) && a3) {
-            DXGI_QUERY_VIDEO_MEMORY_INFO info{};
-            if (SUCCEEDED(a3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info))) {
-                cached = std::max(cached, static_cast<double>(info.Budget) / static_cast<double>(1ull << 30));
-            }
-            a3->Release();
-        }
-        adapter->Release();
+    HMODULE h = LoadLibraryA(dll.c_str());  // stays loaded: cudart does not take kindly to being unloaded
+    if (!h) {
+        return cached;
     }
-    factory->Release();
+    using malloc_fn = int(__cdecl *)(void **, size_t);
+    using free_fn   = int(__cdecl *)(void *);
+    using info_fn   = int(__cdecl *)(size_t *, size_t *);
+    using reset_fn  = int(__cdecl *)();
+    const auto cu_malloc = reinterpret_cast<malloc_fn>(GetProcAddress(h, "cudaMalloc"));
+    const auto cu_free   = reinterpret_cast<free_fn>(GetProcAddress(h, "cudaFree"));
+    const auto cu_info   = reinterpret_cast<info_fn>(GetProcAddress(h, "cudaMemGetInfo"));
+    const auto cu_reset  = reinterpret_cast<reset_fn>(GetProcAddress(h, "cudaDeviceReset"));
+    size_t     free_b = 0, total_b = 0;
+    if (!cu_malloc || !cu_free || !cu_info || cu_info(&free_b, &total_b) != 0) {
+        return cached;
+    }
+    std::vector<void *> held;
+    size_t              got = 0;
+    for (const size_t step : {static_cast<size_t>(4) << 30, static_cast<size_t>(1) << 30}) {
+        for (;;) {
+            void * p = nullptr;
+            if (got + step > total_b || cu_malloc(&p, step) != 0) {
+                break;
+            }
+            held.push_back(p);
+            got += step;
+        }
+    }
+    for (void * p : held) {
+        cu_free(p);
+    }
+    if (cu_reset) {
+        cu_reset();  // the probe's context would otherwise hold a few hundred MB for the life of the process
+    }
+    // refused well short of what was free: that is the cap. Refused only at
+    // the end of free memory: no cap worth reporting.
+    if (got + (static_cast<size_t>(2) << 30) < free_b) {
+        cached = static_cast<double>(got) / static_cast<double>(1ull << 30);
+    }
     return cached;
 }
 #else
-double gpu_process_budget_gb() { return env_float("LLMASH_GPU_BUDGET_GB", 0); }
+double gpu_process_budget_gb(const std::string &) { return env_float("LLMASH_GPU_BUDGET_GB", 0); }
 #endif
 
 double free_ram_gb() {
@@ -1237,7 +1269,7 @@ Manager::Fit Manager::fit_report(const Model & m) {
 
 double Manager::fit_room(const Fit & f) const {
     double room = f.free_gb - env_float("LLMASH_VRAM_HEADROOM", 6);
-    if (const double budget = gpu_process_budget_gb(); budget > 0) {
+    if (const double budget = gpu_process_budget_gb(runtime_dir(cfg_)); budget > 0) {
         room = std::min(room, budget - 1.0);  // one process holds the model and its cache
     }
     return std::max(2.0, room);
@@ -1275,7 +1307,7 @@ nlohmann::json Manager::fit_json(const Model & m, int ctx) {
                           {"free_gb", f.free_gb},
                           {"total_gb", f.total_gb},
                           {"room_gb", fit_room(f)},
-                          {"budget_gb", gpu_process_budget_gb()},
+                          {"budget_gb", gpu_process_budget_gb(runtime_dir(cfg_))},
                           {"weights_gb", f.weights_gb},
                           {"state_gb", f.state_gb},
                           {"compute_gb", f.compute_gb},
@@ -1330,7 +1362,7 @@ int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
     const int    fitted = fit_at(f, ctx, scale);
     if (fitted < ctx) {
         char buf[240];
-        const double budget = gpu_process_budget_gb();
+        const double budget = gpu_process_budget_gb(runtime_dir(cfg_));
         std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free%s: using %d", ctx,
                       f.weights_gb * 1.05 + f.state_gb + f.compute_gb + f.per_tok_gb * scale * ctx, f.weights_gb,
                       f.per_tok_gb * scale * ctx, f.free_gb,
