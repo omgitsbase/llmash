@@ -13,6 +13,7 @@ struct GGUFInfo {
     std::string quant;
     uint64_t    n_params  = 0;
     uint32_t    n_tensors = 0;
+    uint64_t    input_bytes = 0;  // token_embd and per_layer_token_embd: llama.cpp keeps these in RAM as the input layer
     bool        has_mtp = false;
     bool        has_vision = false;
     std::string repo;

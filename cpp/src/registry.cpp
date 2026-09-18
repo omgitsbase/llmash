@@ -236,6 +236,29 @@ uint64_t model_bytes(const std::string & path) {
     return total;
 }
 
+// The input-layer bytes across a model's shards. The first shard's header is
+// already read; the others are read here.
+uint64_t input_layer_bytes(const std::string & path, uint64_t first) {
+    uint64_t          total = first;
+    const std::string stem  = stem_of(path);
+    std::smatch       m;
+    if (!std::regex_search(stem, m, first_shard_re())) {
+        return total;
+    }
+    const std::string prefix = stem.substr(0, static_cast<size_t>(m.position(0))) + "-";
+    const std::string self   = fs::path(path).filename().string();
+    const fs::path    dir    = fs::path(path).parent_path();
+    std::error_code   ec;
+    for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); ++it) {
+        const std::string other = it->path().filename().string();
+        if (other != self && other.rfind(prefix, 0) == 0 && std::regex_search(stem_of(other), shard_re()) &&
+            lower(it->path().extension().string()) == ".gguf") {
+            total += read_gguf(it->path().string()).input_bytes;
+        }
+    }
+    return total;
+}
+
 std::string loose_name(const std::string & path) {
     std::string stem = std::regex_replace(stem_of(path), shard_re(), "");
     std::string tag  = "gguf";
@@ -403,6 +426,7 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.experts_used = g.experts_used;
         mo.kv_bytes_tok = g.kv_bytes_per_token();
         mo.state_bytes  = g.state_bytes();
+        mo.input_bytes  = input_layer_bytes(path, g.input_bytes);
         mo.projector    = find_projector_for(path);
         mo.caps         = caps_for(g, mo.projector, dir);
 
@@ -542,6 +566,7 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
         mo.experts_used = g.experts_used;
         mo.kv_bytes_tok = g.kv_bytes_per_token();
         mo.state_bytes  = g.state_bytes();
+        mo.input_bytes  = input_layer_bytes(path.string(), g.input_bytes);
         // A store model keeps its vision encoder in a layer of its own.
         mo.projector = find_projector_for(path.string());
         if (mo.projector.empty() && !projector_blob.empty() && fs::exists(blobs / projector_blob, ec)) {

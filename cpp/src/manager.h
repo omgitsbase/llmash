@@ -74,6 +74,7 @@ public:
     // What a context costs on this card, from the model's header.
     struct Fit {
         double weights_gb = 0, state_gb = 0, compute_gb = 0, free_gb = 0, total_gb = 0;
+        double ram_gb     = 0;  // weights llama.cpp keeps in RAM: the input layer
         double per_tok_gb = 0;  // an f16 cache, per token
         int    native     = 0;
     };
