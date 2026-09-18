@@ -55,6 +55,7 @@ Available Commands:
   cp           Copy a model
   rm           Remove a model
   rco convert  Assemble a custom build from a model already here
+  ctx          Set the context a model runs at, up to 4x its trained length under YaRN
   launch       Launch the Ollama menu or an integration
   link         Expose the server publicly over Tailscale Funnel
   unlink       Take the public API back down
@@ -284,6 +285,19 @@ the target, so a three-bit build reads a Q6_K rather than a Q8_0.
 `rco convert` makes the same build from a model already on this machine.
 )HELP";
 
+const std::string k_ctx_help = R"HELP(Set the context a model runs at
+
+Usage:
+  llmash ctx MODEL              show it
+  llmash ctx MODEL 1m           run it at a million tokens (also 512k, 262144, off)
+  llmash ctx MODEL 1m --keep    and keep it loaded until `--release`
+  llmash ctx MODEL --kv q8_0    with a q8_0 cache (half the memory)
+
+Every client gets this window, including ones that cannot ask for one
+(OpenAI-API clients such as Hermes). Past the trained length the model runs
+under YaRN, up to four times it. The running server takes the change at once.
+)HELP";
+
 const std::string k_rco_help = R"HELP(Assemble a custom build from a model already here
 
 Usage:
@@ -459,6 +473,8 @@ const std::unordered_map<std::string, std::string> & command_help_map() {
         {"stop", k_stop_help + k_host_env},
         {"pull", k_pull_help + k_host_env},
         {"rco", k_rco_help + k_host_env},
+        {"ctx", k_ctx_help + k_host_env},
+        {"context", k_ctx_help + k_host_env},
         {"push", k_push_help + k_host_env},
         {"signin", k_signin_help},
         {"signout", k_signout_help},

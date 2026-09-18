@@ -2,6 +2,12 @@
 
 #include "gguf.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <dxgi1_4.h>
+#pragma comment(lib, "dxgi.lib")
+#endif
+
 #include "draft.h"
 #include "log.h"
 #include "platform.h"
@@ -210,6 +216,43 @@ double total_vram_gb() {
     return g_vram_total;
 }
 
+// What Windows lets one process hold on the card: about seven tenths of it
+// under WDDM, however much is free. Every llama-server is one process, so a
+// model and its cache have to fit in this, not in the card.
+#ifdef _WIN32
+double gpu_process_budget_gb() {
+    static double cached = -1.0;
+    if (cached >= 0) {
+        return cached;
+    }
+    cached = 0.0;
+    if (!env_str("LLMASH_GPU_BUDGET_GB").empty()) {
+        cached = env_float("LLMASH_GPU_BUDGET_GB", 0);
+        return cached;
+    }
+    IDXGIFactory4 * factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory4), reinterpret_cast<void **>(&factory))) || !factory) {
+        return cached;
+    }
+    IDXGIAdapter1 * adapter = nullptr;
+    for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+        IDXGIAdapter3 * a3 = nullptr;
+        if (SUCCEEDED(adapter->QueryInterface(__uuidof(IDXGIAdapter3), reinterpret_cast<void **>(&a3))) && a3) {
+            DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+            if (SUCCEEDED(a3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info))) {
+                cached = std::max(cached, static_cast<double>(info.Budget) / static_cast<double>(1ull << 30));
+            }
+            a3->Release();
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    return cached;
+}
+#else
+double gpu_process_budget_gb() { return env_float("LLMASH_GPU_BUDGET_GB", 0); }
+#endif
+
 double free_ram_gb() {
 #ifdef _WIN32
     MEMORYSTATUSEX ms{};
@@ -335,13 +378,18 @@ std::string explain_load_failure(const std::string & raw, const Config & cfg) {
     const std::string low = lower(raw);
     const auto        has = [&](const char * s) { return low.find(s) != std::string::npos; };
 
-    if (has("unknown model architecture") && !own_runtime(cfg)) {
-        return "This llama.cpp build does not know this model's architecture, which usually means the runtime is "
-               "older than the model. Run `llmash update -Runtime cuda` (or vulkan, or cpu) to replace the runtime "
-               "in " +
-               runtime_dir(cfg) + ".";
+    if (has("unknown model architecture")) {
+        std::string arch;
+        if (const size_t q = low.find("architecture: '"); q != std::string::npos) {
+            const size_t a = q + 15, b = low.find('\'', a);
+            arch = b != std::string::npos ? low.substr(a, b - a) : "";
+        }
+        return "The runtime's llama.cpp does not know this model's architecture" + (arch.empty() ? "" : " (" + arch + ")") +
+               ": the model is newer than the runtime in " + runtime_dir(cfg) + ". " +
+               (own_runtime(cfg) ? "It needs a newer llmash runtime; nothing about the file is wrong."
+                                 : "Run `llmash update -Runtime cuda` (or vulkan, or cpu) to replace it.");
     }
-    if (has("wrong number of tensors") || has("check_tensor_dims") || has("unknown model architecture")) {
+    if (has("wrong number of tensors") || has("check_tensor_dims")) {
         return "llama.cpp cannot load this Ollama-packaged build: it does not carry the tensors llama.cpp expects "
                "for this architecture, which happens when a model is packaged for Ollama's own fork. Run `llmash "
                "pull` for this model again to take the Hugging Face build instead.";
@@ -820,7 +868,7 @@ std::vector<std::string> Instance::args() {
     }
 
     const std::vector<std::string> extra  = launch_extra_for(*cfg_, model.name);
-    const Tuning                   tuning = auto_tune();
+    const Tuning                   tuning = auto_tune(ctx);
     if (!tuning.flags.empty()) {
         const std::vector<std::string> tuned = drop_overridden(tuning.flags, extra);
         a.insert(a.end(), tuned.begin(), tuned.end());
@@ -1188,7 +1236,11 @@ Manager::Fit Manager::fit_report(const Model & m) {
 }
 
 double Manager::fit_room(const Fit & f) const {
-    return std::max(2.0, f.free_gb - env_float("LLMASH_VRAM_HEADROOM", 6));
+    double room = f.free_gb - env_float("LLMASH_VRAM_HEADROOM", 6);
+    if (const double budget = gpu_process_budget_gb(); budget > 0) {
+        room = std::min(room, budget - 1.0);  // one process holds the model and its cache
+    }
+    return std::max(2.0, room);
 }
 
 // The largest context at or under `ctx` whose cache, at `kv_scale` of f16, fits.
@@ -1197,11 +1249,15 @@ int Manager::fit_at(const Fit & f, int ctx, double kv_scale) const {
     const double fixed    = f.weights_gb * 1.05 + f.state_gb * parallel + f.compute_gb;
     const double per_tok  = f.per_tok_gb * kv_scale * parallel;
     const double room     = fit_room(f);
-    if (per_tok <= 0 || fixed + per_tok * ctx <= room) {
+    if (per_tok <= 0 || fixed + scratch_gb(ctx) + per_tok * ctx <= room) {
         return ctx;
     }
+    // the scratch shrinks as the context does, so step down until it fits
     const double step = 4096.0;
-    const int    fits = static_cast<int>(std::max(step, std::floor((room - fixed) / per_tok / step) * step));
+    int          fits = static_cast<int>(std::max(step, std::floor((room - fixed) / per_tok / step) * step));
+    while (fits > step && fixed + scratch_gb(fits) + per_tok * fits > room) {
+        fits -= static_cast<int>(step);
+    }
     return std::min(fits, ctx);
 }
 
@@ -1219,13 +1275,47 @@ nlohmann::json Manager::fit_json(const Model & m, int ctx) {
                           {"free_gb", f.free_gb},
                           {"total_gb", f.total_gb},
                           {"room_gb", fit_room(f)},
+                          {"budget_gb", gpu_process_budget_gb()},
                           {"weights_gb", f.weights_gb},
                           {"state_gb", f.state_gb},
                           {"compute_gb", f.compute_gb},
+                          {"scratch_gb", scratch_gb(asked)},
                           {"cache_gb", f.per_tok_gb * f16 * asked * parallel},
                           {"cache_gb_q8", f.per_tok_gb * q8 * asked * parallel},
                           {"fitted", fit_at(f, asked, f16)},
                           {"fitted_q8", fit_at(f, asked, q8)}};
+}
+
+int Manager::v1_ctx(const Model & m) {
+    if (const int forced = ctx_target(cfg_, m.name); forced > 0) {
+        return forced;
+    }
+    if (const auto it = cfg_.fit.find(m.name); it != cfg_.fit.end() && it->second.ctx > 0) {
+        return it->second.ctx;
+    }
+    if (!env_str("LLMASH_V1_CTX").empty()) {
+        return env_int("LLMASH_V1_CTX", 32768);
+    }
+    const int native = m.ctx_train > 0 ? m.ctx_train : (cfg_.ctx > 0 ? cfg_.ctx : 8192);
+    int       ctx    = ctx_ceiling(cfg_, m.name, native);
+    if (cfg_.ctx_cap > 0 && ctx > cfg_.ctx_cap) {
+        ctx = cfg_.ctx_cap;
+    }
+    return fit_ctx(m, ctx, v1_prefs(m));
+}
+
+LoadPrefs Manager::v1_prefs(const Model & m) const {
+    LoadPrefs p;
+    if (const auto it = cfg_.fit.find(m.name); it != cfg_.fit.end()) {
+        p.kv_type   = it->second.kv_type;
+        p.kv_on_gpu = it->second.kv_on_gpu;
+    }
+    return p;
+}
+
+void Manager::set_config(const Config & c) {
+    std::lock_guard<std::mutex> lock(mu_);
+    cfg_ = c;
 }
 
 int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
@@ -1240,9 +1330,12 @@ int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
     const int    fitted = fit_at(f, ctx, scale);
     if (fitted < ctx) {
         char buf[240];
-        std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free: using %d", ctx,
+        const double budget = gpu_process_budget_gb();
+        std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free%s: using %d", ctx,
                       f.weights_gb * 1.05 + f.state_gb + f.compute_gb + f.per_tok_gb * scale * ctx, f.weights_gb,
-                      f.per_tok_gb * scale * ctx, f.free_gb, fitted);
+                      f.per_tok_gb * scale * ctx, f.free_gb,
+                      budget > 0 && budget - 1.0 < f.free_gb - 6 ? (", " + std::to_string(static_cast<int>(budget)) + " GB the most one process may hold").c_str() : "",
+                      fitted);
         log_line(std::string(m.name) + ": " + buf);
     }
     return fitted;
@@ -1427,7 +1520,20 @@ void Manager::reap_idle() {
     }
 }
 
-Tuning auto_tune() {
+// The micro-batch a context can afford: the attention scratch grows with
+// both, and at a million tokens 2048 wants 8 GB of it.
+int ubatch_for(int ctx) {
+    if (const int ub = env_int("LLMASH_UBATCH", 0); ub > 0) {
+        return ub;
+    }
+    return ctx > 524288 ? 512 : ctx > 262144 ? 1024 : 2048;
+}
+
+double scratch_gb(int ctx) {
+    return 0.5 + static_cast<double>(ubatch_for(ctx)) * ctx * 2.0 / static_cast<double>(1ull << 30);
+}
+
+Tuning auto_tune(int ctx) {
     Tuning     t;
     const auto add = [&](const std::string & note, std::initializer_list<std::string> flags) {
         t.flags.insert(t.flags.end(), flags);
@@ -1456,8 +1562,8 @@ Tuning auto_tune() {
         int        b  = env_int("LLMASH_BATCH", 0);
         const auto fv = free_vram_gb();
         if (ub == 0 && fv.second && std::max(total_vram_gb(), fv.first) > 24) {
-            ub = 2048;
-            b  = 4096;
+            ub = ubatch_for(ctx);
+            b  = ub * 2;
         }
         if (ub > 0) {
             if (b < ub) {

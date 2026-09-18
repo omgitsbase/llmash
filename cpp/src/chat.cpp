@@ -603,7 +603,6 @@ void deliver(httplib::Response & res, bool stream, const Events & events, int er
 
 void v1_proxy(const std::string & path, const httplib::Request & req, httplib::Response & res, Config & cfg,
               Manager & mgr, Registry & reg) {
-    (void) reg;
     json body;
     if (!read_body(req, body)) {
         write_json(res, 400, openai_error("invalid JSON", "invalid_request_error", ""));
@@ -619,7 +618,10 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
 
     std::string err;
     const json  ka   = body.contains("keep_alive") ? body["keep_alive"] : json();
-    Instance *  inst = mgr.get(name, k.v1_ctx, parse_keep_alive(ka, cfg.keep_alive), turn_has_media(body), err);
+    const std::optional<Model> m   = reg.find(name);
+    const int                  ctx = m ? mgr.v1_ctx(*m) : k.v1_ctx;
+    Instance *  inst = mgr.get(name, ctx, parse_keep_alive(ka, cfg.keep_alive), turn_has_media(body), err,
+                               m ? mgr.v1_prefs(*m) : LoadPrefs{});
     if (inst == nullptr) {
         load_error(res, name, err, true);
         return;

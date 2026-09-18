@@ -11,6 +11,7 @@
 #include "winproc.h"
 
 #include "cli_console.h"
+#include "cli_util.h"
 #include "cli_format.h"
 #include "cli_process.h"
 #include "cli_win.h"
@@ -481,7 +482,7 @@ bool is_rco(const std::string & name) {
     return u.rfind("RCO", 0) == 0;
 }
 
-const char kRcoPitch[] = "Q8 quality, Q4 size";
+const char kRcoPitch[] = "3 bits, answers like 4";
 
 // The one choice that costs bandwidth and minutes, so it is confirmed.
 bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain, const std::string & source) {
@@ -505,17 +506,9 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
                     static_cast<double>(custom.fetch) / static_cast<double>(ref->size), kReset);
         std::printf("  %sholds more of the model than any published build its size.%s\n", kDim, kReset);
     }
-    if (const double gap = rco_quality_gap(rco_bpw_of_quant(custom.name)); gap > 1.0) {
-        std::printf("\n  %sExpect about %.1f%% below the fp8 original on reasoning, maths and code,%s\n", kDim, gap,
-                    kReset);
-        std::printf("  %sfrom the published results for this method at this width.%s\n", kDim, kReset);
-    } else if (gap >= 0.05) {
-        std::printf("\n  %sIt answers near identically to Q8: within a point of the fp8 original on%s\n", kDim, kReset);
-        std::printf("  %sreasoning, maths and code, at a third of the bytes.%s\n", kDim, kReset);
-    } else {
-        std::printf("\n  %sAt this width the published results for this method sit level with the%s\n", kDim, kReset);
-        std::printf("  %sfp8 original on reasoning, maths and code.%s\n", kDim, kReset);
-    }
+    std::printf("\n  %sBits go where they change the answer, so it %s.%s\n", kDim,
+                rco_pitch_text(rco_bpw_of_quant(custom.name)).c_str(), kReset);
+    std::printf("  %sAssembled here; not the published GSQ-RCO build.%s\n", kDim, kReset);
     for (;;) {
         std::printf("\nBuild it? [Y/n] ");
         const int k = read_pick([]() { return raw_getch(); });
@@ -542,7 +535,7 @@ std::string choose_width(const std::vector<QuantInfo> & custom, const std::vecto
         // on all of them; what separates them is the size kept and the quality
         rows.push_back(pad_to(rco_row_label(rungs[i].name), 8, true) + " " +
                        pad_to("about " + human_bytes(rungs[i].size), 13, true) + "  " +
-                       rco_quality_text(rco_bpw_of_quant(rungs[i].name)));
+                       rco_pitch_text(rco_bpw_of_quant(rungs[i].name)));
         if (equal_fold(rungs[i].name, start)) {
             cursor = static_cast<int>(i);
         }
@@ -573,7 +566,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     const std::string head = from.empty() ? title : from + " holds no GGUF build, so these are " + repo + "'s:";
 
-    std::vector<QuantInfo> quants, plain, custom;
+    std::vector<QuantInfo> quants, plain, custom, published;
     if (have) {
         for (const auto & q : j_list(d, "quants")) {
             QuantInfo qi;
@@ -581,8 +574,13 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             qi.size  = static_cast<int64_t>(j_num(q, "size"));
             qi.files = static_cast<int>(j_num(q, "files"));
             qi.fetch = static_cast<int64_t>(j_num(q, "fetch"));
+            qi.repo  = j_str(q, "repo");
             quants.push_back(qi);
-            (is_rco(qi.name) ? custom : plain).push_back(qi);
+            if (!qi.repo.empty()) {
+                published.push_back(qi);  // a GSQ-RCO build from elsewhere
+            } else {
+                (is_rco(qi.name) ? custom : plain).push_back(qi);
+            }
         }
     }
     choice.quant = quant;
@@ -606,15 +604,26 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         std::string quant;
         int64_t     size     = 0;
         bool        registry = false;
+        std::string repo;  // set for a build that lives in another repository
     };
     std::vector<Row> basic, full;
+    // the published GSQ-RCO build nearest the custom one's size, when there is one
+    if (!published.empty()) {
+        const int64_t want = offered ? offered->size : 0;
+        const QuantInfo * best = nullptr;
+        for (const QuantInfo & q : published) {
+            if (best == nullptr || std::llabs(q.size - want) < std::llabs(best->size - want)) {
+                best = &q;
+            }
+        }
+        basic.push_back(Row{build_row("rco", *best, "GSQ-RCO " + best->name), best->name, best->size, false, best->repo});
+    }
     if (offered) {
-        basic.push_back(Row{build_row(rco_row_label(offered->name), *offered, kRcoPitch), offered->name,
-                            offered->size, false});
+        basic.push_back(Row{build_row("custom", *offered, kRcoPitch), offered->name, offered->size, false});
     }
     if (plain.size() > 1) {
         const Tiers t = tiers_of(plain);
-        for (const auto & [label, idx] : {std::pair{"tiny", t.tiny}, {"medium", t.medium}, {"large", t.large}}) {
+        for (const auto & [label, idx] : {std::pair{"medium", t.medium}, {"large", t.large}}) {
             const QuantInfo & q = plain[static_cast<size_t>(idx)];
             basic.push_back(Row{build_row(label, q, ""), q.name, q.size, false});
         }
@@ -625,7 +634,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     std::stable_sort(basic.begin(), basic.end(), [](const Row & a, const Row & b) { return a.size < b.size; });
     for (const auto & q : quants) {
-        full.push_back(Row{build_row("", q, ""), q.name, q.size, false});
+        full.push_back(Row{build_row(q.repo.empty() ? "" : "rco", q, q.repo.empty() ? "" : "GSQ-RCO " + q.name), q.name, q.size, false, q.repo});
     }
     if (registry_build) {
         const Row own{build_row("ollama", *registry_build, ""), "", registry_build->size, true};
@@ -652,10 +661,19 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         return -1;
     };
 
+    // the published rco build when there is one, else the custom one, else the largest
+    const auto default_row = [&]() {
+        for (size_t i = 0; i < basic.size(); i++) {
+            if (!basic[i].repo.empty()) return static_cast<int>(i);
+        }
+        for (size_t i = 0; i < basic.size(); i++) {
+            if (is_rco(basic[i].quant)) return static_cast<int>(i);
+        }
+        return static_cast<int>(basic.size()) - (registry_build ? 2 : 1);
+    };
     bool showing_all = !quant.empty() && find_row(basic, quant) < 0;
     int  cursor      = showing_all ? std::max(find_row(full, quant), 0)
-                                   : (quant.empty() ? static_cast<int>(basic.size()) - (registry_build ? 2 : 1)
-                                                    : std::max(find_row(basic, quant), 0));
+                                   : (quant.empty() ? default_row() : std::max(find_row(basic, quant), 0));
     for (;;) {
         const std::vector<Row> & rows = showing_all ? full : basic;
         const int                n =
@@ -684,6 +702,9 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         }
         choice.quant    = picked.quant;
         choice.registry = picked.registry;
+        if (!picked.repo.empty()) {
+            choice.repo = "hf:" + picked.repo;
+        }
         break;
     }
     if (choice.registry) {
@@ -1075,26 +1096,11 @@ ParsedArgs parse_simple(const std::vector<std::string> & args, const std::vector
 
 // ------------------------------------------------------- pure logic units
 
-double rco_quality_gap(double bpw) {
-    // bits a weight against percent below the fp8 original. 2.50 up are the
-    // published GSQ-RCO figures; 2.40 is ours and sits above the 2.50 one, so
-    // the curve is not monotone between them.
-    static constexpr double kPts[][2] = {{2.40, 3.9}, {2.50, 6.4}, {2.75, 2.6}, {3.00, 0.7}, {3.47, 0.1}};
-    static constexpr size_t kN        = sizeof(kPts) / sizeof(kPts[0]);
-
-    if (bpw >= kPts[kN - 1][0]) {
-        return 0.0;
-    }
-    if (bpw <= kPts[0][0]) {
-        return kPts[0][1];
-    }
-    for (size_t i = 1; i < kN; i++) {
-        if (bpw <= kPts[i][0]) {
-            const double t = (bpw - kPts[i - 1][0]) / (kPts[i][0] - kPts[i - 1][0]);
-            return kPts[i - 1][1] + t * (kPts[i][1] - kPts[i - 1][1]);
-        }
-    }
-    return 0.0;
+// A build at N bits that answers like a uniform one at about N+1.
+std::string rco_pitch_text(double bpw) {
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "answers like %g bits", bpw + 1.0);
+    return buf;
 }
 
 // The download is the only size known before the build runs, so it is the only
@@ -1114,18 +1120,6 @@ std::string rco_row_label(const std::string & quant) {
     return buf;
 }
 
-std::string rco_quality_text(double bpw) {
-    const double gap = rco_quality_gap(bpw);
-    if (gap < 0.05) {
-        return "matches Q8";
-    }
-    if (gap <= 1.0) {
-        return "near identical to Q8";
-    }
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.1f%% under Q8", gap);
-    return buf;
-}
 
 const QuantInfo * nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size) {
     const QuantInfo * best = nullptr;
@@ -1820,6 +1814,108 @@ int cmd_pull(const std::vector<std::string> & args, ApiClient & api) {
     }
 }
 
+std::string ctx_text(int n) {
+    if (n >= 1024 * 1024 && n % (1024 * 1024) == 0) return std::to_string(n / (1024 * 1024)) + "M";
+    if (n >= 1024 && n % 1024 == 0) return std::to_string(n / 1024) + "k";
+    return std::to_string(n);
+}
+
+// llmash ctx MODEL [SIZE|off] [--kv TYPE] [--keep|--release]: the window a
+// model runs at for every client, kept in local.json and taken by the running
+// server at once.
+int cmd_ctx(const std::vector<std::string> & args, ApiClient & api, const Config & cfg) {
+    const ParsedArgs o = parse_simple(args, {"--keep", "--release"}, {"--kv"});
+    if (o.pos.empty()) {
+        std::fprintf(stderr, "Usage: %s ctx MODEL [SIZE|off] [--kv f16|q8_0|q4_0] [--keep|--release]\n", prog().c_str());
+        return 1;
+    }
+    const std::string model = o.pos[0];
+    ApiResult         r;
+    const json        show_body = json{{"model", model}};
+    const json        info      = api.call_json("POST", "/api/show", &show_body, 60, r);
+    if (!r.ok || r.status != 200) {
+        die("Error: " + first_of({j_str(info, "error"), "model '" + model + "' not found"}));
+    }
+    int trained = static_cast<int>(j_num(info, "trained_context"));
+    if (trained <= 0) {
+        trained = static_cast<int>(j_num(j_sub(info, "model_info"), "context_length"));
+    }
+    json      local   = clidoc::read_local_json(cfg.root);
+    if (!local.is_object()) local = json::object();
+    const std::string key = lower(model);
+
+    if (o.pos.size() < 2 && !o.has_flag("--keep") && !o.has_flag("--release") && !o.has_val("--kv")) {
+        const int    forced = j_num(j_sub(local, "ctx_override"), key) > 0 ? static_cast<int>(j_num(j_sub(local, "ctx_override"), key)) : 0;
+        const json   fit    = j_sub(j_sub(local, "fit"), model);
+        bool         pinned = false;
+        for (const auto & p : j_list(local, "pin")) pinned = pinned || equal_fold(p.get<std::string>(), model);
+        std::printf("%s: trained %s", model.c_str(), ctx_text(trained).c_str());
+        if (forced > 0) std::printf(", runs at %s", ctx_text(forced).c_str());
+        if (!j_str(fit, "kv_type").empty()) std::printf(", %s cache", j_str(fit, "kv_type").c_str());
+        std::printf("%s\n", pinned ? ", kept loaded" : "");
+        return 0;
+    }
+
+    int ctx = 0;
+    if (o.pos.size() >= 2) {
+        if (equal_fold(o.pos[1], "off")) {
+            local["ctx_override"].erase(key);
+            std::printf("%s runs at its trained %s again\n", model.c_str(), ctx_text(trained).c_str());
+        } else {
+            ctx = parse_ctx_size(o.pos[1]);
+            if (ctx <= 0) die("Error: '" + o.pos[1] + "' is not a size; try 1m, 512k or 262144");
+            if (trained > 0 && ctx > trained * 4) {
+                die("Error: " + ctx_text(ctx) + " is past 4x the trained " + ctx_text(trained) + ", where YaRN stops holding up");
+            }
+            local["ctx_override"][key] = ctx;
+        }
+    }
+    if (o.has_val("--kv")) {
+        local["fit"][model]["kv_type"] = o.val("--kv");
+    }
+    if (o.has_flag("--keep") || o.has_flag("--release")) {
+        json pins = json::array();
+        for (const auto & p : j_list(local, "pin")) {
+            if (!equal_fold(p.get<std::string>(), model)) pins.push_back(p);
+        }
+        if (o.has_flag("--keep")) pins.push_back(model);
+        local["pin"] = pins;
+    }
+    std::string err;
+    if (!clidoc::write_local_json(cfg.root, local, err)) die("Error: " + err);
+
+    const json reload_body = json{{"model", model}};
+    api.call_json("POST", "/api/config/reload", &reload_body, 60, r);
+    if (ctx > 0) {
+        const json f = api.call_json("GET", "/api/fit?model=" + url_query_escape(model) + "&ctx=" + std::to_string(ctx), nullptr, 30, r);
+        std::printf("%s runs at %s", model.c_str(), ctx_text(ctx).c_str());
+        if (trained > 0 && ctx > trained) std::printf(" (YaRN x%.2g over the trained %s)", static_cast<double>(ctx) / trained, ctx_text(trained).c_str());
+        if (r.ok && r.status == 200 && f.value("known", false)) {
+            const double need = j_num(f, "weights_gb") * 1.05 + j_num(f, "state_gb") + j_num(f, "scratch_gb") + j_num(f, "cache_gb");
+            std::printf("; %.0f GB on the card at f16, %.0f free", need, j_num(f, "free_gb"));
+            if (need > j_num(f, "room_gb")) {
+                const double budget = j_num(f, "budget_gb");
+                if (budget > 0 && need > budget - 1.0) {
+                    std::printf("\n%sthat is more than the %.0f GB the OS lets one process hold on this card: --kv q8_0 halves the cache, or ask for less%s", kDim, budget, kReset);
+                } else {
+                    std::printf("\n%sthat does not fit: --kv q8_0 halves the cache, or ask for less%s", kDim, kReset);
+                }
+            }
+        }
+        std::printf("\n");
+    }
+    if (o.has_flag("--keep")) {
+        std::printf("loading and keeping it ... ");
+        std::fflush(stdout);
+        const json load_body = json{{"model", model}, {"messages", json::array()}, {"keep_alive", -1}};
+        const json d         = api.call_json("POST", "/api/chat", &load_body, 1800, r);
+        std::printf("%s\n", r.ok && r.status == 200 ? "loaded" : ("failed: " + j_str(d, "error")).c_str());
+    } else if (o.has_flag("--release")) {
+        std::printf("%s is no longer kept loaded\n", model.c_str());
+    }
+    return 0;
+}
+
 int cmd_rco(const std::vector<std::string> & args, ApiClient & api) {
     try {
         const ParsedArgs o = parse_simple(args, {}, {"--quant", "-q", "--imatrix"});
@@ -1977,6 +2073,24 @@ int cmd_link(const std::vector<std::string> & args, const Config & cfg) {
             }
         }
         const std::string url = "https://" + dns + ":" + std::to_string(funnel_port());
+        // the funnel's root often goes somewhere else on this machine; a client
+        // given the bare host name then talks to that, not to llmash
+        std::string root_target;
+        if (const auto [status, ok2] = combined_output({ts, "funnel", "status"}); ok2) {
+            std::istringstream in(status);
+            std::string        line;
+            bool               at_root = false;
+            while (std::getline(in, line)) {
+                if (line.find("https://" + dns + " (") != std::string::npos) {
+                    at_root = true;
+                } else if (line.find("https://") != std::string::npos) {
+                    at_root = false;
+                }
+                if (at_root && line.find("|-- /  ") != std::string::npos && line.find("proxy ") != std::string::npos) {
+                    root_target = trim(line.substr(line.find("proxy ") + 6));
+                }
+            }
+        }
         const std::string bar = std::string(kDim) + std::string(66, '-') + kReset;
         std::printf("\n%s\n", bar.c_str());
         std::printf("  %sllmash is public%s  %s- an Ollama-compatible API, keyed%s\n", kBold, kReset, kDim, kReset);
@@ -1984,6 +2098,10 @@ int cmd_link(const std::vector<std::string> & args, const Config & cfg) {
         std::printf("  %sURL%s  %s%s%s%s\n", kDim, kReset, kBold, kCyan, url.c_str(), kReset);
         std::printf("  %skey%s  %s%s%s\n", kDim, kReset, kGreen, key.c_str(), kReset);
         std::printf("%s\n", bar.c_str());
+        if (!root_target.empty() && root_target.find(":" + std::to_string(cfg.public_port)) == std::string::npos) {
+            std::printf("  %sthe port matters: https://%s without :%d goes to %s, which is not llmash%s\n", kDim,
+                        dns.c_str(), funnel_port(), root_target.c_str(), kReset);
+        }
         std::printf("  %scurl:%s\n", kDim, kReset);
         const std::string shortkey = key.size() > 14 ? key.substr(0, 14) : key;
         std::printf("  %scurl %s/api/chat -H \"Authorization: Bearer %s...\" \\%s\n", kDim, url.c_str(),

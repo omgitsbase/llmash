@@ -56,8 +56,8 @@ model it gives you by default. Your numbers will differ.
 The rows are different files on purpose. Ollama pulls a Q8_0. vLLM runs 8-bit
 weights of the same size, with speculative decoding. llmash runs a 3-bit build it
 puts together itself, with a drafter. Most of the gap is bytes read per token,
-not engine, and the smaller file does not cost accuracy: at 3 bits the published
-results for this method sit 0.7% under fp8.
+not engine, and the smaller file costs less than its size suggests: a build at
+3 bits answers like a uniform one at about 4.
 
 The llmash and vLLM rows move between runs, by up to a third, because speculative
 decoding is faster on predictable text. Ollama has no drafter and repeats to a
@@ -90,7 +90,7 @@ tenth of a token per second.
 
 Tokens per second while generating, median of five runs, excluding model load and prompt processing. Ollama's rows are from one model load; between loads they drift by about a tenth.
 
-\* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. RCO-3 answers nearly identically to Q8_0: on the published benchmarks the 3-bit allocation scores within a point of the fp8 original, at a third of the bytes. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs 8-bit weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
+\* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. A build at 3 bits answers like a uniform one at about 4, at a third of a Q8_0's bytes. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs 8-bit weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
 
 <!-- /BENCHMARK -->
 
@@ -123,26 +123,28 @@ when the card has room, raised process priority, and DirectIO loading.
 `pull` lists a build assembled here beside the published ones. Every tensor is
 measured at each candidate type and given the one that buys the most accuracy
 per byte under a size budget, so the bits go where they change the answer. The
-tag is the target width: `RCO-3` averages 3 bits a weight, and it is the one
-offered.
+result hits above its weight class: a build at 3 bits answers like a uniform
+one at about 4, at the size of the 3. The tag is the target width, `RCO-3`.
+
+When the hub carries a published GSQ-RCO build of the model, `pull` finds it on
+its own and lists it first, as `rco`; the custom build is for models that have
+none.
 
 ```
 qwen3-1.7b, which build?
-  tiny     IQ3_XS                  923 MB
-  rco 3    Q8 quality, Q4 size     2.2 GB bandwidth
-  medium   Q4_K_M                  1.1 GB
-  large    Q8_0                    2.2 GB
+  custom   3 bits, answers like 4   2.2 GB bandwidth
+  medium   Q4_K_M                   1.1 GB
+  large    Q8_0                     2.2 GB
 ```
 
-Pick it and you choose the width: 2.4, 2.75, 3, 3.9, 4.4 or 5 bits a weight,
-each with what that width is worth against a Q8:
+Pick it and you choose the width, 2.4, 2.75 or 3 bits a weight; the method
+earns its keep under 3 bits, where a uniform build has fallen apart.
 
 ```
 how small?
-  rco 2.4  about 613 MB   3.9% under Q8
-  rco 2.75 about 703 MB   2.6% under Q8
-  rco 3    about 766 MB   near identical to Q8
-  rco 3.9  about 996 MB   matches Q8
+  rco 2.4  about 613 MB   answers like 3.4 bits
+  rco 2.75 about 703 MB   answers like 3.75 bits
+  rco 3    about 766 MB   answers like 4 bits
 ```
 
 It then shows the cost against the nearest published build and asks:
@@ -163,14 +165,15 @@ with the Q8_0 as the reference:
 | IQ3_XS | 0.90 GB | 4/6 |
 | RCO-3.9 | 0.93 GB | 5/6 |
 
-Six problems is a small sample. The published results below are the proper
-measurement, and they are where the picker's quality figures come from: the
-custom allocation stays within a point of the original down to 3 bits a weight,
-where a uniform build of the same size has already fallen apart.
+Six problems is a small sample. The published GSQ-RCO results below are the
+proper measurement of the method: at every width the allocation scores about
+what a uniform build a bit wider does. llmash uses the allocation half of that
+method with ggml's own quantizers, not GSQ's learned grids, so read the curve
+as what the method reaches, not a figure for these files.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/accuracy-dark.svg">
-  <img alt="Task average against bits per weight on Qwen3.8-27B. The custom allocation holds within a point of the fp8 original down to 3 bits, while uniform builds of the same width fall away." src="assets/accuracy-light.svg">
+  <img alt="Task average against bits per weight on Qwen3.8-27B. At every width the allocation scores about what a uniform build a bit wider does." src="assets/accuracy-light.svg">
 </picture>
 
 | bits a weight | custom allocation | uniform build |
@@ -182,8 +185,7 @@ where a uniform build of the same size has already fallen apart.
 | 3.47 | 91.8 | 90.1 |
 
 Published GSQ-RCO figures on Qwen3.8-27B, the mean of AIME25, GPQA-Diamond and
-LiveCodeBench v6, against an fp8 original scoring 91.87. They measure the method,
-not this implementation.
+LiveCodeBench v6, against an fp8 original scoring 91.87.
 
 The source is the smallest published build that is still comfortably wider than
 the target: a 3-bit build reads a Q6_K rather than a Q8_0, a quarter fewer bytes.
@@ -225,6 +227,20 @@ collapses runs of elementwise ops into one launch, and a residual add is folded
 into the rms_norm that reads it. Both apply to any model with the pattern, and
 both have a switch.
 
+## Context
+
+A model runs at its trained context; past it, llmash runs it under YaRN, up
+to four times the trained length. `llmash ctx MODEL 1m` sets a million tokens
+for every client, including ones that cannot ask for one, and `--keep` holds
+the model loaded. The running server takes the change at once, and `pull` and
+`run` say what a window costs on the card before loading it.
+
+```
+llmash ctx qwen3.8-27b:rco-3 1m --keep
+qwen3.8-27b:rco-3 runs at 1M (YaRN x4 over the trained 256k); 78 GB on the card at f16, 90 free
+loading and keeping it ... loaded
+```
+
 ## Commands
 
 | | |
@@ -236,6 +252,7 @@ both have a switch.
 | `models` | show where models are read from, or point llmash at a folder of them |
 | `doctor` | check the install, runtime, GPU, models and routes |
 | `update` | install the latest push; `--stable` for the latest release |
+| `ctx` | the context a model runs at, up to 4x its trained length under YaRN; `--keep` holds it loaded |
 | `launch` | point Claude Code, Codex, Droid and others at this server |
 | `link` | expose the API over a Tailscale funnel, with a key |
 | `uninstall` | remove everything the installer created |

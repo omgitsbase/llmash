@@ -167,8 +167,24 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
         write_json(res, 200, ps_json(live_views(mgr), cfg));
     });
 
-    mount(srv, "/v1/models", [&cfg, &reg](const Request &, Response & res) {
-        write_json(res, 200, v1_models_json(reg.all(), cfg));
+    mount(srv, "/v1/models", [&cfg, &mgr, &reg](const Request &, Response & res) {
+        write_json(res, 200, v1_models_json(reg.all(), cfg, [&mgr](const Model & m) { return mgr.v1_ctx(m); }));
+    });
+    // local.json changed: take the context and cache choices without a restart,
+    // and let go of a model named so its next request reloads it
+    mount(srv, "/api/config/reload", [&cfg, &mgr](const Request & req, Response & res) {
+        const Config fresh = load_config();
+        cfg.ctx_override   = fresh.ctx_override;
+        cfg.ctx_max        = fresh.ctx_max;
+        cfg.fit            = fresh.fit;
+        cfg.pin            = fresh.pin;
+        cfg.launch_extra   = fresh.launch_extra;
+        mgr.set_config(cfg);
+        const json body = read_body(req);
+        if (const std::string name = body.value("model", ""); !name.empty()) {
+            mgr.unload(name);
+        }
+        write_json(res, 200, json{{"status", "ok"}});
     });
 
     // What llama-server answers, so a client that looks for one (Hermes probes
@@ -193,7 +209,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
     // A model name can hold both ':' and '/', so the id is everything after
     // the prefix, the way Go's TrimPrefix takes it.
-    mount(srv, R"(/v1/models/(.*))", [&cfg, &reg](const Request & req, Response & res) {
+    mount(srv, R"(/v1/models/(.*))", [&cfg, &mgr, &reg](const Request & req, Response & res) {
         const std::string          name = req.matches.size() > 1 ? req.matches[1].str() : std::string();
         const std::optional<Model> m    = reg.find(name);
         if (!m || !std::filesystem::exists(m->path)) {
@@ -202,7 +218,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
                                           "model_not_found"));
             return;
         }
-        write_json(res, 200, v1_entry_json(*m, cfg));
+        write_json(res, 200, v1_entry_json(*m, cfg, mgr.v1_ctx(*m)));
     });
 
     mount(srv, "/api/show", [&cfg, &reg](const Request & req, Response & res) {

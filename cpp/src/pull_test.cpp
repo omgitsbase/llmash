@@ -202,6 +202,7 @@ void test_other_formats() {
     check_eq(other_formats_text({"safetensors", "json"}), std::string("safetensors"), "a safetensors repo says so");
     check_eq(other_formats_text({"safetensors", "npz"}), std::string("safetensors and MLX"), "MLX is named too");
     check_eq(other_formats_text({"json", "md"}), std::string(""), "nothing worth naming is empty");
+    check_eq(quant_tag("IQ2_XS/Model-GSQ-RCO-IQ2_XS-00001-of-00002.gguf"), std::string("IQ2_XS"), "a build in a folder is tagged by its file");
 }
 
 void test_quant_tag() {

@@ -93,6 +93,7 @@ struct QuantInfo {
     int64_t     size  = 0;  // what the finished model weighs
     int         files = 0;
     int64_t     fetch = 0;  // what has to come down for it, when that differs
+    std::string repo;       // another repository's build of the model, when it is one
 };
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files);
 

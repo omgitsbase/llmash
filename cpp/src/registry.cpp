@@ -214,6 +214,28 @@ std::string find_projector_for(const std::string & path) {
 
 } // namespace
 
+// A sharded model weighs all its shards, not the first one it is listed by.
+uint64_t model_bytes(const std::string & path) {
+    std::error_code ec;
+    uint64_t        total = fs::file_size(path, ec);
+    const std::string stem = stem_of(path);
+    std::smatch       m;
+    if (!std::regex_search(stem, m, first_shard_re())) {
+        return total;
+    }
+    const std::string prefix = stem.substr(0, static_cast<size_t>(m.position(0))) + "-";
+    const fs::path    dir    = fs::path(path).parent_path();
+    total = 0;
+    for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); ++it) {
+        const std::string other = it->path().filename().string();
+        if (other.rfind(prefix, 0) == 0 && std::regex_search(stem_of(other), shard_re()) &&
+            lower(it->path().extension().string()) == ".gguf") {
+            total += fs::file_size(it->path(), ec);
+        }
+    }
+    return total;
+}
+
 std::string loose_name(const std::string & path) {
     std::string stem = std::regex_replace(stem_of(path), shard_re(), "");
     std::string tag  = "gguf";
@@ -385,7 +407,7 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.caps         = caps_for(g, mo.projector, dir);
 
         std::error_code ec;
-        mo.size     = static_cast<uint64_t>(fs::file_size(path, ec));
+        mo.size     = model_bytes(path);
         mo.modified = mtime_unix(path);
         mo.digest   = "sha256:" + sha256_hex(fs::path(path).filename().string() + ":" +
                                              std::to_string(mo.size) + ":" +
@@ -409,7 +431,7 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.incomplete = true;
 
         std::error_code ec;
-        mo.size     = static_cast<uint64_t>(fs::file_size(path, ec));
+        mo.size     = model_bytes(path);
         mo.modified = mtime_unix(path);
         mo.digest   = "sha256:" + sha256_hex(fs::path(path).filename().string() + ":" +
                                              std::to_string(mo.size));

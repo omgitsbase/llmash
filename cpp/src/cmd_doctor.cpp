@@ -276,7 +276,7 @@ void cmd_doctor() {
         }
     }
 
-    if (const Tuning tuning = auto_tune(); !tuning.flags.empty()) {
+    if (const Tuning tuning = auto_tune(cfg.ctx > 0 ? cfg.ctx : 8192); !tuning.flags.empty()) {
         d.add(ST_OK, "auto-tuning", "%s", tuning.why.c_str());
     }
 

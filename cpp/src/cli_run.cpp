@@ -212,7 +212,7 @@ RunArgs parse_run_args(const std::vector<std::string> & args) {
             }
             if (name == "--format") r.format = val;
             else if (name == "--keepalive") r.keepalive = val;
-            else if (name == "--ctx") r.ctx = scan_leading_int(val);
+            else if (name == "--ctx") r.ctx = parse_ctx_size(val);
             else if (name == "--dimensions") r.dimensions = scan_leading_int(val);
             else if (name == "--temperature") {
                 const auto f = try_parse_double(val);

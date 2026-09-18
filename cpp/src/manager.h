@@ -81,6 +81,14 @@ public:
     double         fit_room(const Fit & f) const;
     int            fit_at(const Fit & f, int ctx, double kv_scale) const;
     nlohmann::json fit_json(const Model & m, int ctx);
+
+    // The context an OpenAI-API request loads, and how: a forced or kept
+    // choice, else the model's window fitted to the card. Advertised as such.
+    int       v1_ctx(const Model & m);
+    LoadPrefs v1_prefs(const Model & m) const;
+
+    // local.json changed underneath a running server
+    void set_config(const Config & c);
     bool                    unload(const std::string & name);
     Instance *              find(const std::string & name);
     void                    shutdown();
@@ -103,7 +111,10 @@ struct Tuning {
 };
 
 // tune.go's autoTune: the flags to add and a one-line account of why.
-Tuning auto_tune();
+Tuning auto_tune(int ctx);
+// the micro-batch a context can afford, and the scratch it costs in GB
+int    ubatch_for(int ctx);
+double scratch_gb(int ctx);
 
 int  free_port();
 bool can_offload();

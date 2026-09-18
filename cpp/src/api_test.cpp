@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,8 +44,11 @@ json tags_json(const std::vector<Model> & models, const Config &) {             
     stub::tags_calls++;
     return json{{"models", json::array({json{{"name", "stub_models"}, {"count", models.size()}}})}};
 }
-json v1_entry_json(const Model & m, const Config &) { return json{{"id", m.name}}; } // STUB
+json v1_entry_json(const Model & m, const Config &, int) { return json{{"id", m.name}}; } // STUB
 json v1_models_json(const std::vector<Model> &, const Config &) {                    // STUB
+    return json{{"object", "list"}, {"data", json::array()}};
+}
+json v1_models_json(const std::vector<Model> &, const Config &, const std::function<int(const Model &)> &) {                    // STUB
     return json{{"object", "list"}, {"data", json::array()}};
 }
 json show_json(const Model & m, const Config &) { return json{{"modelfile", "FROM " + m.path}}; } // STUB

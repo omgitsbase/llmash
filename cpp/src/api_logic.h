@@ -49,7 +49,10 @@ int advertised_ctx(const Model & m, const Config & cfg);
 
 nlohmann::json tag_entry_json(const Model & m, const Config & cfg);
 nlohmann::json tags_json(const std::vector<Model> & models, const Config & cfg);
-nlohmann::json v1_entry_json(const Model & m, const Config & cfg);
+nlohmann::json v1_entry_json(const Model & m, const Config & cfg, int ctx = 0);
+// the listing with each model's context from `ctx_of`: what a request would load
+nlohmann::json v1_models_json(const std::vector<Model> & models, const Config & cfg,
+                              const std::function<int(const Model &)> & ctx_of);
 nlohmann::json v1_models_json(const std::vector<Model> & models, const Config & cfg);
 nlohmann::json show_json(const Model & m, const Config & cfg);
 nlohmann::json openai_error_json(const std::string & message, const std::string & type, const std::string & code);
