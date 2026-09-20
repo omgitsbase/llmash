@@ -1176,8 +1176,13 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
             used += in->vram_gb();
         }
     }
-    const double total       = total_vram_gb();
-    const double vram_budget = env_float("LLMASH_VRAM_GB", total > 0 ? total - env_float("LLMASH_VRAM_HEADROOM", 6) : 80);
+    const double total = total_vram_gb();
+    double vram_budget = env_float("LLMASH_VRAM_GB", total > 0 ? total - env_float("LLMASH_VRAM_HEADROOM", 6) : 80);
+    // The OS ceiling binds well before the card does, so room measured against
+    // the card alone says a load will fit when it cannot.
+    if (const double budget = gpu_process_budget_gb(cfg_.gpu_budget_gb); budget > 0) {
+        vram_budget = std::min(vram_budget, budget);
+    }
     const double ram_floor   = env_float("LLMASH_RAM_FLOOR", 12);
     const double busy_grace  = env_float("LLMASH_BUSY_GRACE", 120);
     const bool   tight       = free_ram_gb() < ram_floor;
@@ -1188,25 +1193,43 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
         log_line("system RAM down to " + std::to_string(free_ram_gb()) + " GB, evicting to make room");
     }
     std::sort(loaded_list.begin(), loaded_list.end(), [](Instance * a, Instance * b) { return a->last_used < b->last_used; });
-    for (Instance * in : loaded_list) {
-        if (in->model.name == keep || is_pinned(cfg_, in->model.name)) {
-            continue;
+    // Two passes. The first leaves alone a model somebody used moments ago,
+    // which is what the grace period is for. The second takes it anyway: a
+    // model held back for its recent user is no good to them if the request
+    // that needed the room fails instead, and nobody is served at all.
+    const auto sweep = [&](bool respect_grace) {
+        for (Instance *& in : loaded_list) {
+            if (in == nullptr) {
+                continue;
+            }
+            if (in->model.name == keep || is_pinned(cfg_, in->model.name)) {
+                in = nullptr;
+                continue;
+            }
+            if (respect_grace && now_f() - in->last_used < busy_grace) {
+                log_line("leaving " + in->model.name + " for now: used " + std::to_string(now_f() - in->last_used) +
+                         "s ago");
+                continue;
+            }
+            const double freed = in->vram_gb();
+            log_line("evicting " + in->model.name + " to free " + std::to_string(freed) + " GB");
+            in->stop();
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                erase_ptr(live_, in);   // the pointer dies here, so the slot is cleared
+            }
+            in = nullptr;
+            used -= freed;
+            if (used + need_gb <= vram_budget && free_ram_gb() >= ram_floor) {
+                return true;
+            }
         }
-        if (now_f() - in->last_used < busy_grace) {
-            log_line("not evicting " + in->model.name + ": used " + std::to_string(now_f() - in->last_used) + "s ago");
-            continue;
-        }
-        log_line("evicting " + in->model.name + " to free " + std::to_string(in->vram_gb()) + " GB");
-        in->stop();
-        {
-            std::lock_guard<std::mutex> lock(mu_);
-            erase_ptr(live_, in);
-        }
-        used -= in->vram_gb();
-        if (used + need_gb <= vram_budget && free_ram_gb() >= ram_floor) {
-            return;
-        }
+        return false;
+    };
+    if (sweep(true)) {
+        return;
     }
+    sweep(false);
 }
 
 Manager::Fit Manager::fit_report(const Model & m) {
