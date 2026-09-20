@@ -415,6 +415,16 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.name       = alias != aliases.end() && !alias->second.empty() ? alias->second : loose_name(path);
         mo.path       = path;
         mo.quant      = g.quant;
+        if (mo.quant.empty()) {
+            // A file type newer than this build still carries its width in the
+            // name. Say that rather than nothing: a client reading an empty
+            // quantization may drop the model from its list.
+            if (const size_t c = mo.name.rfind(':'); c != std::string::npos && mo.name.substr(c + 1) != "gguf") {
+                mo.quant = mo.name.substr(c + 1);
+                std::transform(mo.quant.begin(), mo.quant.end(), mo.quant.begin(),
+                               [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+            }
+        }
         mo.arch       = g.arch;
         mo.has_mtp    = g.has_mtp;
         mo.in_library = true;
