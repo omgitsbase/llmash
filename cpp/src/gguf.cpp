@@ -150,6 +150,9 @@ double GGUFInfo::state_bytes() const {
 }
 
 std::string file_type_name(uint32_t ft) {
+    // llama_ftype, in the order llama.h declares it. A gap here is not
+    // cosmetic: the field feeds clients that list models, and some of them
+    // drop a model whose quantization reads as empty.
     switch (ft) {
         case 0:  return "F32";
         case 1:  return "F16";
@@ -167,8 +170,26 @@ std::string file_type_name(uint32_t ft) {
         case 16: return "Q5_K_S";
         case 17: return "Q5_K_M";
         case 18: return "Q6_K";
-        case 23: return "IQ4_NL";
+        case 19: return "IQ2_XXS";
+        case 20: return "IQ2_XS";
+        case 21: return "Q2_K_S";
+        case 22: return "IQ3_XS";
+        case 23: return "IQ3_XXS";
+        case 24: return "IQ1_S";
+        case 25: return "IQ4_NL";
+        case 26: return "IQ3_S";
+        case 27: return "IQ3_M";
+        case 28: return "IQ2_S";
+        case 29: return "IQ2_M";
         case 30: return "IQ4_XS";
+        case 31: return "IQ1_M";
+        case 32: return "BF16";
+        case 36: return "TQ1_0";
+        case 37: return "TQ2_0";
+        case 38: return "MXFP4_MOE";
+        case 39: return "NVFP4";
+        case 40: return "Q1_0";
+        case 41: return "Q2_0";
         default: return "";
     }
 }
