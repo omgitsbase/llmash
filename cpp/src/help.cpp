@@ -176,6 +176,7 @@ Flags:
       --port N       port (default 11434)
       --ctx N        context length: the default when a request names none, and the most any request gets
       --kv TYPE      K/V cache type: f16, q8_0 or q4_0 (default f16; q8_0 halves the cache)
+      --gpu-budget GB  what one process may hold on the card (default: what the OS allows)
       --verbose      print a line per turn: tokens, tok/s, prompt cache, draft acceptance
   -h, --help         this
 
