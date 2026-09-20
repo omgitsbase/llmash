@@ -656,7 +656,10 @@ $previous = $localCfg['models_root']
 # `llmash models set` chose, else Ollama's store
 $modelsRoot = $ollamaStore
 if ($modelsVar) { $modelsRoot = $modelsVar }
-elseif (IsGgufFolder $previous) { $modelsRoot = $previous }
+# A root already chosen is kept whichever shape it has: a folder of loose
+# GGUFs, or a store moved off the system drive. Testing only for the folder
+# sent an upgrade back to the default under the profile every time.
+elseif ((IsGgufFolder $previous) -or (IsStore $previous)) { $modelsRoot = $previous }
 # the store is the setting when it is one (or does not exist yet), else Ollama's own
 $ollamaModels = if ((IsStore $modelsRoot) -or -not (Test-Path $modelsRoot)) { $modelsRoot } else { $ollamaStore }
 if ((IsStore $previous) -and ((Resolve-Path $previous -EA SilentlyContinue).Path -ne (Resolve-Path $ollamaModels -EA SilentlyContinue).Path)) {
