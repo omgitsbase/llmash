@@ -1362,7 +1362,6 @@ int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
 
 Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err,
                         const LoadPrefs & prefs) {
-    const std::string kv = prefs.kv_type.empty() ? cfg_.kv_type : lower(prefs.kv_type);
     drop_dead();
     const std::optional<Model> m = reg_->find(name);
     if (!m) {
@@ -1377,6 +1376,17 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         err = name + " is a download that did not finish; pull it again, or rm it to free the space";
         return nullptr;
     }
+    // A cache type recorded for the model by `ctx --kv` holds on every path
+    // unless the request names its own. The OpenAI path did this already; the
+    // Ollama path loaded at the default and quietly ignored the setting.
+    LoadPrefs p = prefs;
+    if (p.kv_type.empty()) {
+        if (const auto it = cfg_.fit.find(m->name); it != cfg_.fit.end()) {
+            p.kv_type   = it->second.kv_type;
+            p.kv_on_gpu = it->second.kv_on_gpu;
+        }
+    }
+    const std::string kv = p.kv_type.empty() ? cfg_.kv_type : lower(p.kv_type);
     if (ctx <= 0) {
         ctx = cfg_.ctx > 0 ? cfg_.ctx : 8192;
     }
@@ -1394,7 +1404,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
             erase_ptr(live_, cur);
             cur = nullptr;
         }
-        if (cur != nullptr && cur->ready() && cur->ctx >= ctx && cur->kv_type == kv && cur->kv_on_gpu == prefs.kv_on_gpu) {
+        if (cur != nullptr && cur->ready() && cur->ctx >= ctx && cur->kv_type == kv && cur->kv_on_gpu == p.kv_on_gpu) {
             cur->set_keep_alive(keep_alive);
             return cur;
         }
@@ -1422,7 +1432,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         log_line(m->name + ": " + buf);
     }
     const double weights = static_cast<double>(m->size) / static_cast<double>(1ull << 30);
-    const double cache   = prefs.kv_on_gpu ? m->kv_bytes_tok * kv_type_scale(kv) * ctx : 0.0;
+    const double cache   = p.kv_on_gpu ? m->kv_bytes_tok * kv_type_scale(kv) * ctx : 0.0;
     const double need    = weights * 1.05 + (cache + m->state_bytes) / static_cast<double>(1ull << 30);
 
     std::lock_guard<std::mutex> load_lock(g_load_mu);
@@ -1431,10 +1441,10 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
     {
         std::lock_guard<std::mutex> lock(mu_);
         inst = find_by_name(live_, m->name);
-        if (inst != nullptr && (inst->ctx < ctx || inst->kv_type != kv || inst->kv_on_gpu != prefs.kv_on_gpu)) {
+        if (inst != nullptr && (inst->ctx < ctx || inst->kv_type != kv || inst->kv_on_gpu != p.kv_on_gpu)) {
             log_line("reloading " + m->name + " for a larger context or another cache (" + std::to_string(inst->ctx) +
                      " " + inst->kv_type + (inst->kv_on_gpu ? "" : " in RAM") + " -> " + std::to_string(ctx) + " " + kv +
-                     (prefs.kv_on_gpu ? "" : " in RAM") + ")");
+                     (p.kv_on_gpu ? "" : " in RAM") + ")");
             inst->stop();
             erase_ptr(live_, inst);
             inst = nullptr;
@@ -1445,7 +1455,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         evict_for(need, m->name);
         auto       owned = std::make_unique<Instance>(*m, ctx, vision, &cfg_);
         owned->kv_type   = kv;
-        owned->kv_on_gpu = prefs.kv_on_gpu;
+        owned->kv_on_gpu = p.kv_on_gpu;
         Instance * raw   = owned.get();
         {
             std::lock_guard<std::mutex> lock(mu_);
