@@ -389,8 +389,8 @@ size_t cols(const std::string & s) {
 }
 
 void test_rco_pitch() {
-    check(rco_pitch_text(3.0) == "answers like 4 bits", "three bits reads as a bit more");
-    check(rco_pitch_text(2.4) == "answers like 3.4 bits", "so does a rung of its own");
+    check(rco_pitch_text(3.0) == "3 bits a weight", "a rung says its width");
+    check(rco_pitch_text(2.4) == "2.4 bits a weight", "and only its width");
 }
 
 void test_build_rows() {

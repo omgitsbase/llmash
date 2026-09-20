@@ -482,7 +482,7 @@ bool is_rco(const std::string & name) {
     return u.rfind("RCO", 0) == 0;
 }
 
-const char kRcoPitch[] = "3 bits, answers like 4";
+const char kRcoPitch[] = "3 bits, one type per tensor";
 
 // The one choice that costs bandwidth and minutes, so it is confirmed.
 bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain, const std::string & source) {
@@ -506,7 +506,7 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
                     static_cast<double>(custom.fetch) / static_cast<double>(ref->size), kReset);
         std::printf("  %sholds more of the model than any published build its size.%s\n", kDim, kReset);
     }
-    std::printf("\n  %sBits go where they change the answer, so it %s.%s\n", kDim,
+    std::printf("\n  %sBits go where they change the answer; this one is %s.%s\n", kDim,
                 rco_pitch_text(rco_bpw_of_quant(custom.name)).c_str(), kReset);
     std::printf("  %sAssembled here; not the published GSQ-RCO build.%s\n", kDim, kReset);
     for (;;) {
@@ -1096,10 +1096,11 @@ ParsedArgs parse_simple(const std::vector<std::string> & args, const std::vector
 
 // ------------------------------------------------------- pure logic units
 
-// A build at N bits that answers like a uniform one at about N+1.
+// The width a rung buys, and nothing more: what such a build scores has not
+// been measured here, and the published GSQ-RCO figures are for other files.
 std::string rco_pitch_text(double bpw) {
     char buf[48];
-    std::snprintf(buf, sizeof(buf), "answers like %g bits", bpw + 1.0);
+    std::snprintf(buf, sizeof(buf), "%g bits a weight", bpw);
     return buf;
 }
 

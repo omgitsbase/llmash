@@ -7,12 +7,14 @@
 [![CUDA](https://img.shields.io/badge/CUDA-13.3-76B900.svg?logo=nvidia)](https://developer.nvidia.com/cuda-toolkit)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/omgitsbase/llmash)
 
-An Ollama-compatible server and command line for Windows, built on llama.cpp.
-There is an alpha Linux build too.
+An Ollama-compatible server and command line for Windows, built on a fork of
+llama.cpp. There is an alpha Linux build too.
 
 It serves your GGUF files through `llama-server` and keeps Ollama's commands,
 API and model store, so anything already pointed at Ollama keeps working. What
-it changes is the llama.cpp settings, picked per model at launch.
+it changes is how each model is launched: the settings, the context window,
+the cache, the drafter, and when a repository has no build at the size you
+want, the build itself.
 
 ```powershell
 irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 | iex
@@ -46,7 +48,8 @@ llmash models set D:\models
 
 It reads that folder in place, subfolders included. Nothing is copied or
 deleted, and `rm` will not touch it. `llmash models` shows what is being read.
-This is the same setting as `OLLAMA_MODELS`.
+This is the same setting as `OLLAMA_MODELS`. A store moved to another drive
+survives an upgrade.
 
 ## Speed
 
@@ -56,8 +59,7 @@ model it gives you by default. Your numbers will differ.
 The rows are different files on purpose. Ollama pulls a Q8_0. vLLM runs 8-bit
 weights of the same size, with speculative decoding. llmash runs a 3-bit build it
 puts together itself, with a drafter. Most of the gap is bytes read per token,
-not engine, and the smaller file costs less than its size suggests: a build at
-3 bits answers like a uniform one at about 4.
+not engine: a third of the bytes is most of the speed.
 
 The llmash and vLLM rows move between runs, by up to a third, because speculative
 decoding is faster on predictable text. Ollama has no drafter and repeats to a
@@ -90,7 +92,7 @@ tenth of a token per second.
 
 Tokens per second while generating, median of five runs, excluding model load and prompt processing. Ollama's rows are from one model load; between loads they drift by about a tenth.
 
-\* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. A build at 3 bits answers like a uniform one at about 4, at a third of a Q8_0's bytes. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs 8-bit weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
+\* llmash runs a custom build: one quantization type per tensor, chosen under a size budget and assembled on this machine. No other runtime has an equivalent. It is a third of a Q8_0's bytes, which is where the speed comes from; how close it stays in accuracy has been measured here only on the six problems in the table further down. Ollama runs its own Q8_0 pull, which ships without a draft model; vLLM runs 8-bit weights with speculative decoding; llmash runs what a pull assembles, drafter and launch settings included.
 
 <!-- /BENCHMARK -->
 
@@ -107,44 +109,95 @@ it.
 - **`llmash.exe`** is the command line and the server. `llmashw.exe` is the same
   program with no console, for the tray.
 - **The server** owns the model store, starts and stops `llama-server`
-  processes, and decides how long each one stays resident.
+  processes, and decides how long each one stays resident. When a load needs
+  room it evicts the least recently used model first, leaving one somebody
+  used moments ago for a second pass rather than failing the request.
 - **The tray** unloads a model, sets the keep-alive, restarts the server, and
   starts it at login.
-- **Routes** send a named model to another OpenAI-compatible server, and fall
-  back to llama.cpp when that server is not running. Not yet in the C++ build.
+- **The runtime** is a llama.cpp fork the installer fetches beside the program.
+  A release that carries a newer one refreshes it. A model newer than the
+  runtime can name another `llama-server` of its own, by name fragment, under
+  `runtime` in `local.json`; it gets only the flags every build takes.
+- **Updates** come from two places. Every push to `main` is built into the
+  `edge` prerelease, which `llmash update` installs; `--stable` takes the latest
+  release instead. Releases are cut when the runtime changes.
 
 Per model, at launch, it picks the ordinary llama.cpp settings and logs each:
 prompt-prefix reuse, a host-RAM prompt cache sized from free RAM, batch width
 when the card has room, raised process priority, and DirectIO loading.
-`LLMASH_TUNE_OFF` disables any of them.
+`LLMASH_TUNE_OFF` disables any of them. `serve --verbose` prints a line per
+turn with the token counts, the speed, what the cache reused and what the
+drafter got accepted.
+
+A client that looks for a `llama-server` rather than an Ollama, as Hermes's
+local provider does, finds this one: `/props` and `/models` answer, and
+`/v1/models` advertises the context each model actually runs at.
+
+## Context
+
+A model runs at its trained context; past it, llmash runs it under YaRN, up
+to four times the trained length. `llmash ctx MODEL 1m` sets a million tokens
+for every client, including ones that cannot ask for one, `--kv q8_0` halves
+the cache, and `--keep` holds the model loaded. The running server takes the
+change at once, and `pull` and `run` say what a window costs on the card
+before loading it.
+
+```
+llmash ctx qwen3.8-27b:rco-3 768k --keep
+qwen3.8-27b:rco-3 runs at 768k (YaRN x3 over the trained 256k); 59 GB on the card at f16, 92 free
+loading and keeping it ... loaded
+```
+
+The cost comes from the model's header, not a guess from its file size: how
+many layers attend over the whole context, how many heads they keep, and what
+a recurrent or windowed layer holds instead. Weights llama.cpp keeps in RAM,
+the token embedding and on some architectures a per-layer embedding table
+tens of gigabytes wide, are counted as RAM rather than card, and `ctx` says
+so.
+
+On Windows every video allocation is backed by commit charge, RAM plus
+pagefile, so one process may hold only what is left of that, however much of
+the card is free. The limit is the machine's, not the process's: a second
+process draws on the same pool, so splitting a model across two does not
+raise the total. llmash reads the figure live and fits within it, and `ctx`
+says when a window is over it rather than over the card. With 64 GB of RAM
+and a 32 GB pagefile that is about 71 GB of a 96 GB card; a larger pagefile
+raises it, and costs nothing at run time, since the reservation is never
+written while the data sits on the card. A cache too large for one allocation
+is laid out across several.
 
 ## Custom builds
 
 `pull` lists a build assembled here beside the published ones. Every tensor is
 measured at each candidate type and given the one that buys the most accuracy
 per byte under a size budget, so the bits go where they change the answer. The
-result hits above its weight class: a build at 3 bits answers like a uniform
-one at about 4, at the size of the 3. The tag is the target width, `RCO-3`.
+measure is imatrix-weighted weight error, the budget is met by bisection on one
+Lagrange multiplier, and only the output head and the embedding keep a floor.
+The tag is the target width, `RCO-3`, and the ladder runs 2.4, 2.75 and 3 bits
+a weight, which is where a uniform build has fallen apart and choosing per
+tensor earns its keep.
 
-When the hub carries a published GSQ-RCO build of the model, `pull` finds it on
-its own and lists it first, as `rco`; the custom build is for models that have
-none.
+This is the allocation idea from the published GSQ-RCO method, run with ggml's
+own quantizers. llmash does not implement GSQ's learned grids, and none of
+GSQ-RCO's published scores are numbers for the files llmash makes. Where the
+hub carries a real GSQ-RCO build of a model, `pull` looks for it without being
+asked and lists it first, as `rco`, because that is the better file; the build
+assembled here is for models that have none.
 
 ```
 qwen3-1.7b, which build?
-  custom   3 bits, answers like 4   2.2 GB bandwidth
-  medium   Q4_K_M                   1.1 GB
-  large    Q8_0                     2.2 GB
+  custom   3 bits, one type per tensor   2.2 GB bandwidth
+  medium   Q4_K_M                        1.1 GB
+  large    Q8_0                          2.2 GB
 ```
 
-Pick it and you choose the width, 2.4, 2.75 or 3 bits a weight; the method
-earns its keep under 3 bits, where a uniform build has fallen apart.
+Pick it and you choose the width:
 
 ```
 how small?
-  rco 2.4  about 613 MB   answers like 3.4 bits
-  rco 2.75 about 703 MB   answers like 3.75 bits
-  rco 3    about 766 MB   answers like 4 bits
+  rco 2.4  about 613 MB   2.4 bits a weight
+  rco 2.75 about 703 MB   2.75 bits a weight
+  rco 3    about 766 MB   3 bits a weight
 ```
 
 It then shows the cost against the nearest published build and asks:
@@ -155,9 +208,9 @@ It then shows the cost against the nearest published build and asks:
   IQ3_XS        ████████                 923 MB     923 MB
 ```
 
-Twice the download, and a minute or two of quantizing on the GPU. Against
-llama.cpp's own build of the same size, on technical problems at temperature 0
-with the Q8_0 as the reference:
+Twice the download, and a minute or two of quantizing on the GPU. What has
+been measured of these builds is small: six technical problems at temperature
+0 on Qwen3-1.7B, with the Q8_0 as the reference.
 
 | build | size | correct |
 |---|---|---|
@@ -165,27 +218,8 @@ with the Q8_0 as the reference:
 | IQ3_XS | 0.90 GB | 4/6 |
 | RCO-3.9 | 0.93 GB | 5/6 |
 
-Six problems is a small sample. The published GSQ-RCO results below are the
-proper measurement of the method: at every width the allocation scores about
-what a uniform build a bit wider does. llmash uses the allocation half of that
-method with ggml's own quantizers, not GSQ's learned grids, so read the curve
-as what the method reaches, not a figure for these files.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/accuracy-dark.svg">
-  <img alt="Task average against bits per weight on Qwen3.8-27B. At every width the allocation scores about what a uniform build a bit wider does." src="assets/accuracy-light.svg">
-</picture>
-
-| bits a weight | custom allocation | uniform build |
-|---|--:|--:|
-| 2.50 | 86.0 | 78.3 |
-| 2.75 | 89.5 | - |
-| 2.87 | - | 89.7 |
-| 3.00 | 91.2 | - |
-| 3.47 | 91.8 | 90.1 |
-
-Published GSQ-RCO figures on Qwen3.8-27B, the mean of AIME25, GPQA-Diamond and
-LiveCodeBench v6, against an fp8 original scoring 91.87.
+Six problems is a sample, not a benchmark. Treat the width as a size you
+choose, whose cost in accuracy has not been charted here.
 
 The source is the smallest published build that is still comfortably wider than
 the target: a 3-bit build reads a Q6_K rather than a Q8_0, a quarter fewer bytes.
@@ -205,6 +239,18 @@ quantizing, so you can see whether a faster link would help.
 `rco convert` does the same from a model already on disk, with no download at
 all. It needs ggml, which comes with the llama.cpp runtime beside
 `llama-server`.
+
+## Pulling
+
+`pull` takes an Ollama name or a Hugging Face repository as `hf.co/<org>/<repo>`,
+lists the builds it holds and asks which; `hf.co/<org>/<repo>@<quant>` or
+`--quant` names one directly. A width asked for by name is a requirement: when
+the repository does not have it, the pull stops and lists what it does have,
+rather than taking the nearest and downloading something you did not ask for.
+A repository with no GGUF at all is answered by one of the same model that has
+one, preferring the model's own over a fine-tune's. Files come down over
+several connections at once. The download runs inside the server, so closing
+the terminal does not stop it.
 
 ## Speculation
 
@@ -227,43 +273,19 @@ collapses runs of elementwise ops into one launch, and a residual add is folded
 into the rms_norm that reads it. Both apply to any model with the pattern, and
 both have a switch.
 
-## Context
-
-A model runs at its trained context; past it, llmash runs it under YaRN, up
-to four times the trained length. `llmash ctx MODEL 1m` sets a million tokens
-for every client, including ones that cannot ask for one, `--kv q8_0` halves
-the cache, and `--keep` holds the model loaded. The running server takes the
-change at once, and `pull` and `run` say what a window costs on the card
-before loading it.
-
-```
-llmash ctx qwen3.8-27b:rco-3 768k --keep
-qwen3.8-27b:rco-3 runs at 768k (YaRN x3 over the trained 256k); 59 GB on the card at f16, 92 free
-loading and keeping it ... loaded
-```
-
-On Windows every video allocation is backed by commit charge, RAM plus
-pagefile, so one process may hold only what is left of that, however much of
-the card is free. The limit is the machine's, not the process's: a second
-process draws on the same pool, so splitting a model across two does not
-raise the total. llmash reads the figure live and fits within it, and `ctx`
-says when a window is over it rather than over the card. With 64 GB of RAM
-and a 32 GB pagefile that is about 71 GB: a 27B model runs a million tokens at
-q8_0, or 768k at f16; a larger pagefile raises it. A cache too large for one
-allocation is laid out across several.
-
 ## Commands
 
 | | |
 |---|---|
 | `list` `ps` `show` `run` `pull` `rm` `cp` `stop` | as in Ollama |
 | `start` | start llmash in the background, with its tray icon |
-| `serve` | run the server in this console; `--verbose` prints each turn's speed |
+| `serve` | run the server in this console; `--host`, `--port`, `--ctx`, `--kv`, `--gpu-budget`, `--verbose` |
+| `ctx` | the context a model runs at, up to 4x its trained length under YaRN; `--kv` sets its cache type, `--keep` holds it loaded, `--release` lets it go |
 | `pulldraft` | find and install a draft model for a model you have |
+| `rco convert` | assemble a custom build from a model already on disk |
 | `models` | show where models are read from, or point llmash at a folder of them |
 | `doctor` | check the install, runtime, GPU, models and routes |
-| `update` | install the latest push; `--stable` for the latest release |
-| `ctx` | the context a model runs at, up to 4x its trained length under YaRN; `--keep` holds it loaded |
+| `update` | install the latest push; `--stable` for the latest release, `--force` to reinstall |
 | `launch` | point Claude Code, Codex, Droid and others at this server |
 | `link` | expose the API over a Tailscale funnel, with a key; says where the bare host name goes when that is not llmash |
 | `uninstall` | remove everything the installer created |
@@ -272,7 +294,8 @@ allocation is laid out across several.
 
 ## Configuration
 
-Optional. `local.json` next to the program, or environment variables.
+Optional. `local.json` next to the program, or environment variables. The
+variable wins over the file.
 
 | | |
 |---|---|
@@ -282,19 +305,23 @@ Optional. `local.json` next to the program, or environment variables.
 | `LLMASH_CTX` | default context length (default 8192) |
 | `LLMASH_KV` | K/V cache type, `f16` or `q8_0` |
 | `LLMASH_YARN_MAX` | how far past its trained context a model may run under YaRN (default 4) |
-| `LLMASH_GPU_BUDGET_GB` | what one process may hold on the card, instead of what commit charge allows; also `gpu_budget_gb` in local.json and `serve --gpu-budget` |
-| `runtime` (local.json) | another llama-server for particular models, by name fragment: `"runtime": {"flash-next": "D:/llama.cpp/bin"}`, for a model newer than the runtime |
+| `LLMASH_GPU_BUDGET_GB` | what one process may hold on the card, instead of what commit charge allows |
+| `LLMASH_VRAM_HEADROOM` | what to leave free on the card when fitting (default 6 GB) |
 | `LLMASH_PARALLEL` | server slots (default 1; raise it to serve several at once) |
-| `LLMASH_VRAM_GB` | budget for resident models |
 | `LLMASH_PIN` | comma-separated models never evicted |
 | `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`) |
 | `LLMASH_TUNE_OFF` | disable individual tuning: `cache-reuse,cache-ram,batch,prio` |
 | `LLMASH_RCO_THREADS` | cores a custom build may quantize on (default: all but one) |
 | `LLMASH_RCO_SAMPLE` | weights per tensor the bit-width search measures (default 131072; lower is faster and noisier) |
 
-`llmash serve --help` lists the rest. A `routes.json` beside the program
-configures fast routes (see `routes.example.json`); the C++ build reads it but
-does not send requests to those backends yet.
+`local.json` takes the same things by name, plus a few that are per model:
+`ctx_override` and `ctx_max` by model name, `fit` for a model's cache type,
+`pin`, `launch_extra` for extra `llama-server` flags by name fragment,
+`no_mmproj` for models whose projector should not load up front, `runtime` for
+another `llama-server` by name fragment, `gpu_budget_gb`, `extra_roots` for
+further folders to read, and `gguf_dir` for where pulled GGUFs go.
+
+`llmash serve --help` lists the rest.
 
 ## Building
 
