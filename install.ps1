@@ -337,7 +337,12 @@ if ($upgrade) {
 
     Get-ChildItem $Root, $BinDir -Filter '*.old-*' -File -EA SilentlyContinue |
         Remove-Item -Force -EA SilentlyContinue
-    foreach ($f in @(Get-ChildItem $Root, $BinDir -Filter '*.exe' -File -EA SilentlyContinue)) {
+    # A loaded file cannot be deleted, but it CAN be renamed, and the extract
+    # then writes a fresh one beside it. This has to cover the DLLs as well as
+    # the programs: `llmash update` runs the very llmash.exe in this folder,
+    # which holds its own CRT DLLs open for as long as it is running, so an
+    # extract that tries to replace msvcp140.dll in place is refused.
+    foreach ($f in @(Get-ChildItem $Root, $BinDir -File -EA SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.dll' })) {
         try {
             $h = [IO.File]::Open($f.FullName, 'Open', 'ReadWrite', 'None')
             $h.Close()
