@@ -170,7 +170,7 @@ function Download ($url, $dest, $label) {
     Remove-Item $progDir -Recurse -Force -EA SilentlyContinue
     if ($failed.Count) { throw "download of $label failed on $($failed.Count) stream(s)" }
     $got = (Get-Item $dest).Length
-    if ($total -gt 0 -and $got -ne $total) { throw "download of $label is incomplete: $got of $total bytes" }
+    if ($total -gt 0 -and $got -lt $total) { throw "download of $label is incomplete: $got of $total bytes" }
     $secs = [math]::Max(0.1, ((Get-Date) - $t0).TotalSeconds)
     Write-Host ("`r" + (Bar $label $got $got ($got / $secs)).TrimEnd())
 }
@@ -329,28 +329,8 @@ Step $(if ($upgrade) { 'Upgrading llmash' } else { 'Fetching llmash' })
 New-Item -ItemType Directory -Force $Root   | Out-Null
 New-Item -ItemType Directory -Force $BinDir | Out-Null
 
-if ($upgrade) {
-    Get-CimInstance Win32_Process -Filter "Name='llmashw.exe' OR Name='llmash.exe'" -EA SilentlyContinue |
-        Where-Object { $_.CommandLine -like "*$Root\llmashw.exe*" -or ($_.CommandLine -like "*$Root\llmash.exe*" -and $_.CommandLine -like "* serve*") } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
-    Start-Sleep -Milliseconds 500
-
-    Get-ChildItem $Root, $BinDir -Filter '*.old-*' -File -EA SilentlyContinue |
-        Remove-Item -Force -EA SilentlyContinue
-    # A loaded file cannot be deleted, but it CAN be renamed, and the extract
-    # then writes a fresh one beside it. This has to cover the DLLs as well as
-    # the programs: `llmash update` runs the very llmash.exe in this folder,
-    # which holds its own CRT DLLs open for as long as it is running, so an
-    # extract that tries to replace msvcp140.dll in place is refused.
-    foreach ($f in @(Get-ChildItem $Root, $BinDir -File -EA SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.dll' })) {
-        try {
-            $h = [IO.File]::Open($f.FullName, 'Open', 'ReadWrite', 'None')
-            $h.Close()
-        } catch {
-            Move-Item $f.FullName "$($f.FullName).old-$(Get-Random)" -Force -EA SilentlyContinue
-        }
-    }
-}
+# the running server is stopped and locked files moved aside further down,
+# once the download is in hand: a failed download must leave the install alone
 
 $zip = Join-Path $env:TEMP $Asset
 try {
@@ -377,6 +357,29 @@ try {
 } catch {
     Die "download failed  ($($_.Exception.Message))"
 }
+if ($upgrade) {
+    Get-CimInstance Win32_Process -Filter "Name='llmashw.exe' OR Name='llmash.exe'" -EA SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*$Root\llmashw.exe*" -or ($_.CommandLine -like "*$Root\llmash.exe*" -and $_.CommandLine -like "* serve*") } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
+    Start-Sleep -Milliseconds 500
+
+    Get-ChildItem $Root, $BinDir -Filter '*.old-*' -File -EA SilentlyContinue |
+        Remove-Item -Force -EA SilentlyContinue
+    # A loaded file cannot be deleted, but it CAN be renamed, and the extract
+    # then writes a fresh one beside it. This has to cover the DLLs as well as
+    # the programs: `llmash update` runs the very llmash.exe in this folder,
+    # which holds its own CRT DLLs open for as long as it is running, so an
+    # extract that tries to replace msvcp140.dll in place is refused.
+    foreach ($f in @(Get-ChildItem $Root, $BinDir -File -EA SilentlyContinue | Where-Object { $_.Extension -in '.exe', '.dll' })) {
+        try {
+            $h = [IO.File]::Open($f.FullName, 'Open', 'ReadWrite', 'None')
+            $h.Close()
+        } catch {
+            Move-Item $f.FullName "$($f.FullName).old-$(Get-Random)" -Force -EA SilentlyContinue
+        }
+    }
+}
+
 Expand-Archive -Path $zip -DestinationPath $Root -Force
 # A zip fetched over the internet stamps every file it holds as coming from
 # there, and Windows treats an unsigned program carrying that mark as
