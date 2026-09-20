@@ -217,9 +217,9 @@ double total_vram_gb() {
 // process, so a model and its cache have to fit in this, not in the card. A
 // larger pagefile raises it. Read live, since other programs move it.
 #ifdef _WIN32
-double gpu_process_budget_gb(const std::string &) {
-    if (!env_str("LLMASH_GPU_BUDGET_GB").empty()) {
-        return env_float("LLMASH_GPU_BUDGET_GB", 0);
+double gpu_process_budget_gb(double forced) {
+    if (forced > 0) {
+        return forced;
     }
     MEMORYSTATUSEX ms{};
     ms.dwLength = sizeof(ms);
@@ -232,7 +232,7 @@ double gpu_process_budget_gb(const std::string &) {
     return std::max(0.0, avail - 5.0);
 }
 #else
-double gpu_process_budget_gb(const std::string &) { return env_float("LLMASH_GPU_BUDGET_GB", 0); }
+double gpu_process_budget_gb(double forced) { return forced; }
 #endif
 
 double free_ram_gb() {
@@ -1232,7 +1232,7 @@ Manager::Fit Manager::fit_report(const Model & m) {
 
 double Manager::fit_room(const Fit & f) const {
     double room = f.free_gb - env_float("LLMASH_VRAM_HEADROOM", 6);
-    if (const double budget = gpu_process_budget_gb(runtime_dir(cfg_)); budget > 0) {
+    if (const double budget = gpu_process_budget_gb(cfg_.gpu_budget_gb); budget > 0) {
         room = std::min(room, budget - 1.0);  // one process holds the model and its cache
     }
     return std::max(2.0, room);
@@ -1270,7 +1270,7 @@ nlohmann::json Manager::fit_json(const Model & m, int ctx) {
                           {"free_gb", f.free_gb},
                           {"total_gb", f.total_gb},
                           {"room_gb", fit_room(f)},
-                          {"budget_gb", gpu_process_budget_gb(runtime_dir(cfg_))},
+                          {"budget_gb", gpu_process_budget_gb(cfg_.gpu_budget_gb)},
                           {"weights_gb", f.weights_gb},
                           {"ram_gb", f.ram_gb},
                           {"state_gb", f.state_gb},
@@ -1326,7 +1326,7 @@ int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
     const int    fitted = fit_at(f, ctx, scale);
     if (fitted < ctx) {
         char buf[240];
-        const double budget = gpu_process_budget_gb(runtime_dir(cfg_));
+        const double budget = gpu_process_budget_gb(cfg_.gpu_budget_gb);
         std::snprintf(buf, sizeof(buf), "ctx %d needs %.1f GB (%.1f weights, %.1f cache), %.1f free%s: using %d", ctx,
                       f.weights_gb * 1.05 + f.state_gb + f.compute_gb + f.per_tok_gb * scale * ctx, f.weights_gb,
                       f.per_tok_gb * scale * ctx, f.free_gb,

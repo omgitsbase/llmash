@@ -244,7 +244,9 @@ loading and keeping it ... loaded
 
 On Windows every video allocation is backed by commit charge, RAM plus
 pagefile, so one process may hold only what is left of that, however much of
-the card is free. llmash reads the figure live and fits within it, and `ctx`
+the card is free. The limit is the machine's, not the process's: a second
+process draws on the same pool, so splitting a model across two does not
+raise the total. llmash reads the figure live and fits within it, and `ctx`
 says when a window is over it rather than over the card. With 64 GB of RAM
 and a 32 GB pagefile that is about 71 GB: a 27B model runs a million tokens at
 q8_0, or 768k at f16; a larger pagefile raises it. A cache too large for one
@@ -280,7 +282,7 @@ Optional. `local.json` next to the program, or environment variables.
 | `LLMASH_CTX` | default context length (default 8192) |
 | `LLMASH_KV` | K/V cache type, `f16` or `q8_0` |
 | `LLMASH_YARN_MAX` | how far past its trained context a model may run under YaRN (default 4) |
-| `LLMASH_GPU_BUDGET_GB` | what one process may hold on the card, instead of what commit charge allows |
+| `LLMASH_GPU_BUDGET_GB` | what one process may hold on the card, instead of what commit charge allows; also `gpu_budget_gb` in local.json and `serve --gpu-budget` |
 | `runtime` (local.json) | another llama-server for particular models, by name fragment: `"runtime": {"flash-next": "D:/llama.cpp/bin"}`, for a model newer than the runtime |
 | `LLMASH_PARALLEL` | server slots (default 1; raise it to serve several at once) |
 | `LLMASH_VRAM_GB` | budget for resident models |

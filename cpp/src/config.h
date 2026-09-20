@@ -19,6 +19,7 @@ struct Config {
     int         ctx_cap      = 0;    // LLMASH_CTX or serve --ctx, when given: no request gets more
     int         parallel     = 1;
     std::string kv_type      = "f16";
+    double      gpu_budget_gb = 0;  // what one process may hold on the card; 0 asks the OS
     std::string load_mode    = "dio";
     std::string keep_alive   = "15m";
     std::map<std::string, int> ctx_override; // local.json ctx_override, keys lowercased

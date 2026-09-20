@@ -199,6 +199,8 @@ int cmd_serve(const std::vector<std::string> & args) {
             cfg.ctx_cap = cfg.ctx;
         } else if (a == "--kv" && val) {
             cfg.kv_type = args[++i];
+        } else if ((a == "--gpu-budget" || a == "--vram-budget") && val) {
+            cfg.gpu_budget_gb = std::atof(args[++i].c_str());
         } else if (a == "--verbose" || a == "-v") {
             set_env("LLMASH_VERBOSE", "1");  // one line per turn: tokens, tok/s, cache, draft
         } else {

@@ -3439,12 +3439,25 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
         if (q.empty()) {
             q = "Q4_K_M";
         }
+        // A published GSQ-RCO build of this model is listed by the picker under
+        // this repo's name. --quant has to reach it the same way choosing the
+        // row does, or it lands on a mirror that has no such build.
+        std::string from = repo;
+        if (!quant.empty() && rco_bpw_of_quant(q) <= 0) {
+            for (const QuantInfo & g : gsq_rco_quants(repo)) {
+                if (equal_fold(g.name, q) && !g.repo.empty()) {
+                    from = g.repo;
+                    emit(json{{"status", q + " comes from " + g.repo}});
+                    break;
+                }
+            }
+        }
         // a repo with no GGUF is answered by one of the same model that has one
         std::vector<HfFile>   files;
         std::set<std::string> others;
         std::string           rerr;
-        emit(json{{"status", "looking up " + repo + " on Hugging Face"}});
-        const std::string used = resolve_gguf_repo(repo, q, rco_bpw_of_quant(q), files, others, rerr);
+        emit(json{{"status", "looking up " + from + " on Hugging Face"}});
+        const std::string used = resolve_gguf_repo(from, q, rco_bpw_of_quant(q), files, others, rerr);
         if (used.empty()) {
             const std::string has = other_formats_text(others);
             emit(error_obj(!rerr.empty() ? rerr
@@ -3452,8 +3465,23 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
                                                ", and no GGUF of the same model turned up on the hub."));
             return;
         }
-        if (used != repo) {
-            emit(json{{"status", repo + " holds no GGUF build, taking " + used}});
+        if (used != from) {
+            emit(json{{"status", from + " holds no GGUF build, taking " + used}});
+        }
+        // A width asked for by name is a requirement, not a preference: taking
+        // the nearest one instead has meant a tens-of-gigabytes download of a
+        // build nobody asked for, and with --yes nothing stops to say so.
+        if (!quant.empty() && rco_bpw_of_quant(q) <= 0) {
+            const std::vector<HfFile> want = pick_gguf(files, q);
+            if (!want.empty() && !equal_fold(quant_tag(want.front().name), q)) {
+                std::string has;
+                for (const QuantInfo & o : quants_of(files)) {
+                    has += (has.empty() ? "" : ", ") + o.name;
+                }
+                emit(error_obj("no " + q + " in " + used + ". It has " + (has.empty() ? "no GGUF build" : has) +
+                               ". Ask for one of those, or leave --quant off to choose from the list."));
+                return;
+            }
         }
         const std::string first = hf_pull(used, q, as, cfg, reg, emit);
         if (!first.empty()) {

@@ -18,6 +18,8 @@ using json = nlohmann::json;
 
 namespace llmash {
 
+double env_float_cfg(const char * name, double def);  // defined below, used by the loader
+
 std::string env_str(const char * name, const std::string & fallback) {
     const char * v = std::getenv(name);
     if (v == nullptr || *v == '\0') {
@@ -249,6 +251,12 @@ Config load_config() {
             }
         }
     }
+    if (const auto it = local.find("gpu_budget_gb"); it != local.end() && it->is_number()) {
+        c.gpu_budget_gb = it->get<double>();
+    }
+    if (const double v = env_float_cfg("LLMASH_GPU_BUDGET_GB", 0); v > 0) {
+        c.gpu_budget_gb = v;   // the environment wins over the file, as everywhere else
+    }
     if (const auto it = local.find("runtime"); it != local.end() && it->is_object()) {
         for (const auto & [k, v] : it->items()) {
             if (!v.is_string() || v.get<std::string>().empty()) {
@@ -350,6 +358,18 @@ int parse_ctx_size(const std::string & s) {
 int ctx_ceiling(const Config & cfg, const std::string & name, int native) {
     const int v = match_key(cfg.ctx_max, name);
     return v > native ? v : native;
+}
+
+double env_float_cfg(const char * name, double def) {
+    const std::string v = env_str(name);
+    if (v.empty()) {
+        return def;
+    }
+    try {
+        return std::stod(v);
+    } catch (const std::exception &) {
+        return def;
+    }
 }
 
 std::vector<std::string> launch_extra_for(const Config & cfg, const std::string & name) {
