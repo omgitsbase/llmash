@@ -372,6 +372,10 @@ std::string explain_load_failure(const std::string & raw, const Config & cfg) {
                                  : "Run `llmash update -Runtime cuda` (or vulkan, or cpu) to replace it.") +
                " A newer llama-server can serve this model on its own: name its folder under runtime in local.json, keyed by the model's name.";
     }
+    if (has("no kernel image") || has("unsupported toolchain")) {
+        return "The runtime in " + runtime_dir(cfg) + " has no CUDA code this card can run. Run `llmash update`; "
+               "if it still fails, update the NVIDIA driver.";
+    }
     if (has("wrong number of tensors") || has("check_tensor_dims")) {
         return "llama.cpp cannot load this Ollama-packaged build: it does not carry the tensors llama.cpp expects "
                "for this architecture, which happens when a model is packaged for Ollama's own fork. Run `llmash "
