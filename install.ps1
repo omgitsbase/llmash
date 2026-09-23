@@ -439,6 +439,9 @@ if ($Runtime -eq 'none') {
     $cudaMajor = '13'
     if ($kind -eq 'cuda' -and $driver) {
         try { if (([version]($driver -replace '[^0-9.].*$', '')).Major -lt 580) { $cudaMajor = '12' } } catch {}
+        # CUDA 13 has no code for anything before Turing (7.5); those cards stay on 12
+        $r = Native $smi @('--query-gpu=compute_cap', '--format=csv,noheader')
+        if ($r.code -eq 0 -and ($r.out | Where-Object { $_ -match '^\s*[0-9.]+\s*$' -and [double]$_ -lt 7.5 })) { $cudaMajor = '12' }
     }
     $pattern = switch ($kind) {
         'cuda'   { "^llama-.*-bin-win-cuda-$cudaMajor\.[0-9]+-x64\.zip$" }
