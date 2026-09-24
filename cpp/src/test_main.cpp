@@ -107,6 +107,20 @@ int main() {
     check(qwen && !qwen->has_mtp, "a model without an mtp head is not claimed to have one");
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");
 
+    const auto found_as = [&](const std::string & asked, bool loose = true) {
+        const std::optional<Model> m = reg.find(asked, loose);
+        return m ? m->name : std::string("(none)");
+    };
+    eq(found_as("Qwen3-8B:Q8_0"), "qwen3-8b:q8_0", "case does not matter");
+    eq(found_as("qwen3_8b"), "qwen3-8b:q8_0", "nor do separators");
+    eq(found_as("qwen3-8b:latest"), "qwen3-8b:q8_0", "latest means whichever build there is");
+    eq(found_as("Qwen3-8B-Q8_0.gguf"), "qwen3-8b:q8_0", "the file's own name finds it");
+    eq(found_as("qwen3-8b:q4_k_m"), "(none)", "a build asked for by tag is not swapped for another");
+    eq(found_as("nail"), "nail-a3b:gguf", "a prefix finds the one model it starts");
+    eq(found_as("a3b"), "nail-a3b:gguf", "and so does a fragment");
+    eq(found_as("nail", false), "(none)", "but not where a guess could cost something");
+    eq(found_as("3"), "(none)", "a fragment in more than one name finds none");
+
     check(reg.in_library((dir / "Qwen3-8B-Q8_0.gguf").string()), "a file in the folder is library");
 #ifdef _WIN32
     check(!reg.in_library("C:/somewhere/else/x.gguf"), "a file outside it is not");

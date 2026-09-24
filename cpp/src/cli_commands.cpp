@@ -781,7 +781,7 @@ std::optional<Model> model_for(ApiClient & api, const std::string & name, bool *
         return std::nullopt;
     }
     Model m;
-    m.name    = name;
+    m.name    = first_of({j_str(info, "name"), name});
     m.path    = gguf;
     m.has_mtp = info.is_object() && info.value("mtp", false);  // known here, so the file need not be opened
     return m;

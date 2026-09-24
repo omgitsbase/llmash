@@ -2,6 +2,7 @@
 
 #include "cli_util.h"
 #include "cli_run.h"
+#include "http.h"
 #include "platform.h"
 #include "pull.h"
 #include "version.h"
@@ -17,6 +18,8 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -198,6 +201,31 @@ std::string fetch_installer(const clidoc::Release & rel) {
     return fs::is_regular_file(dest, ec) ? dest.string() : "";
 }
 
+// The installer replaces a runtime whose stamp differs from the release's, so
+// a stale runtime is reason to run it even when the program is current.
+bool runtime_behind(const Config & cfg, const clidoc::Release & rel) {
+    const auto trim = [](std::string s) {
+        s.erase(0, s.find_first_not_of(" \t\r\n"));
+        s.erase(s.find_last_not_of(" \t\r\n") + 1);
+        return s;
+    };
+    if (cfg.llama_bin.empty()) {
+        return false;
+    }
+    std::ifstream in(fs::path(cfg.llama_bin).parent_path() / "RUNTIME.txt");
+    if (!in) {
+        return false;
+    }
+    const std::string mine = trim(std::string(std::istreambuf_iterator<char>(in), {}));
+    for (const auto & a : rel.assets) {
+        if (a.first == "RUNTIME.txt") {
+            const HttpReply r = http_get(a.second, {"User-Agent: llmash"}, 15);
+            return r.status == 200 && !trim(r.body).empty() && trim(r.body) != mine;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
@@ -226,6 +254,7 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
         return die("could not reach GitHub: " + err);
     }
     std::string there = clidoc::release_version(rel.tag);
+    const bool  stale = runtime_behind(cfg, rel);
     std::string tag;
     // CI builds every push to main into the `edge` prerelease; a release is
     // cut when the runtime changes
@@ -241,9 +270,12 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
                 tag.empty() ? "" : " from the latest push");
     // an edge build of the release's number is that release plus what came after
     const bool current = tag.empty() ? !clidoc::version_less(here, there) : here == there;
-    if (current && !force) {
+    if (current && !force && !stale) {
         std::printf("already up to date\n");
         return 0;
+    }
+    if (current && stale) {
+        std::printf("the runtime is older than the release's; refreshing it\n");
     }
 
     // the release's own installer, so what runs matches what it installs;

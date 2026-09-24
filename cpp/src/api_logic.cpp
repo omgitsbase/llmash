@@ -370,6 +370,7 @@ json show_json(const Model & m, const Config & cfg) {
     return json{
         {"license", ""},
         {"modelfile", "FROM " + m.path},
+        {"name", m.name},
         {"mtp", m.has_mtp},
         {"trained_context", m.ctx_train},
         {"parameters", m.params_text},

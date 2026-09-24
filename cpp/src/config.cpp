@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -38,6 +40,28 @@ int env_int(const char * name, int fallback) {
     } catch (const std::exception &) {
         return fallback;
     }
+}
+
+// The variable as Windows has it saved now. A server the tray starts inherits
+// the tray's environment, which predates a variable set after it launched.
+std::string saved_env(const char * name) {
+#ifdef _WIN32
+    const std::wstring wname(name, name + std::strlen(name));
+    for (const auto & [root, key] :
+         {std::pair{HKEY_CURRENT_USER, L"Environment"},
+          std::pair{HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"}}) {
+        wchar_t buf[4096];
+        DWORD   size = sizeof(buf);
+        if (RegGetValueW(root, key, wname.c_str(), RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, buf, &size) ==
+                ERROR_SUCCESS &&
+            buf[0] != L'\0') {
+            return fs::path(buf).string();
+        }
+    }
+#else
+    (void)name;
+#endif
+    return "";
 }
 
 std::string exe_dir() {
@@ -181,7 +205,10 @@ Config load_config() {
 
     const json local = read_local(c.root);
 
-    c.models_root = env_str("OLLAMA_MODELS", j_str(local, "models_root"));
+    c.models_root = env_str("OLLAMA_MODELS", saved_env("OLLAMA_MODELS"));
+    if (c.models_root.empty()) {
+        c.models_root = j_str(local, "models_root");
+    }
     c.gguf_dir    = env_str("LLMASH_GGUF", j_str(local, "gguf_dir"));
     c.llama_bin   = find_llama_bin(c.root, j_str(local, "llama_bin"));
 
@@ -309,10 +336,17 @@ Config load_config() {
         }
     }
 
-    if (c.models_root.empty()) {
+    // a root that is not there falls back to an Ollama store that is
+    std::error_code ec;
+    if (c.models_root.empty() || !fs::is_directory(c.models_root, ec)) {
         const std::string home = env_str("USERPROFILE", env_str("HOME"));
-        if (!home.empty()) {
-            c.models_root = (fs::path(home) / ".ollama" / "models").string();
+        const std::string app  = env_str("LOCALAPPDATA");
+        for (const std::string & d : {home.empty() ? "" : (fs::path(home) / ".ollama" / "models").string(),
+                                      app.empty() ? "" : (fs::path(app) / "Ollama" / "models").string()}) {
+            if (c.models_root.empty() || (!d.empty() && fs::is_directory(fs::path(d) / "manifests", ec))) {
+                c.models_root = d;
+                break;
+            }
         }
     }
     return c;
