@@ -49,9 +49,11 @@ function Die  ($m) { Write-Host ''; Write-Host "  $m" -ForegroundColor Red; exit
 $Interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
 if (-not $Interactive -and $PSBoundParameters.Count -eq 0) {
     Write-Host @'
-Nothing here can answer the installer's questions, so it needs its options up front:
+Nothing here can answer the installer's questions, so it needs its options up front.
+Save it, then run it with the ones you want:
 
-  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1))) -NoOllama
+  irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 -OutFile install.ps1
+  powershell -ExecutionPolicy RemoteSigned -File .\install.ps1 -NoOllama
 
   -NoOllama         leave Ollama and the `ollama` command alone
   -Yes              close Ollama and take it off startup, so llmash gets port 11434
