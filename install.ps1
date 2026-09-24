@@ -48,7 +48,7 @@ function Die  ($m) { Write-Host ''; Write-Host "  $m" -ForegroundColor Red; exit
 # With no keyboard to answer on (SSH, a script), it installs only as spelled out.
 $Interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
 if (-not $Interactive -and $PSBoundParameters.Count -eq 0) {
-    Write-Host @'
+    [Console]::Error.WriteLine(@'
 Nothing here can answer the installer's questions, so it needs its options up front.
 Save it, then run it with the ones you want:
 
@@ -64,8 +64,8 @@ Save it, then run it with the ones you want:
   -Mbps <n>         cap the download at n megabits per second
   -Streams <n>      parallel connections per file (default 8)
   -Uninstall        remove llmash (models are kept)
-'@
-    return
+'@)
+    exit 2
 }
 
 function Native ($exe, [string[]]$a) {
