@@ -896,8 +896,11 @@ static void note_no_drafter(const json & info, const std::string & name) {
     m.path    = from.rfind("FROM ", 0) == 0 ? from.substr(5) : "";
     m.has_mtp = info.value("mtp", false);
     if (m.path.empty() || !clidoc::file_exists(m.path) || !has_own_drafter(m).empty()) return;
-    std::printf("%s%s has no MTP head or draft model; `%s pulldraft %s` looks for one%s\n", kDim, name.c_str(),
-                prog_name().c_str(), name.c_str(), kReset);
+    const std::string instead = spec_fallback().rfind("ngram", 0) == 0
+                                    ? ", so it drafts by n-gram lookup, which only speeds up text the chat already holds"
+                                    : "";
+    std::printf("%s%s has no MTP head or draft model%s. `%s pulldraft %s` looks for one.%s\n", kDim, name.c_str(),
+                instead.c_str(), prog_name().c_str(), name.c_str(), kReset);
 }
 
 std::string http_status_text(int code) {
