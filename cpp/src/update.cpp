@@ -122,7 +122,7 @@ const char * installer_name() {
 int run_installer(const std::string & script, const std::string & root, const std::string & tag) {
 #ifdef _WIN32
     std::wstring cmd = L"powershell -NoProfile -ExecutionPolicy RemoteSigned -File \"" + widen(script) +
-                       L"\" -Dir \"" + widen(root) + L"\" -Yes";
+                       L"\" -Dir \"" + widen(root) + L"\"";
     if (!tag.empty()) {
         cmd += L" -Tag \"" + widen(tag) + L"\"";
     }

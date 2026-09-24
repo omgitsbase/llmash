@@ -10,11 +10,14 @@
 #include <httplib.h>
 
 #include <windows.h>
+#include <iphlpapi.h>
 #include <shellapi.h>
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -368,6 +371,134 @@ void stop_server_process(const Config & cfg) {
     }
 }
 
+// -------------------------------------------------------- who has the port
+
+struct PortHolder {
+    unsigned long pid = 0;
+    std::string   name; // lower case, "" when it could not be read
+};
+
+// The process listening on the server's port, when it is not this install's server.
+PortHolder port_holder(const Config & cfg) {
+    PortHolder h;
+    for (const ULONG af : {AF_INET, AF_INET6}) {
+        ULONG size = 0;
+        GetExtendedTcpTable(nullptr, &size, FALSE, af, TCP_TABLE_OWNER_PID_LISTENER, 0);
+        std::vector<char> buf(size);
+        if (h.pid != 0 || size == 0 ||
+            GetExtendedTcpTable(buf.data(), &size, FALSE, af, TCP_TABLE_OWNER_PID_LISTENER, 0) != NO_ERROR) {
+            continue;
+        }
+        const auto match = [&](const auto * t) {
+            for (DWORD i = 0; i < t->dwNumEntries && h.pid == 0; i++) {
+                if (ntohs(static_cast<u_short>(t->table[i].dwLocalPort)) == cfg.port) {
+                    h.pid = t->table[i].dwOwningPid;
+                }
+            }
+        };
+        if (af == AF_INET) {
+            match(reinterpret_cast<const MIB_TCPTABLE_OWNER_PID *>(buf.data()));
+        } else {
+            match(reinterpret_cast<const MIB_TCP6TABLE_OWNER_PID *>(buf.data()));
+        }
+    }
+    if (h.pid == 0 || h.pid == read_pid_file(cfg.root)) {
+        return {};
+    }
+    for (const RunningProcess & p : running_processes()) {
+        if (p.pid == h.pid) {
+            h.name = p.name;
+        }
+    }
+    if (h.name == "llmash.exe" || h.name == "llmashw.exe") {
+        return {};
+    }
+    return h;
+}
+
+bool is_ollama(const PortHolder & h) { return h.name.rfind("ollama", 0) == 0; }
+
+std::string port_message(const Config & cfg, const PortHolder & h) {
+    const std::string who = is_ollama(h) ? "Ollama" : !h.name.empty() ? h.name : "process " + std::to_string(h.pid);
+    return "Port " + std::to_string(cfg.port) + " is in use by " + who;
+}
+
+// Stops Ollama and takes it off startup as the installer does, keeping its Run
+// entries for `llmash uninstall` to put back. "" when all of it went through.
+std::string disable_ollama(const Config & cfg) {
+    const PowerShellRun run = run_hidden_powershell(
+        "$saved = '" + ps_quote((fs::path(cfg.root) / "ollama-startup.json").string()) + "'\n" + R"PS(
+$ErrorActionPreference = 'SilentlyContinue'
+$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Ollama.lnk'
+if (Test-Path $lnk) { Move-Item $lnk "$lnk.disabled" -Force }
+$key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$runs = @()
+if (Test-Path $saved) { $runs = @(Get-Content $saved -Raw | ConvertFrom-Json) }
+foreach ($p in (Get-ItemProperty $key).PSObject.Properties) {
+    if ($p.Name -notlike 'PS*' -and "$($p.Value)" -match 'ollama') {
+        $runs += @{ name = $p.Name; value = "$($p.Value)" }
+        Remove-ItemProperty $key -Name $p.Name -Force
+    }
+}
+if ($runs.Count) { ConvertTo-Json -InputObject $runs -Depth 3 | Set-Content $saved -Encoding UTF8 }
+Get-Process -Name 'ollama app', 'ollama', 'ollama_llama_server' | Stop-Process -Force
+foreach ($s in @(Get-Service -Name 'ollama*')) {
+    try {
+        if ($s.Status -eq 'Running') { Stop-Service $s.Name -Force -ErrorAction Stop }
+        if ($s.StartType -eq 'Automatic') { Set-Service $s.Name -StartupType Manual -ErrorAction Stop }
+    } catch { "service $($s.Name)" }
+}
+)PS");
+    if (!run.started) {
+        return "could not run PowerShell to stop Ollama";
+    }
+    const size_t at = run.stdout_text.find("service ");
+    if (at != std::string::npos) {
+        const std::string name = trimmed(run.stdout_text.substr(at + 8));
+        return "Ollama also runs as the Windows service " + name +
+               ", and stopping it needs administrator rights. In an administrator PowerShell: Stop-Service " + name +
+               "; Set-Service " + name + " -StartupType Manual";
+    }
+    return "";
+}
+
+// The icon with a red dot in its lower right corner.
+HICON badge_icon(HICON base) {
+    const int  cx = GetSystemMetrics(SM_CXSMICON), cy = GetSystemMetrics(SM_CYSMICON);
+    BITMAPINFO bi{};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), cx, -cy, 1, 32, BI_RGB};
+    void *        bits  = nullptr;
+    const HDC     dc    = CreateCompatibleDC(nullptr);
+    const HBITMAP color = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!color) {
+        DeleteDC(dc);
+        return nullptr;
+    }
+    const HGDIOBJ old = SelectObject(dc, color);
+    DrawIconEx(dc, 0, 0, base, cx, cy, 0, nullptr, DI_NORMAL);
+    SelectObject(dc, old);
+    auto *       px = static_cast<uint32_t *>(bits);
+    const double r  = cx * 0.24, x0 = cx - r - 0.5, y0 = cy - r - 0.5;
+    for (int y = 0; y < cy; y++) {
+        for (int x = 0; x < cx; x++) {
+            const double d = std::hypot(x - x0, y - y0);
+            if (d <= r) {
+                px[y * cx + x] = 0xFFE0282E;
+            } else if (d <= r + 1.0) {
+                px[y * cx + x] = 0xFFFFFFFF;
+            }
+        }
+    }
+    std::vector<uint8_t> zeros(static_cast<size_t>((cx + 15) / 16 * 2 * cy), 0);
+    const HBITMAP        mask = CreateBitmap(cx, cy, 1, 1, zeros.data());
+    ICONINFO             ii{TRUE, 0, 0, mask, color};
+    const HICON          icon = CreateIconIndirect(&ii);
+    DeleteObject(mask);
+    DeleteObject(color);
+    DeleteDC(dc);
+    return icon;
+}
+
 // --------------------------------------------------------- start at login
 
 std::string tray_state_path(const Config & cfg) { return (fs::path(cfg.root) / "tray.json").string(); }
@@ -447,6 +578,7 @@ private:
     HWND             hwnd_             = nullptr;
     NOTIFYICONDATAW  nid_{};
     HICON            hicon_            = nullptr;
+    HICON            badged_           = nullptr; // hicon_ marked for a taken port
     bool             icon_added_       = false;
     bool             class_registered_ = false;
 
@@ -457,6 +589,9 @@ private:
     bool                    menu_open_ = false;
     POINT                   anchor_{};
     std::thread             watch_thread_;
+    std::mutex              port_mu_; // guards holder_ and port_msg_
+    PortHolder              holder_;
+    std::string             port_msg_;
 
     std::unordered_map<UINT_PTR, TrayAction> actions_;
     UINT_PTR                                 next_id_ = 0;
@@ -470,6 +605,8 @@ private:
     void quit();
     void watch();
     void retime(const std::string & name, int secs);
+    void check_port();
+    void free_port_from_ollama();
 
     friend LRESULT CALLBACK wnd_proc(HWND, UINT, WPARAM, LPARAM);
 };
@@ -525,6 +662,8 @@ bool TrayApp::create() {
             LoadImageW(nullptr, to_wide(icon_path).c_str(), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE));
     }
 
+    badged_ = hicon_ ? badge_icon(hicon_) : nullptr;
+
     nid_.cbSize           = sizeof(nid_);
     nid_.hWnd             = hwnd_;
     nid_.uID              = ICON_UID;
@@ -560,6 +699,10 @@ void TrayApp::teardown() {
     if (hicon_) {
         DestroyIcon(hicon_);
         hicon_ = nullptr;
+    }
+    if (badged_) {
+        DestroyIcon(badged_);
+        badged_ = nullptr;
     }
     if (hwnd_) {
         DestroyWindow(hwnd_);
@@ -620,9 +763,16 @@ void TrayApp::watch() {
     std::unique_lock<std::mutex> lk(mu_);
     while (!cv_.wait_for(lk, std::chrono::seconds(5), [this] { return closing_; })) {
         lk.unlock();
+        check_port();
+        bool taken;
         {
+            std::lock_guard<std::mutex> pl(port_mu_);
+            taken = !port_msg_.empty();
+        }
+        {
+            // the port is only claimed once nothing else holds it
             std::unique_lock<std::mutex> sl(server_lock_, std::try_to_lock);
-            if (sl.owns_lock() && !server_up() && !server_process_exists(cfg_)) {
+            if (sl.owns_lock() && !taken && !server_up() && !server_process_exists(cfg_)) {
                 start_server_process(cfg_);
             }
         }
@@ -634,6 +784,42 @@ void TrayApp::retime(const std::string & name, int secs) {
     const std::string e = set_keep_alive(name, secs);
     if (!e.empty()) {
         balloon(L"llmash", to_wide(name + ": " + e));
+    }
+}
+
+// Another program on the port: the icon gets its badge and the tooltip says who.
+void TrayApp::check_port() {
+    const PortHolder  h   = port_holder(cfg_);
+    const std::string msg = h.pid ? port_message(cfg_, h) : "";
+    {
+        std::lock_guard<std::mutex> lk(port_mu_);
+        holder_ = h;
+        if (msg == port_msg_) {
+            return;
+        }
+        port_msg_ = msg;
+    }
+    NOTIFYICONDATAW nid = nid_;
+    nid.uFlags          = NIF_ICON | NIF_TIP | (nid_.uFlags & NIF_GUID);
+    nid.hIcon           = (!msg.empty() && badged_) ? badged_ : hicon_;
+    copy_wide(nid.szTip, to_wide(msg.empty() ? "llmash" : "llmash · " + msg));
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
+// The click is the consent: Ollama is stopped and taken off startup, then
+// llmash takes the port.
+void TrayApp::free_port_from_ollama() {
+    const std::string e = disable_ollama(cfg_);
+    for (int i = 0; i < 20 && port_holder(cfg_).pid != 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    if (port_holder(cfg_).pid == 0) {
+        std::lock_guard<std::mutex> lk(server_lock_);
+        start_server_process(cfg_);
+    }
+    check_port();
+    if (!e.empty()) {
+        balloon(L"llmash", to_wide(e));
     }
 }
 
@@ -655,21 +841,36 @@ void TrayApp::show_menu(POINT pt) {
     menu_open_ = true;
     anchor_    = pt;
 
-    const bool         up = server_up();
-    std::vector<json>  models;
+    check_port();
+    PortHolder  holder;
+    std::string taken;
+    {
+        std::lock_guard<std::mutex> lk(port_mu_);
+        holder = holder_;
+        taken  = port_msg_;
+    }
+    const bool        up = taken.empty() && server_up();
+    std::vector<json> models;
     if (up) {
         models = loaded_models();
-    } else {
+    } else if (taken.empty()) {
         kick();
     }
     actions_.clear();
     next_id_ = 0;
 
     const HMENU menu = CreatePopupMenu();
-    add_item(menu, MF_STRING, L"llmash · " + std::wstring(up ? L"running" : L"starting…"), nullptr);
+    add_item(menu, MF_STRING,
+             L"llmash · " + std::wstring(!taken.empty() ? L"not running" : up ? L"running" : L"starting…"), nullptr);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    if (!models.empty()) {
+    if (!taken.empty()) {
+        add_item(menu, MF_STRING, to_wide(taken), nullptr);
+        if (is_ollama(holder)) {
+            const TrayAction fix{[this] { free_port_from_ollama(); }, true, false};
+            add_item(menu, MF_STRING, L"Disable Ollama", &fix);
+        }
+    } else if (!models.empty()) {
         for (const auto & m : models) {
             const std::string name   = j_str(m, "name");
             const bool         pinned = j_str(m, "expires_at").rfind("9999", 0) == 0;
@@ -775,6 +976,7 @@ int TrayApp::run() {
         return 1;
     }
     std::thread([this] {
+        check_port();
         std::lock_guard<std::mutex> lk(server_lock_);
         start_server_process(cfg_);
     }).detach();
