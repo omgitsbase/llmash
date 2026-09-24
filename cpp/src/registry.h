@@ -49,7 +49,9 @@ public:
     explicit Registry(Config cfg);
 
     std::vector<Model>   all();
-    std::optional<Model> find(const std::string & name);
+    // A name that matches no model exactly still finds the one model it can
+    // only mean; `loose` also lets a prefix or a fragment of the name do that.
+    std::optional<Model> find(const std::string & name, bool loose = true);
 
     std::vector<std::string> library_dirs() const;
     bool                     in_library(const std::string & path) const;

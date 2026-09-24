@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <chrono>
 #include <cmath>
 #include <iterator>
@@ -636,7 +637,7 @@ std::vector<Model> Registry::all() {
     return cache_;
 }
 
-std::optional<Model> Registry::find(const std::string & name) {
+std::optional<Model> Registry::find(const std::string & name, bool loose) {
     std::lock_guard<std::mutex> lock(mu_);
     if (!loaded_) {
         scan();
@@ -669,9 +670,63 @@ std::optional<Model> Registry::find(const std::string & name) {
             }
             only = m;
         }
-        return only;
+        if (only) {
+            return only;
+        }
+    } else if (std::optional<Model> m = exact(want)) {
+        return m;
     }
-    return exact(want);
+
+    // Case, separators, a wrong tag or the file's own name: whatever is left
+    // when those are ignored has to point at one model.
+    const auto key = [](const std::string & s) {
+        std::string k;
+        for (const char c : s) {
+            if (std::isalnum(static_cast<unsigned char>(c))) {
+                k.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+        }
+        return k;
+    };
+    const auto base = [](const std::string & n) { return n.substr(0, n.find(':')); };
+    std::string file = want;
+    if (ends_with(file, ".gguf")) {
+        file.resize(file.size() - 5);
+    }
+    const std::string whole = key(file), head = key(base(file));
+    // a tag of its own is a build asked for, which a different build is not
+    const std::string tag = file.find(':') == std::string::npos ? "" : file.substr(file.find(':') + 1);
+    const bool        any = tag.empty() || tag == "latest" || tag == "gguf";
+    const auto same_tag   = [&](const Model & m) { return any || key(m.name.substr(base(m.name).size())) == key(tag); };
+    const auto        one   = [this](const std::function<bool(const Model &)> & hit) -> std::optional<Model> {
+        std::optional<Model> only;
+        for (const auto & m : cache_) {
+            if (hit(m)) {
+                if (only) {
+                    return std::nullopt;
+                }
+                only = m;
+            }
+        }
+        return only;
+    };
+    if (head.empty()) {
+        return std::nullopt;
+    }
+    if (std::optional<Model> m = one([&](const Model & m) {
+            return key(m.name) == whole || key(stem_of(m.path)) == whole || (key(base(m.name)) == head && same_tag(m));
+        })) {
+        return m;
+    }
+    if (!loose) {
+        return std::nullopt;
+    }
+    if (std::optional<Model> m = one([&](const Model & m) { return key(base(m.name)).rfind(head, 0) == 0 && same_tag(m); })) {
+        return m;
+    }
+    return one([&](const Model & m) {
+        return key(m.name).find(whole) != std::string::npos || key(stem_of(m.path)).find(whole) != std::string::npos;
+    });
 }
 
 } // namespace llmash

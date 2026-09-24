@@ -2,6 +2,10 @@
 /dist/
 /cpp/build*/
 *.exe
+__pycache__/
+# build.py --here copies these beside the program
+/llmash.ico
+/llmash.png
 
 # a running install writes these next to the program
 /logs/

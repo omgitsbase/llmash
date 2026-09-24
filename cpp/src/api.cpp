@@ -288,7 +288,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     mount(srv, "/api/delete", [&cfg, &mgr, &reg, st](const Request & req, Response & res) {
         const json    body = read_body(req);
         std::string                name  = first_of(jstr(body, "model"), jstr(body, "name"));
-        const std::optional<Model> found = reg.find(name);
+        const std::optional<Model> found = reg.find(name, false);
         if (!found) {
             write_json(res, 404, error_obj("model not found"));
             return;
