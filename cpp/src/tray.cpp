@@ -426,40 +426,69 @@ std::string port_message(const Config & cfg, const PortHolder & h) {
 // Stops Ollama and takes it off startup as the installer does, keeping its Run
 // entries for `llmash uninstall` to put back. "" when all of it went through.
 std::string disable_ollama(const Config & cfg) {
-    const PowerShellRun run = run_hidden_powershell(
-        "$saved = '" + ps_quote((fs::path(cfg.root) / "ollama-startup.json").string()) + "'\n" + R"PS(
-$ErrorActionPreference = 'SilentlyContinue'
-$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Ollama.lnk'
-if (Test-Path $lnk) { Move-Item $lnk "$lnk.disabled" -Force }
-$key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$runs = @()
-if (Test-Path $saved) { $runs = @(Get-Content $saved -Raw | ConvertFrom-Json) }
-foreach ($p in (Get-ItemProperty $key).PSObject.Properties) {
-    if ($p.Name -notlike 'PS*' -and "$($p.Value)" -match 'ollama') {
-        $runs += @{ name = $p.Name; value = "$($p.Value)" }
-        Remove-ItemProperty $key -Name $p.Name -Force
+    std::error_code ec;
+    const fs::path  startup = fs::path(startup_shortcut_path()).parent_path();
+    if (fs::exists(startup / "Ollama.lnk", ec)) {
+        fs::rename(startup / "Ollama.lnk", startup / "Ollama.lnk.disabled", ec);
     }
-}
-if ($runs.Count) { ConvertTo-Json -InputObject $runs -Depth 3 | Set-Content $saved -Encoding UTF8 }
-Get-Process -Name 'ollama app', 'ollama', 'ollama_llama_server' | Stop-Process -Force
-foreach ($s in @(Get-Service -Name 'ollama*')) {
-    try {
-        if ($s.Status -eq 'Running') { Stop-Service $s.Name -Force -ErrorAction Stop }
-        if ($s.StartType -eq 'Automatic') { Set-Service $s.Name -StartupType Manual -ErrorAction Stop }
-    } catch { "service $($s.Name)" }
-}
-)PS");
-    if (!run.started) {
-        return "could not run PowerShell to stop Ollama";
+
+    HKEY run = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0,
+                      KEY_QUERY_VALUE | KEY_SET_VALUE, &run) == ERROR_SUCCESS) {
+        const std::string saved_path = (fs::path(cfg.root) / "ollama-startup.json").string();
+        std::ifstream     in(saved_path, std::ios::binary);
+        json saved = in ? json::parse(std::string(std::istreambuf_iterator<char>(in), {}), nullptr, false) : json();
+        if (!saved.is_array()) {
+            saved = json::array();
+        }
+        std::vector<std::wstring> names;
+        for (DWORD i = 0;; i++) {
+            wchar_t name[256];
+            wchar_t data[2048] = {};
+            DWORD   name_len = 256, data_len = sizeof(data) - sizeof(wchar_t), type = 0;
+            if (RegEnumValueW(run, i, name, &name_len, nullptr, &type, reinterpret_cast<BYTE *>(data), &data_len) !=
+                ERROR_SUCCESS) {
+                break;
+            }
+            const std::string value = to_utf8(data);
+            if ((type == REG_SZ || type == REG_EXPAND_SZ) && lower(value).find("ollama") != std::string::npos) {
+                saved.push_back({{"name", to_utf8(name)}, {"value", value}});
+                names.push_back(name);
+            }
+        }
+        if (!names.empty()) {
+            std::ofstream(saved_path, std::ios::binary | std::ios::trunc) << saved.dump(2);
+            for (const std::wstring & n : names) {
+                RegDeleteValueW(run, n.c_str());
+            }
+        }
+        RegCloseKey(run);
     }
-    const size_t at = run.stdout_text.find("service ");
-    if (at != std::string::npos) {
-        const std::string name = trimmed(run.stdout_text.substr(at + 8));
-        return "Ollama also runs as the Windows service " + name +
-               ", and stopping it needs administrator rights. In an administrator PowerShell: Stop-Service " + name +
-               "; Set-Service " + name + " -StartupType Manual";
+
+    // the app first, or it starts the server again
+    for (const char * image : {"ollama app.exe", "ollama.exe", "ollama_llama_server.exe"}) {
+        for (const RunningProcess & p : running_processes()) {
+            if (p.name == image) {
+                kill_pid(p.pid);
+            }
+        }
     }
-    return "";
+
+    std::string err;
+    if (const SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)) {
+        if (const SC_HANDLE svc = OpenServiceW(scm, L"Ollama", SERVICE_STOP | SERVICE_CHANGE_CONFIG)) {
+            SERVICE_STATUS st{};
+            ControlService(svc, SERVICE_CONTROL_STOP, &st);
+            ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_DEMAND_START, SERVICE_NO_CHANGE, nullptr, nullptr,
+                                 nullptr, nullptr, nullptr, nullptr, nullptr);
+            CloseServiceHandle(svc);
+        } else if (GetLastError() == ERROR_ACCESS_DENIED) {
+            err = "Ollama also runs as a Windows service, and stopping it needs administrator rights. In an "
+                  "administrator PowerShell: Stop-Service Ollama; Set-Service Ollama -StartupType Manual";
+        }
+        CloseServiceHandle(scm);
+    }
+    return err;
 }
 
 // The icon with a red dot in its lower right corner.
@@ -809,13 +838,15 @@ void TrayApp::check_port() {
 // The click is the consent: Ollama is stopped and taken off startup, then
 // llmash takes the port.
 void TrayApp::free_port_from_ollama() {
-    const std::string e = disable_ollama(cfg_);
+    std::string e = disable_ollama(cfg_);
     for (int i = 0; i < 20 && port_holder(cfg_).pid != 0; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     if (port_holder(cfg_).pid == 0) {
         std::lock_guard<std::mutex> lk(server_lock_);
         start_server_process(cfg_);
+    } else if (e.empty()) {
+        e = "Ollama is still on the port. It may be running as another user, and stopping it needs administrator rights.";
     }
     check_port();
     if (!e.empty()) {
