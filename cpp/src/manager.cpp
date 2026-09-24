@@ -841,6 +841,9 @@ std::vector<std::string> Instance::args() {
     if (!kv_on_gpu) {
         a.push_back("--no-kv-offload");  // the cache stays in system RAM, the weights on the card
     }
+    if (env_int("LLMASH_WORKER_VERBOSE", 0) != 0) {
+        a.insert(a.end(), {"-lv", "4"});  // everything llama-server does, into logs/<model>.log
+    }
 
     if (!plain_args_) {
         // only a build of ours is known to take these
@@ -1063,7 +1066,17 @@ std::string Instance::start() {
     }
     stop();
     mark_loaded();
-    err = "timed out waiting for llama-server";
+    stalled = true;
+    std::string last;
+    std::istringstream lines(tail_log(4000));
+    for (std::string l; std::getline(lines, l);) {
+        if (const std::string t = trim(l); !t.empty()) {
+            last = t;
+        }
+    }
+    err = "llama-server stopped making progress for " + std::to_string(static_cast<int>(kLoadStallTimeout / 60)) +
+          " minutes while loading" + (last.empty() ? "" : " (its log ends at \"" + last + "\")") + "; the log is " +
+          logfile;
     return err;
 }
 
@@ -1456,6 +1469,14 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         fresh = (inst == nullptr);
     }
     if (fresh) {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (const auto it = stalls_.find(m->name); it != stalls_.end() && it->second >= 2) {
+                err = m->name + " stalled twice while loading, so llmash will not start it again until the server "
+                                "restarts; the log is in " + (fs::path(cfg_.root) / "logs").string();
+                return nullptr;
+            }
+        }
         evict_for(need, m->name);
         auto       owned = std::make_unique<Instance>(*m, ctx, vision, &cfg_);
         owned->kv_type   = kv;
@@ -1470,13 +1491,23 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
     if (fresh) {
         if (const std::string start_err = inst->start(); !start_err.empty()) {
             inst->stop();
+            const bool stalled = inst->stalled;
+            int        stalls  = 0;
             {
                 std::lock_guard<std::mutex> lock(mu_);
                 erase_ptr(live_, inst);
+                if (stalled) {
+                    stalls = ++stalls_[m->name];
+                }
             }
             err = start_err;
+            if (stalls >= 2) {
+                err += ". It has stalled twice; llmash will not start it again until the server restarts";
+            }
             return nullptr;
         }
+        std::lock_guard<std::mutex> lock(mu_);
+        stalls_.erase(m->name);
     }
     if (!inst->ready()) {
         err = inst->err.empty() ? "model failed to load" : inst->err;

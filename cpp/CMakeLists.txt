@@ -104,7 +104,7 @@ if (WIN32)
         _CRT_SECURE_NO_WARNINGS
         UNICODE
         _UNICODE)
-    target_link_libraries(llmash_core PUBLIC shlwapi user32 shell32 advapi32 ws2_32 psapi winhttp)
+    target_link_libraries(llmash_core PUBLIC shlwapi user32 shell32 advapi32 ws2_32 psapi winhttp iphlpapi)
 endif()
 
 # Icon and version resource, one per executable so OriginalFilename is right.

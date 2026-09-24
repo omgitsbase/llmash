@@ -3,6 +3,7 @@
 #include "config.h"
 #include "registry.h"
 
+#include <map>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -48,6 +49,7 @@ public:
     std::string tune_note;
     std::string spec_note;
     std::string logfile;
+    bool        stalled = false; // gave up on a load that stopped moving
 
 private:
     Config * cfg_;
@@ -100,6 +102,7 @@ private:
     Registry *  reg_;
     std::mutex  mu_;
     std::vector<std::unique_ptr<Instance>> live_;
+    std::map<std::string, int> stalls_; // loads per model that stopped moving
 
     void   evict_for(double need_gb, const std::string & keep);
     void   drop_dead();

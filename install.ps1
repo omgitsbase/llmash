@@ -45,6 +45,27 @@ function Good ($m) { Write-Host "  $m" -ForegroundColor Green }
 function Warn ($m) { Write-Host "  $m" -ForegroundColor Yellow }
 function Die  ($m) { Write-Host ''; Write-Host "  $m" -ForegroundColor Red; exit 1 }
 
+# With no keyboard to answer on (SSH, a script), it installs only as spelled out.
+$Interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+if (-not $Interactive -and $PSBoundParameters.Count -eq 0) {
+    Write-Host @'
+Nothing here can answer the installer's questions, so it needs its options up front:
+
+  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1))) -NoOllama
+
+  -NoOllama         leave Ollama and the `ollama` command alone
+  -Yes              close Ollama and take it off startup, so llmash gets port 11434
+  -NoStartup        do not start llmash at login
+  -Runtime <kind>   llama.cpp build to fetch: auto (default), cuda, vulkan, cpu, none
+  -Dir <path>       install somewhere other than %ProgramData%\llmash
+  -Tag <tag>        take the program from that release
+  -Mbps <n>         cap the download at n megabits per second
+  -Streams <n>      parallel connections per file (default 8)
+  -Uninstall        remove llmash (models are kept)
+'@
+    return
+}
+
 function Native ($exe, [string[]]$a) {
     $ErrorActionPreference = 'Continue'
     $out = & $exe @a 2>&1
@@ -85,6 +106,27 @@ function Bar ($label, $done, $total, $rate) {
 
 if (-not (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)) {
     function Start-ThreadJob { param($ScriptBlock, $ArgumentList) Start-Job -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList }
+}
+
+# A release asset, checked against the digest GitHub records for it and
+# opened as a zip, with two more tries before giving up.
+function Fetch ($asset, $dest) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    for ($try = 1; ; $try++) {
+        try {
+            Download $asset.browser_download_url $dest $asset.name
+            if ("$($asset.digest)" -match '^sha256:([0-9a-f]{64})$' -and
+                (Get-FileHash $dest -Algorithm SHA256).Hash -ne $Matches[1]) {
+                throw "$($asset.name) does not match the release's SHA-256"
+            }
+            if ($dest -like '*.zip') { ([IO.Compression.ZipFile]::OpenRead($dest)).Dispose() }
+            return
+        } catch {
+            Remove-Item $dest -Force -EA SilentlyContinue
+            if ($try -ge 3) { throw }
+            Warn "$($_.Exception.Message); trying again"
+        }
+    }
 }
 
 function Download ($url, $dest, $label) {
@@ -170,7 +212,8 @@ function Download ($url, $dest, $label) {
     Remove-Item $progDir -Recurse -Force -EA SilentlyContinue
     if ($failed.Count) { throw "download of $label failed on $($failed.Count) stream(s)" }
     $got = (Get-Item $dest).Length
-    if ($total -gt 0 -and $got -lt $total) { throw "download of $label is incomplete: $got of $total bytes" }
+    # the file is sized up front, so its length says nothing; what the streams wrote does
+    if ($total -gt 0 -and $done -ne $total) { throw "download of $label is incomplete: $done of $total bytes" }
     $secs = [math]::Max(0.1, ((Get-Date) - $t0).TotalSeconds)
     Write-Host ("`r" + (Bar $label $got $got ($got / $secs)).TrimEnd())
 }
@@ -271,7 +314,7 @@ if ($Uninstall) {
 
 function Ask ($question) {
     if ($Yes) { return $true }
-    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+    if ($Interactive) {
         # Whatever is already in the keyboard buffer was typed at the shell,
         # not at this question — the newline that ran `irm ... | iex` among it.
         # Left there, each stray key was eaten as an answer, matched neither
@@ -290,12 +333,12 @@ function Ask ($question) {
             }
             Write-Host ''
         }
-        # A console that cannot be read must not spin.
-        Write-Host 'y'
-        return $true
+        # A console that cannot be read must not spin, nor take the change.
+        Write-Host 'n'
+        return $false
     }
-    Say "$question  assuming yes (nothing is reading the keyboard)"
-    return $true
+    Say "$question  no (nothing is reading the keyboard; -Yes answers yes)"
+    return $false
 }
 
 # ------------------------------------------------------------------ sources
@@ -349,11 +392,11 @@ if ($Tag) {
         Die "could not read the $Tag build of $Repo  ($($_.Exception.Message))"
     }
 }
-$url = ($rel.assets | Where-Object { $_.name -eq $Asset } | Select-Object -First 1).browser_download_url
-if (-not $url) { Die "release $($rel.tag_name) has no $Asset" }
+$progAsset = $rel.assets | Where-Object { $_.name -eq $Asset } | Select-Object -First 1
+if (-not $progAsset) { Die "release $($rel.tag_name) has no $Asset" }
 if ($rel.name -and $rel.name -ne $rel.tag_name) { Say "release $($rel.tag_name) ($($rel.name))" } else { Say "release $($rel.tag_name)" }
 try {
-    Download $url $zip $Asset
+    Fetch $progAsset $zip
 } catch {
     Die "download failed  ($($_.Exception.Message))"
 }
@@ -483,27 +526,33 @@ if ($Runtime -eq 'none') {
         $total = $asset.size + $(if ($cudart) { $cudart.size } else { 0 })
         $what = if ($own) { 'llmash runtime' } else { 'llama.cpp' }
         Say "$what $($rel.tag_name), about $(MB $total) MB"
-        if (Test-Path $RtDir) { Remove-Item $RtDir -Recurse -Force }
-        New-Item -ItemType Directory -Force $RtDir | Out-Null
+        # the runtime in place stays until the new one is downloaded, checked and unpacked
+        $stage = "$RtDir.new"
+        if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+        New-Item -ItemType Directory -Force $stage | Out-Null
         try {
             $files = @($asset, $cudart) | Where-Object { $_ }
             foreach ($a in $files) {
-                Download $a.browser_download_url (Join-Path $env:TEMP $a.name) $a.name
+                Fetch $a (Join-Path $env:TEMP $a.name)
             }
             foreach ($a in $files) {
                 $tmp = Join-Path $env:TEMP $a.name
-                Expand-Archive -Path $tmp -DestinationPath $RtDir -Force
-                Get-ChildItem $RtDir -Recurse -File -EA SilentlyContinue | Unblock-File -EA SilentlyContinue
+                Expand-Archive -Path $tmp -DestinationPath $stage -Force
                 Remove-Item $tmp -Force
             }
-            Write-RuntimeNotice $RtDir
-            if (-not (Test-Path $RtExe)) {
-                $inner = Get-ChildItem $RtDir -Recurse -Filter 'llama-server.exe' | Select-Object -First 1
-                if ($inner) {
-                    Get-ChildItem $inner.DirectoryName | Move-Item -Destination $RtDir -Force
-                    Get-ChildItem $RtDir -Directory | Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File) } | Remove-Item -Recurse -Force
-                }
+            $inner = Get-ChildItem $stage -Recurse -Filter 'llama-server.exe' | Select-Object -First 1
+            if (-not $inner) { throw 'the download did not contain llama-server.exe' }
+            if ($inner.DirectoryName -ne $stage) {
+                Get-ChildItem $inner.DirectoryName | Move-Item -Destination $stage -Force
+                Get-ChildItem $stage -Directory | Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File) } | Remove-Item -Recurse -Force
             }
+            Get-ChildItem $stage -Recurse -File -EA SilentlyContinue | Unblock-File -EA SilentlyContinue
+            Write-RuntimeNotice $stage
+            $old = "$RtDir.old"
+            if (Test-Path $old) { Remove-Item $old -Recurse -Force }
+            if (Test-Path $RtDir) { Rename-Item $RtDir $old }
+            Rename-Item $stage $RtDir
+            Remove-Item $old -Recurse -Force -EA SilentlyContinue
             if (Test-Path $RtExe) {
                 $rtInfo = @{ tag = $rel.tag_name; kind = $kind; asset = $asset.name; own = [bool]$own }
                 Good "$what $($rel.tag_name) ($kind) in $RtDir"
@@ -511,8 +560,10 @@ if ($Runtime -eq 'none') {
                 Warn 'the download did not contain llama-server.exe'
             }
         } catch {
+            Remove-Item $stage -Recurse -Force -EA SilentlyContinue
             Warn "download failed ($($_.Exception.Message))"
-            Say  "get $($asset.name) from https://github.com/ggml-org/llama.cpp/releases and unzip it into  $RtDir"
+            if (Test-Path $RtExe) { Say 'kept the runtime already here' }
+            else { Say "get $($asset.name) from https://github.com/ggml-org/llama.cpp/releases and unzip it into  $RtDir" }
         }
     }
 }

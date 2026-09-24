@@ -197,6 +197,7 @@ Environment Variables:
       LLMASH_LOAD_MODE             How weights reach VRAM: dio or mmap (default "dio")
       LLMASH_VRAM_GB               VRAM budget for resident models (default 80)
       LLMASH_PIN                   Comma-separated models never evicted
+      LLMASH_WORKER_VERBOSE        1: each model's llama-server logs in full, to logs\<model>.log
       LLAMA_BIN                     Path to llama-server.exe
 )HELP";
 

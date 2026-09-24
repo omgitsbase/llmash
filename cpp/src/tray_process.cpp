@@ -41,7 +41,8 @@ PowerShellRun run_hidden_powershell(const std::string & script) {
                            "Hidden",     "-Command",    script.c_str(),   nullptr};
 
     Subprocess sub;
-    if (!sub.create(argv, subprocess_option_no_window | subprocess_option_search_user_path)) {
+    if (!sub.create(argv, subprocess_option_no_window | subprocess_option_search_user_path |
+                            subprocess_option_inherit_environment)) {
         return result;
     }
     result.started = true;
