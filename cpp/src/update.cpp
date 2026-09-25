@@ -17,6 +17,7 @@
 #endif
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -140,15 +141,28 @@ int run_installer(const std::string & script, const std::string & root, const st
     return static_cast<int>(code);
 #else
     (void) tag;  // the edge build is Windows-only, so the release is what the script fetches
-    const pid_t child = ::fork();
+    // install.sh puts the program in <prefix>/lib/llmash, and its --user prefix is ~/.local
+    const fs::path lib = fs::path(root).lexically_normal();
+    if (lib.filename() != "llmash" || lib.parent_path().filename() != "lib") {
+        std::printf("%s is not where install.sh puts llmash; run the installer yourself:\n\n"
+                    "  curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sh\n",
+                    root.c_str(), clidoc::repo_slug().c_str());
+        return 1;
+    }
+    std::string  prefix = lib.parent_path().parent_path().string();
+    const char * home   = std::getenv("HOME");
+    const bool   user   = home != nullptr && same_dir(prefix, (fs::path(home) / ".local").string());
+    const pid_t  child  = ::fork();
     if (child < 0) {
         return -1;
     }
     if (child == 0) {
-        std::string s = script, d = root;
-        char * argv[] = {const_cast<char *>("sh"), s.data(), const_cast<char *>("--dir"), d.data(),
-                         const_cast<char *>("--yes"), nullptr};
-        ::execvp("sh", argv);
+        std::string s = script;
+        char *      argv_user[] = {const_cast<char *>("sh"), s.data(), const_cast<char *>("--user"),
+                                   const_cast<char *>("--yes"), nullptr};
+        char *      argv_dir[]  = {const_cast<char *>("sh"), s.data(), const_cast<char *>("--dir"), prefix.data(),
+                                   const_cast<char *>("--yes"), nullptr};
+        ::execvp("sh", user ? argv_user : argv_dir);
         ::_exit(127);
     }
     int status = 0;
