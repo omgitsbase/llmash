@@ -4,6 +4,7 @@
 #include "cli_commands.h"
 
 #include "shortcut.h"
+#include "runtime_host.h"
 #include "winproc.h"
 #include "tray_internal.h"
 
@@ -358,7 +359,7 @@ bool start_server_process(const Config & cfg) {
 void stop_server_process(const Config & cfg) {
     const unsigned long pid = read_pid_file(cfg.root);
     if (pid_alive(pid)) {
-        kill_tree(pid, "llama-server.exe");
+        kill_tree(pid, runtime_process_names());
     }
     remove_pid_file(cfg.root);
     using clock   = std::chrono::steady_clock;

@@ -2,6 +2,7 @@
 
 #include "manager.h"
 #include "platform.h"
+#include "runtime_host.h"
 #include "winproc.h"
 
 #include "version.h"
@@ -135,7 +136,7 @@ void cmd_doctor() {
         bool                serve_up   = pid_alive(server_pid);
         {
             for (const RunningProcess & p : processes_under(cfg.root)) {
-                if (p.name == llmash_daemon_exe() && p.pid != server_pid) {
+                if (p.name == llmash_daemon_exe() && p.pid != server_pid && !is_runtime_host(p.pid)) {
                     tray_up = true;
                 }
             }

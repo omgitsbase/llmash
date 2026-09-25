@@ -19,6 +19,7 @@ std::vector<RunningProcess> processes_under(const std::string & dir);
 
 // Kills `pid` and any process named `child_name` whose parent it is.
 int  kill_tree(unsigned long pid, const std::string & child_name);
+int  kill_tree(unsigned long pid, const std::vector<std::string> & child_names);
 bool kill_pid(unsigned long pid);
 bool pid_alive(unsigned long pid, const std::string & expect_name = "");
 

@@ -134,10 +134,15 @@ std::vector<RunningProcess> processes_under(const std::string & dir) {
 }
 
 int kill_tree(unsigned long pid, const std::string & child_name) {
+    return kill_tree(pid, std::vector<std::string>{child_name});
+}
+
+int kill_tree(unsigned long pid, const std::vector<std::string> & child_names) {
     int killed = 0;
-    if (pid != 0 && !child_name.empty()) {
+    if (pid != 0 && !child_names.empty()) {
         for (const RunningProcess & p : running_processes()) {
-            if (p.ppid == pid && p.name == child_name && kill_pid(p.pid)) {
+            if (p.ppid == pid && std::find(child_names.begin(), child_names.end(), p.name) != child_names.end() &&
+                kill_pid(p.pid)) {
                 killed++;
             }
         }
