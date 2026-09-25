@@ -916,6 +916,10 @@ std::vector<std::string> Instance::args() {
     const std::string mtp        = !model.mtp_path.empty() ? model.mtp_path : sidecar_path(model.path, ".mtp.gguf");
     const std::string eagle3     = sidecar_path(model.path, ".eagle3.gguf");
     const std::string dspark     = dspark_path(model.path);
+    const std::string dflash     = dflash_path(model.path);
+    // DFlash drafts a block of 7 and pays off most on code and structured output; a model's own
+    // MTP head wins on prose, so it is the default and LLMASH_PREFER_DFLASH=1 switches
+    const bool        use_dflash = !dflash.empty() && file_exists(dflash) && (!model.has_mtp || env_int("LLMASH_PREFER_DFLASH", 0) != 0);
     const std::string draft      = sidecar_path(model.path, ".draft.gguf");
     const std::string fallback   = env_str("LLMASH_SPEC_FALLBACK", "ngram-mod");
     // LLMASH_SPEC_STACK=1 offers the lookup drafter beside the model's own
@@ -927,8 +931,13 @@ std::vector<std::string> Instance::args() {
     const auto with_lookup = [&](const char * primary) {
         return stack ? fallback + "," + primary : std::string(primary);
     };
-    if (model.has_mtp) {
+    if (use_dflash) {
+        a.insert(a.end(), {"--spec-type", with_lookup("draft-dflash"), "--model-draft", dflash, "-ngld", "999",
+                           "--spec-draft-n-max", std::to_string(env_int("LLMASH_DFLASH_DRAFT", 7))});
+        spec_note = "dflash";
+    } else if (model.has_mtp) {
         a.insert(a.end(), {"--spec-type", with_lookup("draft-mtp"), "--spec-draft-n-max", std::to_string(mtp_draft)});
+        spec_note = "mtp (the model's own head)";
     } else if (!mtp.empty() && file_exists(mtp)) {
         a.insert(a.end(), {"--spec-type", with_lookup("draft-mtp"), "--model-draft", mtp, "-ngld", "999",
                            "--spec-draft-n-max", std::to_string(mtp_draft)});

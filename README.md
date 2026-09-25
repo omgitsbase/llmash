@@ -266,6 +266,24 @@ For a model with no head, `pulldraft` finds a drafter on Hugging Face, checked
 against the weights before anything downloads. gemma-4 26B-A4B went from 244
 to 342 tok/s on a fetched EAGLE-3 head.
 
+On Qwen3.5, 3.6 and 3.8 models the MTP head drafts through a smaller copy of
+the LM head, built when the model loads: the head's rows for the 65,536 tokens
+most frequent in English text and code (262 MiB on the 27B). Verification
+still reads the full head, so the output is the model's own; each drafted token
+reads a quarter of the head instead. Qwen3.8-27B decodes 5-10% faster and
+Qwen3.6-35B-A3B 5-7%, with nearly the same acceptance. Most of a Chinese, Japanese,
+Korean or Russian text is outside that list, so while more than 15% of recent
+tokens are, the drafts go back to the full head, and those languages run as
+fast as before. `LLAMA_MTP_FULL_HEAD=1` turns the smaller head off.
+
+A DFlash drafter (a block-diffusion model that drafts seven tokens at once)
+beside a model with no MTP head is used for it: `<stem>.dflash.gguf`, or any
+file with `dflash` in its name trained for the base model the target's header
+names, so one drafter serves every quantization of a model. With an MTP head
+too, the head stays the default, since it drafts prose faster;
+`LLMASH_PREFER_DFLASH=1` switches, which pays on code and structured output
+(Qwen3.8-27B JSON 216 -> 247 tok/s).
+
 ## Kernels
 
 Decode on this card is launch-bound: a graph is 923 kernel launches at about
@@ -313,6 +331,8 @@ variable wins over the file.
 | `LLMASH_PARALLEL` | server slots (default 1; raise it to serve several at once) |
 | `LLMASH_PIN` | comma-separated models never evicted |
 | `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`) |
+| `LLMASH_PREFER_DFLASH` | draft with a DFlash drafter beside the model even when it has an MTP head |
+| `LLMASH_DFLASH_DRAFT` | tokens a DFlash drafter drafts per round (default 7) |
 | `LLMASH_TUNE_OFF` | disable individual tuning: `cache-reuse,cache-ram,batch,prio` |
 | `LLMASH_RCO_THREADS` | cores a custom build may quantize on (default: all but one) |
 | `LLMASH_RCO_SAMPLE` | weights per tensor the bit-width search measures (default 131072; lower is faster and noisier) |

@@ -236,6 +236,34 @@ std::string normalise(const std::string & s) {
     return out;
 }
 
+// A DFlash drafter is trained against a base model and drafts for any quantisation of it, so
+// besides <stem>.dflash.gguf it is matched by the base model the target's header names.
+std::string dflash_path(const std::string & gguf) {
+    if (const std::string direct = sidecar_named(gguf, ".dflash.gguf"); !direct.empty()) {
+        return direct;
+    }
+    const std::string want = normalise(read_repo_meta(gguf).bm_name);
+    if (want.empty()) {
+        return "";
+    }
+    static const std::regex tag(R"([-_.]?dflash\d*)", std::regex::icase);
+    std::error_code          ec;
+    std::vector<std::string> cands;
+    for (auto it = fs::directory_iterator(fs::path(gguf).parent_path(), ec); !ec && it != fs::directory_iterator(); ++it) {
+        const std::string name = lower(it->path().filename().string());
+        if (name.find("dflash") != std::string::npos && ends_with(name, ".gguf")) {
+            cands.push_back(it->path().string());
+        }
+    }
+    std::sort(cands.begin(), cands.end());
+    for (const auto & c : cands) {
+        if (normalise(std::regex_replace(pair_stem(strip_shard(stem_of(c))), tag, "")) == want) {
+            return c;
+        }
+    }
+    return "";
+}
+
 std::string model_stem(const Model & m) {
     const RepoMeta meta = read_repo_meta(m.path);
 
