@@ -195,7 +195,7 @@ std::string find_installer(const Config & cfg) {
 
 // Failing that, fetch it from the release being installed. An install that
 // cannot update itself is worse than one that downloads 30 KB to do it.
-std::string fetch_installer(const clidoc::Release & rel) {
+std::string fetch_installer(const clidoc::Release & rel, std::string & err) {
     std::string url;
     for (const auto & a : rel.assets) {
         if (a.first == installer_name()) {
@@ -208,7 +208,6 @@ std::string fetch_installer(const clidoc::Release & rel) {
     }
     std::error_code ec;
     const fs::path  dest = fs::temp_directory_path(ec) / (std::string("llmash-") + installer_name());
-    std::string     err;
     if (!fetch_blob(url, dest.string(), 0, [](int64_t) {}, err)) {
         return "";
     }
@@ -294,11 +293,15 @@ int cmd_update(const std::vector<std::string> & args, const Config & cfg) {
 
     // the release's own installer, so what runs matches what it installs;
     // the copy beside the program is the fallback when GitHub will not serve it
-    std::string script = fetch_installer(rel);
+    std::string fetch_err;
+    std::string script = fetch_installer(rel, fetch_err);
     if (script.empty()) {
         script = find_installer(cfg);
     }
     if (script.empty()) {
+        if (!fetch_err.empty()) {
+            std::printf("the installer did not download: %s\n", fetch_err.c_str());
+        }
 #ifdef _WIN32
         std::printf("could not get the installer; run this instead:\n\n"
                     "  irm https://raw.githubusercontent.com/%s/main/install.ps1 | iex\n",
