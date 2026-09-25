@@ -1,9 +1,11 @@
 # The Linux build and its tests. Nothing here needs a GPU: it compiles the
 # program and runs the suites, which is what a Linux port has to pass first.
-FROM debian:bookworm-slim
+# Ubuntu 22.04's glibc (2.35) is the oldest the release runs on, so it is built
+# against that one, as the CUDA runtime is.
+FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake ca-certificates libcurl4-openssl-dev \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential cmake ca-certificates curl libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

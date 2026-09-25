@@ -226,7 +226,10 @@ int cmd_serve(const std::vector<std::string> & args) {
     }
     std::error_code ec;
     if (cfg.llama_bin.empty() || !fs::is_regular_file(cfg.llama_bin, ec)) {
-        logf("!! llama-server not found at %s", cfg.llama_bin.c_str());
+        const std::string expected = cfg.llama_bin.empty()
+                                         ? (fs::path(cfg.root) / "runtime" / llama_server_exe()).string()
+                                         : cfg.llama_bin;
+        logf("!! llama-server not found at %s", expected.c_str());
         logf("   put a llama.cpp build in that runtime folder, set LLAMA_BIN, or re-run the installer, which "
              "downloads one for this machine");
         return 1;

@@ -131,9 +131,11 @@ bool run_capture(const std::vector<std::string> & argv, int timeout_ms, std::str
     cargv.push_back(nullptr);
 
     ScopedSubprocess sp;
+    // a bare name like nvidia-smi is looked up on PATH; posix_spawn does not do that by itself, and without it
+    // Linux never learnt its VRAM and ran every model without speculation or backend sampling
     const int        options = subprocess_option_no_window | subprocess_option_inherit_environment |
                         subprocess_option_combined_stdout_stderr | subprocess_option_enable_async |
-                        subprocess_option_enable_async_no_wait;
+                        subprocess_option_enable_async_no_wait | subprocess_option_search_user_path;
     if (subprocess_create_ex(cargv.data(), options, nullptr, nullptr, &sp.proc) != 0) {
         return false;
     }
