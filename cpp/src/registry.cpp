@@ -163,7 +163,7 @@ bool is_sidecar(const std::string & stem) {
     if (s.find("mmproj") != std::string::npos) {
         return true;
     }
-    for (const char * tag : {"eagle3", "dspark", "draftmodel", "speculator"}) {
+    for (const char * tag : {"eagle3", "dspark", "dflash", "draftmodel", "speculator"}) {
         if (s.find(tag) != std::string::npos) {
             return true;
         }

@@ -101,6 +101,9 @@ std::string sidecar_path(const std::string & gguf, const char * suffix);
 // A DSpark drafter beside the weights, matched by name with the
 // quantisation ignored, or "".
 std::string dspark_path(const std::string & gguf);
+// A DFlash drafter beside the weights, as <stem>.dflash.gguf or trained for the base model the
+// target's header names, or "".
+std::string dflash_path(const std::string & gguf);
 
 // "an MTP head" / "a DSpark drafter" / "a draft model" / "an EAGLE-3
 // drafter", or "" when none is installed.

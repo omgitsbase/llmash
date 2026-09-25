@@ -29,6 +29,8 @@ def main() -> int:
         for n in NEEDED:
             z.write(src / n, n)
         z.writestr("RUNTIME.txt", stamp + "\n")
+    # the release's own RUNTIME.txt asset, which `llmash update` compares with the installed one
+    (OUT.parent / "RUNTIME.txt").write_text(stamp + "\n", encoding="utf-8", newline="\n")
     size = sum((src / n).stat().st_size for n in NEEDED)
     print(f"{stamp}: {size / 1e6:.0f} MB unpacked, {OUT.stat().st_size / 1e6:.0f} MB zipped -> {OUT}")
     return 0
