@@ -1,6 +1,7 @@
 #include "cli_win.h"
 #include "cmd_models.h"
 #include "platform.h"
+#include "runtime_host.h"
 
 #include "winproc.h"
 
@@ -148,7 +149,7 @@ bool tray_server_up() {
 void stop_server_process(const std::string & root) {
     const unsigned long pid = read_pid_file(root);
     if (pid_alive(pid)) {
-        kill_tree(pid, llama_server_exe());
+        kill_tree(pid, runtime_process_names());
     }
     remove_pid_file(root);
     for (int waited = 0; waited < 15000; waited += 500) {

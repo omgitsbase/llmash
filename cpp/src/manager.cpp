@@ -5,6 +5,7 @@
 #include "draft.h"
 #include "log.h"
 #include "platform.h"
+#include "runtime_host.h"
 
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0A00
@@ -164,36 +165,38 @@ std::mutex g_vram_mu;
 double     g_vram_at    = -1e9;
 double     g_vram_free  = 0;
 double     g_vram_total = 0;
+double     g_vram_card  = 0;
 bool       g_vram_known = false;
 
 void read_vram_locked() {
     if (now_f() - g_vram_at < 2.0) {
         return;
     }
-    double free = 0, total = 0;
+    double free = 0, total = 0, card = 0;
     bool   known = false;
     if (const double v = env_float("LLMASH_VRAM_GB", 0); v > 0) {
-        free = total = v, known = true;
+        free = total = card = v, known = true;
     } else {
         std::string out;
         if (run_capture({"nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"}, 8000,
                         out)) {
             std::istringstream iss(out);
             std::string        line;
-            if (std::getline(iss, line)) {
+            while (std::getline(iss, line)) {
                 const size_t comma = line.find(',');
+                if (comma == std::string::npos) {
+                    continue;
+                }
                 try {
-                    free  = std::stod(trim(line.substr(0, comma))) / 1024.0;
-                    known = true;
-                    if (comma != std::string::npos) {
-                        total = std::stod(trim(line.substr(comma + 1))) / 1024.0;
-                    }
+                    const double f = std::stod(trim(line.substr(0, comma))) / 1024.0;
+                    const double t = std::stod(trim(line.substr(comma + 1))) / 1024.0;
+                    free += f, total += t, card = std::max(card, t), known = true;
                 } catch (const std::exception &) {
                 }
             }
         }
     }
-    g_vram_at = now_f(), g_vram_free = free, g_vram_total = total, g_vram_known = known;
+    g_vram_at = now_f(), g_vram_free = free, g_vram_total = total, g_vram_card = card, g_vram_known = known;
 }
 
 std::pair<double, bool> free_vram_gb() {
@@ -208,6 +211,19 @@ double total_vram_gb() {
     std::lock_guard<std::mutex> lock(g_vram_mu);
     read_vram_locked();
     return g_vram_total;
+}
+
+double largest_card_gb() {
+    std::lock_guard<std::mutex> lock(g_vram_mu);
+    read_vram_locked();
+    return g_vram_card;
+}
+
+double vram_headroom_gb() {
+    if (const double set = env_float("LLMASH_VRAM_HEADROOM", 0); set > 0) {
+        return set;
+    }
+    return std::clamp(total_vram_gb() * 0.08, 1.0, 6.0);
 }
 
 // What one process may hold on the card. Under WDDM every video allocation is
@@ -850,6 +866,8 @@ std::vector<std::string> Instance::args() {
         a.insert(a.end(), {"--load-mode", load_mode});
         if (free_vram_gb().second) {
             a.push_back("-bs");
+            // llama.cpp's default of 1 GB per card sends a layer of a 27B to RAM on 8 GB + 12 GB
+            a.insert(a.end(), {"-fitt", std::to_string(env_int("LLMASH_FIT_MARGIN_MB", 512))});
         }
     }
 
@@ -977,9 +995,10 @@ std::string Instance::start() {
         }
         log_line(model.name + " args: " + line);
     }
+    const std::vector<std::string> run = hosted_command(argv);
     std::vector<const char *>      cargv;
-    cargv.reserve(argv.size() + 1);
-    for (const auto & s : argv) {
+    cargv.reserve(run.size() + 1);
+    for (const auto & s : run) {
         cargv.push_back(s.c_str());
     }
     cargv.push_back(nullptr);
@@ -1194,7 +1213,7 @@ void Manager::evict_for(double need_gb, const std::string & keep) {
         }
     }
     const double total = total_vram_gb();
-    double vram_budget = env_float("LLMASH_VRAM_GB", total > 0 ? total - env_float("LLMASH_VRAM_HEADROOM", 6) : 80);
+    double vram_budget = env_float("LLMASH_VRAM_GB", total > 0 ? total - vram_headroom_gb() : 80);
     // The OS ceiling binds well before the card does, so room measured against
     // the card alone says a load will fit when it cannot.
     if (const double budget = gpu_process_budget_gb(cfg_.gpu_budget_gb); budget > 0) {
@@ -1266,12 +1285,12 @@ Manager::Fit Manager::fit_report(const Model & m) {
         }
     }
     f.total_gb   = total_vram_gb();
-    f.compute_gb = f.total_gb > 24 ? 1.5 : 0.8;  // a micro-batch of logits and the attention scratch
+    f.compute_gb = largest_card_gb() > 24 ? 1.5 : 0.8;  // a micro-batch of logits and the attention scratch
     return f;
 }
 
 double Manager::fit_room(const Fit & f) const {
-    double room = f.free_gb - env_float("LLMASH_VRAM_HEADROOM", 6);
+    double room = f.free_gb - vram_headroom_gb();
     if (const double budget = gpu_process_budget_gb(cfg_.gpu_budget_gb); budget > 0) {
         room = std::min(room, budget - 1.0);  // one process holds the model and its cache
     }
@@ -1332,8 +1351,11 @@ int Manager::v1_ctx(const Model & m) {
     if (!env_str("LLMASH_V1_CTX").empty()) {
         return env_int("LLMASH_V1_CTX", 32768);
     }
+    if (m.num_ctx > 0) {
+        return m.num_ctx;
+    }
     const int native = m.ctx_train > 0 ? m.ctx_train : (cfg_.ctx > 0 ? cfg_.ctx : 8192);
-    int       ctx    = ctx_ceiling(cfg_, m.name, native);
+    int       ctx    = std::min(cfg_.ctx > 0 ? cfg_.ctx : 8192, ctx_ceiling(cfg_, m.name, native));
     if (cfg_.ctx_cap > 0 && ctx > cfg_.ctx_cap) {
         ctx = cfg_.ctx_cap;
     }
@@ -1404,8 +1426,16 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         }
     }
     const std::string kv = p.kv_type.empty() ? cfg_.kv_type : lower(p.kv_type);
+    // only the server's default is lowered to fit; a chosen ctx is left to llama.cpp's fit
+    bool chosen = ctx > 0;
     if (ctx <= 0) {
-        ctx = cfg_.ctx > 0 ? cfg_.ctx : 8192;
+        if (const auto it = cfg_.fit.find(m->name); it != cfg_.fit.end() && it->second.ctx > 0) {
+            ctx = it->second.ctx, chosen = true;
+        } else if (m->num_ctx > 0) {
+            ctx = m->num_ctx, chosen = true;
+        } else {
+            ctx = cfg_.ctx > 0 ? cfg_.ctx : 8192;
+        }
     }
     if (cfg_.ctx_cap > 0 && ctx > cfg_.ctx_cap) {
         log_line(name + ": ctx " + std::to_string(ctx) + " asked, " + std::to_string(cfg_.ctx_cap) + " is the server's limit");
@@ -1440,7 +1470,9 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         if (ctx > ceiling) {
             ctx = ceiling;
         }
-        ctx = fit_ctx(*m, ctx, prefs);
+        if (!chosen) {
+            ctx = fit_ctx(*m, ctx, prefs);
+        }
     }
     if (ctx > native) {
         char buf[96];
@@ -1593,8 +1625,15 @@ int ubatch_for(int ctx) {
     return ctx > 524288 ? 512 : ctx > 262144 ? 1024 : 2048;
 }
 
+int ubatch_in_use(int ctx) {
+    if (const int ub = env_int("LLMASH_UBATCH", 0); ub > 0) {
+        return ub;
+    }
+    return free_vram_gb().second && largest_card_gb() > 24 ? ubatch_for(ctx) : 512;
+}
+
 double scratch_gb(int ctx) {
-    return 0.5 + static_cast<double>(ubatch_for(ctx)) * ctx * 2.0 / static_cast<double>(1ull << 30);
+    return 0.5 + static_cast<double>(ubatch_in_use(ctx)) * ctx * 2.0 / static_cast<double>(1ull << 30);
 }
 
 Tuning auto_tune(int ctx) {
@@ -1625,7 +1664,7 @@ Tuning auto_tune(int ctx) {
         int        ub = env_int("LLMASH_UBATCH", 0);
         int        b  = env_int("LLMASH_BATCH", 0);
         const auto fv = free_vram_gb();
-        if (ub == 0 && fv.second && std::max(total_vram_gb(), fv.first) > 24) {
+        if (ub == 0 && fv.second && largest_card_gb() > 24) {
             ub = ubatch_for(ctx);
             b  = ub * 2;
         }

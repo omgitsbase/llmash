@@ -145,6 +145,14 @@ std::string params_lines(const std::string & text) {
     return out;
 }
 
+int params_num_ctx(const std::string & text) {
+    const json j = json::parse(text, nullptr, false);
+    if (!j.is_object() || !j.contains("num_ctx") || !j["num_ctx"].is_number()) {
+        return 0;
+    }
+    return std::max(0, j["num_ctx"].get<int>());
+}
+
 std::string stem_of(const std::string & path) {
     return fs::path(path).stem().string();
 }
@@ -570,7 +578,11 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
             mo.tmpl = g.chat_template;
         }
         mo.system       = system_blob.empty() ? "" : read_text_file(blobs / system_blob);
-        mo.params_text  = params_blob.empty() ? "" : params_lines(read_text_file(blobs / params_blob));
+        if (!params_blob.empty()) {
+            const std::string raw = read_text_file(blobs / params_blob);
+            mo.params_text        = params_lines(raw);
+            mo.num_ctx            = params_num_ctx(raw);
+        }
         mo.modified = mtime_unix(it->path());
         mo.ctx_train    = static_cast<int>(g.ctx_train);
         mo.experts      = g.experts;

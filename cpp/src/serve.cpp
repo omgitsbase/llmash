@@ -8,6 +8,7 @@
 #include "config.h"
 #include "log.h"
 #include "platform.h"
+#include "runtime_host.h"
 #include "manager.h"
 #include "registry.h"
 #include "remote.h"
@@ -86,12 +87,18 @@ void setup_logging(const Config & cfg) {
     set_log_stream(stdout);
 }
 
-// Orphans from a previous run: a llama-server whose parent is gone.
+// Orphans from a previous run: a llama-server, or one of ours hosting one.
 int reap_orphans(const Config & cfg) {
     int killed = 0;
     const std::string runtime = fs::path(cfg.llama_bin).parent_path().string();
     for (const RunningProcess & p : processes_under(runtime)) {
         if (p.name == llama_server_exe() && kill_pid(p.pid)) {
+            killed++;
+        }
+    }
+    for (const RunningProcess & p : processes_under(cfg.root)) {
+        if ((p.name == llmash_daemon_exe() || p.name == llmash_exe()) && p.pid != current_pid() &&
+            is_runtime_host(p.pid) && kill_pid(p.pid)) {
             killed++;
         }
     }

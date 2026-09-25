@@ -43,6 +43,7 @@ set(LLMASH_PORTABLE
     src/cli_http.cpp
     src/cli_util.cpp
     src/winproc.cpp
+    src/runtime_host.cpp
     src/remote.cpp
     src/serve.cpp
     src/config.cpp

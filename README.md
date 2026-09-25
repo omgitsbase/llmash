@@ -135,8 +135,10 @@ local provider does, finds this one: `/props` and `/models` answer, and
 
 ## Context
 
-A model runs at its trained context; past it, llmash runs it under YaRN, up
-to four times the trained length. `llmash ctx MODEL 1m` sets a million tokens
+A model runs at 8192 tokens unless something asks for more: the request's
+`num_ctx`, `llmash ctx`, or the `num_ctx` in an Ollama model's Modelfile.
+Past its trained context, llmash runs it under YaRN, up to four times the
+trained length. `llmash ctx MODEL 1m` sets a million tokens
 for every client, including ones that cannot ask for one, `--kv q8_0` halves
 the cache, and `--keep` holds the model loaded. The running server takes the
 change at once, and `pull` and `run` say what a window costs on the card
@@ -306,7 +308,8 @@ variable wins over the file.
 | `LLMASH_KV` | K/V cache type, `f16` or `q8_0` |
 | `LLMASH_YARN_MAX` | how far past its trained context a model may run under YaRN (default 4) |
 | `LLMASH_GPU_BUDGET_GB` | what one process may hold on the card, instead of what commit charge allows |
-| `LLMASH_VRAM_HEADROOM` | what to leave free on the card when fitting (default 6 GB) |
+| `LLMASH_VRAM_HEADROOM` | what to leave free on the cards when fitting (default 8% of them, 1 to 6 GB) |
+| `LLMASH_FIT_MARGIN_MB` | what llama.cpp leaves free on each card when it places a model (default 512) |
 | `LLMASH_PARALLEL` | server slots (default 1; raise it to serve several at once) |
 | `LLMASH_PIN` | comma-separated models never evicted |
 | `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`) |

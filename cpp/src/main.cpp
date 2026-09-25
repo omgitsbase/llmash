@@ -9,6 +9,7 @@
 #include "platform.h"
 #include "launch.h"
 #include "registry.h"
+#include "runtime_host.h"
 #include "serve.h"
 #include "tray.h"
 #include "update.h"
@@ -194,6 +195,10 @@ int dispatch(const std::string & prog, const std::string & cmd, const std::vecto
 } // namespace
 
 int main(int argc, char ** argv) {
+    if (argc > 1 && std::string(argv[1]) == kRuntimeHostArg) {
+        return runtime_host_main();
+    }
+
     std::vector<std::string> argv_all;
     for (int i = 1; i < argc; i++) {
         argv_all.emplace_back(argv[i]);

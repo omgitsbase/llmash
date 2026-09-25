@@ -7,6 +7,7 @@
 
 #include "progress.h"
 #include "platform.h"
+#include "runtime_host.h"
 
 #include "winproc.h"
 
@@ -969,7 +970,7 @@ int stop_server(const Config & cfg) {
     int killed = 0;
     const unsigned long pid = read_pid_file(cfg.root);
     if (pid_alive(pid)) {
-        killed += kill_tree(pid, llama_server_exe());
+        killed += kill_tree(pid, runtime_process_names());
     }
     remove_pid_file(cfg.root);
     for (const RunningProcess & p : processes_under(cfg.root)) {

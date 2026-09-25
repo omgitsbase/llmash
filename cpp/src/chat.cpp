@@ -781,7 +781,7 @@ void handle_embed(const httplib::Request & req, httplib::Response & res, Config 
 
     std::string err;
     const json  ka   = body.contains("keep_alive") ? body["keep_alive"] : json();
-    Instance *  inst = mgr.get(name, cfg.ctx, parse_keep_alive(ka, cfg.keep_alive), turn_has_media(body), err);
+    Instance *  inst = mgr.get(name, 0, parse_keep_alive(ka, cfg.keep_alive), turn_has_media(body), err);
     if (inst == nullptr) {
         load_error(res, name, err, false);
         return;

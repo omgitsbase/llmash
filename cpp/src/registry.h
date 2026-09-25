@@ -34,6 +34,7 @@ struct Model {
     std::string projector;   // an mmproj sidecar, when there is one
     std::string system;      // the store's system layer
     std::string params_text; // the store's params layer, "key value" per line
+    int         num_ctx = 0;  // the Modelfile's
     double      modified = 0;
     int         ctx_train = 0;
     int         experts = 0;
