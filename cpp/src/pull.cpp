@@ -421,7 +421,8 @@ bool open_stream(const std::string & url, const std::string & method, const std:
     }
 
     // Perform until the response line has arrived, which is when the status
-    // code becomes readable.
+    // code becomes readable. A redirect's code is not the answer while curl is
+    // still following it: GitHub serves every release asset through a 302.
     for (;;) {
         int running = 0;
         if (curl_multi_perform(st.multi, &running) != CURLM_OK) {
@@ -430,6 +431,11 @@ bool open_stream(const std::string & url, const std::string & method, const std:
         }
         long code = 0;
         curl_easy_getinfo(st.easy, CURLINFO_RESPONSE_CODE, &code);
+        if (code >= 300 && code < 400 && running != 0) {
+            st.pending.clear();
+            curl_multi_poll(st.multi, nullptr, 0, 200, nullptr);
+            continue;
+        }
         if (code != 0) {
             st.status = static_cast<int>(code);
             break;
