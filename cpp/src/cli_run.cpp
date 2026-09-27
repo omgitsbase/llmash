@@ -1606,18 +1606,19 @@ void generate_interactive(RunOptions o) {
 // A classifier answers questions about a text and generates nothing: the questions come first, then every line
 // is judged against them.
 
+const char * const kQuestionForms =
+    "  Which team should handle this? [billing, technical, sales]   a choice: its options in brackets, \"name: description\" describes one\n"
+    "  score: How urgent is it? [not at all, slightly, very]        a score: ordered levels, lowest first\n"
+    "  Is the customer angry?                                       yes or no: a question with no options\n";
+
 void classify_help(const std::string & model) {
-    std::printf("%s answers questions about a text. Give it the questions first, one per line, then every line you\n"
-                "enter is judged against them:\n\n"
-                "  Which team should handle this? [billing, technical, sales]\n"
-                "  score: How urgent is it? [not at all, slightly, very]\n"
-                "  Is the customer angry?\n\n"
-                "A choice lists its options in brackets, \"name: description\" describes one, score: lists ordered levels\n"
-                "lowest first, and a question with no options is answered yes or no. Text with the questions after it\n"
-                "does both at once, and \"\"\" opens a text of several lines.\n\n"
+    std::printf("%s answers questions about a text and does not chat.\n"
+                "Ask the questions first, one per line, then every line of text you enter is judged against all of them.\n"
+                "A question looks like one of these:\n%s"
+                "A text with the questions after it does both at once, and \"\"\" opens a text of several lines.\n\n"
                 "  /questions   the questions asked so far     /clear   forget them\n"
                 "  /json        the raw answers                /bye     leave\n\n",
-                model.c_str());
+                model.c_str(), kQuestionForms);
 }
 
 bool classify_request(const RunOptions & o, const std::string & state, const Questions & qs, bool raw) {
@@ -1670,8 +1671,9 @@ void classify_interactive(const RunOptions & o) {
     std::string sb;
     bool        multiline = false;
 
-    std::printf("%s%s answers questions about a text and does not chat. Questions first, one per line, then the text;"
-                " /? explains.%s\n", kDim, o.model.c_str(), kReset);
+    std::printf("%s%s answers questions about a text and does not chat. Ask the questions first, one per line, then\n"
+                "every line of text you enter is judged against all of them. A question looks like one of these:\n%s"
+                "/? for more.%s\n", kDim, o.model.c_str(), kQuestionForms, kReset);
 
     const auto add = [&](const Question & q) {
         qs.emplace_back("q" + std::to_string(qs.size() + 1), q);
@@ -1687,7 +1689,8 @@ void classify_interactive(const RunOptions & o) {
             return;
         }
         if (qs.empty()) {
-            std::printf("%sno questions yet: ask one first, such as  Is this a complaint?%s\n", kDim, kReset);
+            std::printf("%sno questions yet, so nothing to judge that against. Ask one first, in one of these forms:\n%s%s",
+                        kDim, kQuestionForms, kReset);
             return;
         }
         classify_request(o, pt.state, qs, raw);
