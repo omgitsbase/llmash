@@ -257,6 +257,14 @@ Flags:
       --truncate                For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead
       --verbose                 Show timings for response
 
+A classifier (a model the hub tags text-classification: Laya, Jev-Style,
+decider, a reranker) answers questions about a text and does not chat. run takes
+the questions first, one per line, then judges every line of text against them:
+  Which team should handle this? [billing, technical, sales]
+  score: How urgent is it? [not at all, slightly, very]
+  Is the customer angry?
+With a PROMPT, put the text first and the questions after it.
+
 Image Generation Flags (experimental):
       --width int      Image width
       --height int     Image height
@@ -296,6 +304,10 @@ It is quantized from the narrowest published build that still sits clear of
 the target, so a three-bit build reads a Q6_K rather than a Q8_0.
 
 `rco convert` makes the same build from a model already on this machine.
+
+A repository the hub tags text-classification is pulled as a classifier: its
+decision head or readout comes down beside the model, and `run` and the API
+answer questions with it instead of chatting.
 )HELP";
 
 const std::string k_ctx_help = R"HELP(Set the context a model runs at

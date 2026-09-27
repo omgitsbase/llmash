@@ -1,6 +1,7 @@
 #include "chat.h"
 
 #include "chat_stream.h"
+#include "classify.h"
 
 #include <algorithm>
 #include <cctype>
@@ -608,6 +609,9 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
         write_json(res, 400, openai_error("invalid JSON", "invalid_request_error", ""));
         return;
     }
+    if (path == "/v1/chat/completions" && classify_chat(body, res, cfg, mgr, reg, "openai")) {
+        return;
+    }
     const Knobs &     k    = knobs(cfg);
     const std::string name = jstr(body, "model");
     if (!body.contains("chat_template_kwargs") && name_matches_any(name, k.think_off)) {
@@ -689,6 +693,9 @@ void handle_chat(const httplib::Request & req, httplib::Response & res, Config &
         write_json(res, 400, error_obj("invalid JSON"));
         return;
     }
+    if (!jlist(body, "messages").empty() && classify_chat(body, res, cfg, mgr, reg, "chat")) {
+        return;
+    }
     Events events;
     bool   stream = true;
     if (!prepare_chat(std::move(body), res, cfg, mgr, reg, events, stream)) {
@@ -737,6 +744,9 @@ void handle_generate(const httplib::Request & req, httplib::Response & res, Conf
         return;
     }
 
+    if (classify_chat(body, res, cfg, mgr, reg, "generate")) {
+        return;
+    }
     json msgs = json::array();
     if (const std::string sys = jstr(body, "system"); !sys.empty()) {
         json m       = json::object();

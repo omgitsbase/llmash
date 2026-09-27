@@ -3,6 +3,8 @@
 #include "cli_format.h"
 #include "cli_http.h"
 #include "cli_run.h"
+
+#include "classify.h"
 #include "cli_util.h"
 #include "config.h"
 #include "draft.h"
@@ -1598,6 +1600,202 @@ void generate_interactive(RunOptions o) {
     }
 }
 
+// ============================================================ classifiers
+
+// A classifier answers questions about a text and generates nothing: the questions come first, then every line
+// is judged against them.
+
+void classify_help(const std::string & model) {
+    std::printf("%s answers questions about a text. Give it the questions first, one per line, then every line you\n"
+                "enter is judged against them:\n\n"
+                "  Which team should handle this? [billing, technical, sales]\n"
+                "  score: How urgent is it? [not at all, slightly, very]\n"
+                "  Is the customer angry?\n\n"
+                "A choice lists its options in brackets, \"name: description\" describes one, score: lists ordered levels\n"
+                "lowest first, and a question with no options is answered yes or no. Text with the questions after it\n"
+                "does both at once, and \"\"\" opens a text of several lines.\n\n"
+                "  /questions   the questions asked so far     /clear   forget them\n"
+                "  /json        the raw answers                /bye     leave\n\n",
+                model.c_str());
+}
+
+bool classify_request(const RunOptions & o, const std::string & state, const Questions & qs, bool raw) {
+    json req = {{"model", o.model}, {"state", state}, {"questions", json::parse(questions_json(qs).dump())}};
+    if (!o.keep_alive.is_null()) req["keep_alive"] = o.keep_alive;
+    WaitSpinner      sp;
+    const HttpResult r = http_call_json("POST", "/api/classify", &req, 600);
+    sp.stop_and_clear();
+    if (!r.ok) {
+        std::printf("error: %s\n", r.error.c_str());
+        return false;
+    }
+    if (r.status >= 400) {
+        std::printf("error: %s\n", first_of({j_str(r.body, "error"), http_status_text(r.status)}).c_str());
+        return false;
+    }
+    const json answers = j_sub(r.body, "answers");
+    if (raw) {
+        std::printf("%s\n", answers.dump(2).c_str());
+    } else {
+        std::printf("%s", answers_text(qs, answers).c_str());
+    }
+    if (o.verbose) {
+        std::printf("%s%.0f tokens read%s\n", kDim, j_num(j_sub(r.body, "usage"), "input_tokens"), kReset);
+    }
+    return true;
+}
+
+void classify_once(const RunOptions & o) {
+    const ParsedText pt = parse_text(o.prompt);
+    if (pt.questions.empty()) {
+        die("Error: " + o.model + " is a classifier: it needs the text and then the questions, one per line, such as\n"
+            "  Which team should handle this? [billing, technical, sales]\n"
+            "  score: How urgent is it? [not at all, slightly, very]\n"
+            "  Is the customer angry?");
+    }
+    if (pt.state.empty()) {
+        die("Error: nothing to judge: put the text before the questions");
+    }
+    if (!classify_request(o, pt.state, pt.questions, !is_console(stdout))) {
+        throw CliExit(1);
+    }
+}
+
+void classify_interactive(const RunOptions & o) {
+    ReplEditor ed;
+    PasteGuard paste;
+    Questions  qs;
+    bool       raw = false;
+    std::string sb;
+    bool        multiline = false;
+
+    std::printf("%s%s answers questions about a text and does not chat. Questions first, one per line, then the text;"
+                " /? explains.%s\n", kDim, o.model.c_str(), kReset);
+
+    const auto add = [&](const Question & q) {
+        qs.emplace_back("q" + std::to_string(qs.size() + 1), q);
+        std::printf("%s  question %d, %s%s%s\n", kDim, static_cast<int>(qs.size()), q.type.c_str(),
+                    q.type == "noul" ? "" : (", " + std::to_string(q.criteria.size()) + " options").c_str(), kReset);
+    };
+    const auto judge = [&](const std::string & text) {
+        ParsedText pt = parse_text(text);
+        for (const auto & [id, q] : pt.questions) {
+            add(q);
+        }
+        if (pt.state.empty()) {
+            return;
+        }
+        if (qs.empty()) {
+            std::printf("%sno questions yet: ask one first, such as  Is this a complaint?%s\n", kDim, kReset);
+            return;
+        }
+        classify_request(o, pt.state, qs, raw);
+    };
+
+    for (;;) {
+        const LineResult  lr   = ed.read_line();
+        const std::string line = lr.text;
+        if (lr.status == ReadStatus::Eof) {
+            return;
+        }
+        if (lr.status == ReadStatus::Interrupt) {
+            if (line.empty() && !multiline) {
+                std::printf("\nUse Ctrl + d or /bye to exit.\n");
+            }
+            ed.set_use_alt(false);
+            sb.clear();
+            multiline = false;
+            continue;
+        }
+        if (lr.status == ReadStatus::EditPrompt) {
+            continue;
+        }
+        if (multiline) {
+            std::string before = line;
+            const bool  closed = before.size() >= 3 && before.compare(before.size() - 3, 3, "\"\"\"") == 0;
+            if (closed) before.resize(before.size() - 3);
+            sb += before;
+            if (!closed) {
+                sb += "\n";
+                continue;
+            }
+            multiline = false;
+            ed.set_use_alt(false);
+            judge(sb);
+            sb.clear();
+            continue;
+        }
+        if (starts_with(line, "\"\"\"")) {
+            std::string rest   = line.substr(3);
+            const bool  closed = rest.size() >= 3 && rest.compare(rest.size() - 3, 3, "\"\"\"") == 0;
+            if (closed) rest.resize(rest.size() - 3);
+            sb += rest;
+            if (!closed) {
+                sb += "\n";
+                multiline = true;
+                ed.set_use_alt(true);
+                continue;
+            }
+            judge(sb);
+            sb.clear();
+            continue;
+        }
+        if (ed.pasting()) {
+            sb += line + "\n";
+            continue;
+        }
+        if (!sb.empty()) {
+            judge(sb + line);
+            sb.clear();
+            continue;
+        }
+        const std::string t = trim(line);
+        if (t.empty()) {
+            continue;
+        }
+        if (t == "/bye" || t == "/exit" || t == "/quit") {
+            return;
+        }
+        if (t == "/?" || t == "/help") {
+            classify_help(o.model);
+            continue;
+        }
+        if (t == "/questions") {
+            if (qs.empty()) {
+                std::printf("no questions yet\n");
+            }
+            for (const auto & [id, q] : qs) {
+                std::string opts;
+                for (const auto & c : q.criteria) {
+                    if (q.type != "noul") opts += (opts.empty() ? "" : ", ") + c.first;
+                }
+                std::printf("  %s  %s%s%s\n", id.c_str(), q.text.c_str(), opts.empty() ? "" : "  [", opts.empty() ? "" : (opts + "]").c_str());
+            }
+            continue;
+        }
+        if (t == "/clear") {
+            qs.clear();
+            std::printf("Cleared the questions\n");
+            continue;
+        }
+        if (t == "/json") {
+            raw = !raw;
+            std::printf("%s\n", raw ? "Showing the raw answers." : "Showing the answers as lines.");
+            continue;
+        }
+        if (starts_with(t, "/")) {
+            std::printf("Unknown command %s. /? lists them.\n", fields(t)[0].c_str());
+            continue;
+        }
+        Question q;
+        if (question_line(t, q)) {
+            add(q);
+            continue;
+        }
+        judge(t);
+    }
+}
+
 } // namespace
 
 // ================================================================== entry
@@ -1653,6 +1851,15 @@ int cmd_run(const RunArgs & args) {
         opts.parent_model = j_str(j_sub(info, "details"), "parent_model");
         infer_thinking(info, opts, args.think_set);
         opts.multi_modal = has_cap(info, "vision") || has_cap(info, "audio");
+
+        if (has_cap(info, "classification")) {
+            if (interactive) {
+                classify_interactive(opts);
+            } else {
+                classify_once(opts);
+            }
+            return 0;
+        }
 
         if (has_cap(info, "embedding")) {
             if (opts.prompt.empty()) {

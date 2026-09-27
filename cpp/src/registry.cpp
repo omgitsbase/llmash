@@ -1,6 +1,7 @@
 #include "registry.h"
 
 #include "caps.h"
+#include "classify.h"
 #include "draft.h"
 #include "sha256.h"
 
@@ -169,7 +170,7 @@ bool is_sidecar(const std::string & stem) {
             return true;
         }
     }
-    for (const char * tag : {".mtp", ".draft"}) {
+    for (const char * tag : {".mtp", ".draft", ".classifier"}) {
         if (ends_with(s, tag)) {
             return true;
         }
@@ -449,6 +450,10 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.input_bytes  = input_layer_bytes(path, g.input_bytes);
         mo.projector    = find_projector_for(path);
         mo.caps         = caps_for(g, mo.projector, dir);
+        mo.classifier   = classifier_kind(path, g);
+        if (!mo.classifier.empty()) {
+            mo.caps = {"classification"};
+        }
 
         mo.size     = model_bytes(path);
         mo.modified = mtime_unix(path);
@@ -593,6 +598,10 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
             mo.projector = (blobs / projector_blob).string();
         }
         mo.caps = caps_for(g, mo.projector, (fs::path(root) / "gguf").string());
+        mo.classifier = classifier_kind(path.string(), g);
+        if (!mo.classifier.empty()) {
+            mo.caps = {"classification"};
+        }
         out.push_back(std::move(mo));
     }
 }

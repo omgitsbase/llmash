@@ -71,7 +71,7 @@ bool consider_repo(const HubModel & hit, const std::string & want, const std::st
 
 // Every drafter published for this model, best first. `say` is called only
 // when verbose, matching findDrafters' own flag.
-std::vector<DraftCand> find_drafters(const Model & m, bool verbose, const Say & say = Say());
+std::vector<DraftCand> find_drafters(const Model & m, bool verbose, const Say & say = Say(), double budget_s = 0);
 
 struct GGUFSpec {
     std::string          arch;

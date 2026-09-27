@@ -59,6 +59,7 @@ set(LLMASH_PORTABLE
     src/gguf_io.cpp
     src/rco.cpp
     src/caps.cpp
+    src/classify.cpp
     src/manager.cpp
     src/api_logic.cpp
     src/api.cpp
@@ -149,7 +150,7 @@ endif()
 endif()
 
 enable_testing()
-set(LLMASH_TESTS test_main api_logic_test api_test chat_test gguf_io_test rco_test)
+set(LLMASH_TESTS test_main api_logic_test api_test chat_test gguf_io_test rco_test classify_test)
 if (WIN32)
     list(APPEND LLMASH_TESTS cli_run_test test_cli_doctor_models tray_test cli_commands_test pull_test)
 endif()

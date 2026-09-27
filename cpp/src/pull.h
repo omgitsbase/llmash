@@ -80,6 +80,12 @@ struct HfFile {
 
 // `others` collects the extensions of the repo's non-GGUF files, so a repo
 // that holds none can say what it does hold.
+// The hub's pipeline tag of a repository (text-generation, text-classification, ...), or "".
+std::string           hf_pipeline_tag(const std::string & repo);
+// Every file a repository holds, GGUF or not.
+std::vector<std::string> hf_repo_files(const std::string & repo);
+// The model a repository says it was made from (its card's base_model), or "".
+std::string              hf_base_model(const std::string & repo);
 std::vector<HfFile>   hf_files(const std::string & repo, std::string * err = nullptr,
                                std::set<std::string> * others = nullptr);
 

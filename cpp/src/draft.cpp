@@ -1,4 +1,5 @@
 #include "draft.h"
+#include "caps.h"
 #include "gguf_io.h"
 
 #include "gguf.h"
@@ -624,12 +625,16 @@ static bool consider_embedded(const HubModel & hit, const std::string & name, co
     return true;
 }
 
-static std::vector<DraftCand> search_for(const std::string & name, const Say & say) {
+static std::vector<DraftCand> search_for(const std::string & name, const Say & say,
+                                         const std::chrono::steady_clock::time_point & until) {
     const std::string        want = normalise(name);
     std::vector<std::string> seen;
     std::vector<DraftCand>   cands;
-    for (const std::string & q : {name + " eagle3", name + " dspark", name + " speculator", name + " draft GGUF",
-                                  name + " dflash", name + " assistant", name + " MTP GGUF"}) {
+    for (const std::string & q : {name + " MTP GGUF", name + " assistant", name + " dflash", name + " eagle3",
+                                  name + " dspark", name + " speculator", name + " draft GGUF"}) {
+        if (std::chrono::steady_clock::now() > until) {
+            break;
+        }
         for (const auto & hit : hub_search(q, 25)) {
             if (std::find(seen.begin(), seen.end(), hit.id) != seen.end()) {
                 continue;
@@ -648,21 +653,24 @@ static std::vector<DraftCand> search_for(const std::string & name, const Say & s
 
 // Drafters for the model these weights are; when none is published under its own name and the header names the
 // model it was tuned from, that model's, said so: they share the vocabulary and width, and draft somewhat less well.
-std::vector<DraftCand> find_drafters(const Model & m, bool verbose, const Say & say_in) {
+std::vector<DraftCand> find_drafters(const Model & m, bool verbose, const Say & say_in, double budget_s) {
     const ModelIdent id = identify(m);
     if (id.name.empty()) {
         return {};
     }
+    // a budget (the offer after a pull) ends the search early; `pulldraft` runs it whole
+    const auto until = std::chrono::steady_clock::now() +
+                       std::chrono::milliseconds(static_cast<long long>((budget_s > 0 ? budget_s : 3600) * 1000));
     const Say say = [&](const std::string & line) {
         if (verbose && say_in) {
             say_in(line);
         }
     };
     say("  looking for a drafter trained on " + id.name);
-    std::vector<DraftCand> cands = search_for(id.name, say);
+    std::vector<DraftCand> cands = search_for(id.name, say, until);
     if (cands.empty() && !id.tuned_from.empty()) {
         say("  none under its own name; looking under " + id.tuned_from + ", which it was tuned from");
-        cands = search_for(id.tuned_from, say);
+        cands = search_for(id.tuned_from, say, until);
         for (DraftCand & c : cands) {
             c.via = id.tuned_from;
             c.note += ", trained on " + id.tuned_from + " which this model was tuned from";
@@ -1050,6 +1058,9 @@ std::string installed_drafter(const Model & m) {
 std::string has_own_drafter(const Model & m) {
     if (const std::string d = installed_drafter(m); !d.empty()) {
         return d;
+    }
+    if (!m.classifier.empty() || is_embedding(read_gguf(m.path))) {
+        return "nothing to draft: it generates no text";
     }
     if (m.has_mtp || read_gguf(m.path).has_mtp) {
         return "an MTP head of its own";
