@@ -3818,7 +3818,9 @@ bool all_blackwell(const std::string & compute_caps) {
             continue;
         }
         try {
-            if (std::stod(line) < 10.0) {
+            // the architecture the runtime's FP4 kernels are compiled for: sm_120 up to, not including, Rubin
+            const double cc = std::stod(line);
+            if (cc < 12.0 || cc >= 13.0) {
                 return false;
             }
         } catch (const std::exception &) {
