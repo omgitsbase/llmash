@@ -889,18 +889,34 @@ json show_or_pull(RunOptions & o) {
     return d;
 }
 
-// A model with nothing to draft for it runs slower than it could; say how to look.
-static void note_no_drafter(const json & info, const std::string & name) {
+// A model with nothing to draft for it runs slower than it could: offer to look for a drafter, unless the
+// answer was once "don't ask again" (ask_drafter: false in local.json).
+static void offer_drafter(const json & info, const std::string & name) {
     const std::string from = j_str(info, "modelfile");
     Model             m;
     m.path    = from.rfind("FROM ", 0) == 0 ? from.substr(5) : "";
     m.has_mtp = info.value("mtp", false);
     if (m.path.empty() || !clidoc::file_exists(m.path) || !has_own_drafter(m).empty()) return;
+    const Config cfg   = load_config();
+    json         local = clidoc::read_local_json(cfg.root);
+    if (local.is_object() && local.value("ask_drafter", true) == false) return;
     const std::string instead = spec_fallback().rfind("ngram", 0) == 0
                                     ? ", so it drafts by n-gram lookup, which only speeds up text the chat already holds"
                                     : "";
-    std::printf("%s%s has no MTP head or draft model%s. `%s pulldraft %s` looks for one.%s\n", kDim, name.c_str(),
-                instead.c_str(), prog_name().c_str(), name.c_str(), kReset);
+    std::printf("%s has no MTP head or draft model%s.\n", name.c_str(), instead.c_str());
+    const char c = ask_ynd("Look for a draft model on Hugging Face?");
+    if (c == 'y') {
+        pulldraft(name, false, false);
+        std::printf("\n");
+    } else if (c == 'd') {
+        if (!local.is_object()) local = json::object();
+        local["ask_drafter"] = false;
+        std::string err;
+        if (clidoc::write_local_json(cfg.root, local, err)) {
+            std::printf("%snot asking again; `%s pulldraft MODEL` still looks for one%s\n", kDim, prog_name().c_str(),
+                        kReset);
+        }
+    }
 }
 
 std::string http_status_text(int code) {
@@ -1643,7 +1659,7 @@ int cmd_run(const RunArgs & args) {
         }
 
         if (interactive) {
-            note_no_drafter(info, opts.model);
+            offer_drafter(info, opts.model);
             try {
                 load_or_unload_model(opts);
             } catch (const std::exception & e) {

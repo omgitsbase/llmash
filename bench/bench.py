@@ -183,9 +183,9 @@ def table():
     out.append("")
     out.append("\\* llmash runs a custom build: one quantization type per tensor, chosen "
                "under a size budget and assembled on this machine. No other runtime has an "
-               "equivalent. RCO-3 answers nearly identically to Q8_0: on the published "
-               "benchmarks the 3-bit allocation scores within a point of the fp8 original, "
-               "at a third of the bytes. Ollama runs its own Q8_0 pull, which ships without "
+               "equivalent. It is a third of a Q8_0's bytes, which is where the speed comes from; on "
+               "forty math questions it matched Q8_0 on Qwen3.8-27B and lost ten of 28 on "
+               "Qwen3-1.7B, so its accuracy cost depends on the model. Ollama runs its own Q8_0 pull, which ships without "
                "a draft model; vLLM runs 8-bit weights with speculative decoding; llmash "
                "runs what a pull assembles, drafter and launch settings included.")
     return "\n".join(out)

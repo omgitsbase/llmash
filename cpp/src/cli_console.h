@@ -52,6 +52,11 @@ ConfirmStep confirm_feed(int ch);
 bool confirm(const std::string & question);
 int  ask_number(const std::string & prompt, int def, int max);
 
+// Yes, no, or no and don't ask again: 'y', 'n' or 'd' for a raw byte, 0 to keep
+// reading. Enter is yes; Escape and Ctrl-C are no.
+char ynd_feed(int ch);
+char ask_ynd(const std::string & question);
+
 // Draws a list with a cursor, moving it with the arrow keys; Enter returns
 // the row, Escape -1, and a key in extra its negative code.
 int pick_menu(const std::string & title, const std::vector<std::string> & rows, int cursor,

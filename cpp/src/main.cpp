@@ -116,6 +116,9 @@ std::string alias_of(const std::string & cmd) {
     if (cmd == "ls") {
         return "list";
     }
+    if (cmd == "remove") {
+        return "rm";
+    }
 #ifndef _WIN32
     if (cmd == "start") {  // no tray to start here
         return "serve";

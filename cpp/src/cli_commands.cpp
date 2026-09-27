@@ -623,10 +623,12 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         basic.push_back(Row{build_row("custom", *offered, kRcoPitch), offered->name, offered->size, false});
     }
     if (plain.size() > 1) {
-        const Tiers t = tiers_of(plain);
+        const bool  fp4 = have && d.value("fp4", false);
+        const Tiers t   = tiers_of(plain, fp4);
         for (const auto & [label, idx] : {std::pair{"medium", t.medium}, {"large", t.large}}) {
-            const QuantInfo & q = plain[static_cast<size_t>(idx)];
-            basic.push_back(Row{build_row(label, q, ""), q.name, q.size, false});
+            const QuantInfo & q    = plain[static_cast<size_t>(idx)];
+            const bool        nvfp = equal_fold(q.name, "NVFP4");
+            basic.push_back(Row{build_row(label, q, nvfp ? "NVFP4, FP8 quality" : ""), q.name, q.size, false});
         }
     } else {
         for (const auto & q : plain) {
@@ -1198,6 +1200,10 @@ double bits_of(const std::string & quant_name) {
 }
 
 Tiers tiers_of(const std::vector<QuantInfo> & quants) {
+    return tiers_of(quants, false);
+}
+
+Tiers tiers_of(const std::vector<QuantInfo> & quants, bool fp4) {
     const auto find = [&](const std::vector<std::string> & names) {
         for (const auto & want : names) {
             for (size_t i = 0; i < quants.size(); i++) {
@@ -1232,7 +1238,10 @@ Tiers tiers_of(const std::vector<QuantInfo> & quants) {
             t.large = n - 1;
         }
     }
-    t.medium = find({"Q4_K_M", "UD-Q4_K_XL", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q5_K_S"});
+    t.medium = fp4 ? find({"NVFP4"}) : -1;
+    if (t.medium < 0) {
+        t.medium = find({"Q4_K_M", "UD-Q4_K_XL", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q5_K_S"});
+    }
     if (t.medium < 0) {
         t.medium = by_bits(4, 5.5, false);
         if (t.medium < 0) {
@@ -1392,6 +1401,24 @@ std::vector<json> filter_rows(const json & doc, const std::string & prefix, bool
         }
         if (has_prefix(name, want)) {
             out.push_back(v);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> models_holding(const json & doc, const std::string & fragment) {
+    std::vector<std::string> out;
+    const std::string        want = lower(fragment);
+    if (want.empty()) {
+        return out;
+    }
+    for (const auto & v : j_list(doc, "models")) {
+        if (!v.is_object()) {
+            continue;
+        }
+        const std::string name = j_str(v, "name");
+        if (lower(name).find(want) != std::string::npos) {
+            out.push_back(name);
         }
     }
     return out;
@@ -1647,11 +1674,36 @@ int cmd_rm(const std::vector<std::string> & args, ApiClient & api) {
             die("Error: requires at least 1 arg(s), only received 0");
         }
         need_server(api);
-        for (const auto & name : o.pos) {
+        const auto drop = [&api](const std::string & name) {
             const json      body = json{{"model", name}};
             const ApiResult r    = api.call("DELETE", "/api/delete", &body, 60);
             if (!r.ok) {
                 die("Error: " + r.error);
+            }
+            return r;
+        };
+        for (const auto & name : o.pos) {
+            std::string removed = name;
+            ApiResult   r       = drop(name);
+            // A name that is no model's own is taken as part of one: the one
+            // model here whose name holds it, and nothing when several do.
+            if (r.status == 404) {
+                ApiResult                      t;
+                const json                     tags = api.call_json("GET", "/api/tags", nullptr, 60, t);
+                const std::vector<std::string> hits =
+                    t.ok && t.status == 200 ? models_holding(tags, name) : std::vector<std::string>{};
+                if (hits.size() > 1) {
+                    std::string msg = "Error: '" + name + "' matches " + std::to_string(hits.size()) +
+                                      " models, so none was removed. Name one of them:";
+                    for (const std::string & h : hits) {
+                        msg += "\n  " + h;
+                    }
+                    die(msg);
+                }
+                if (hits.size() == 1) {
+                    removed = hits[0];
+                    r       = drop(removed);
+                }
             }
             if (r.status >= 400) {
                 std::string msg = trim(r.body);
@@ -1661,7 +1713,7 @@ int cmd_rm(const std::vector<std::string> & args, ApiClient & api) {
                 }
                 die("Error: " + msg);
             }
-            std::printf("deleted '%s'\n", name.c_str());
+            std::printf("deleted '%s'\n", removed.c_str());
         }
         return 0;
     } catch (const CliExit & e) {
@@ -2285,17 +2337,8 @@ int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg) {
     }
 }
 
-int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg) {
+int pulldraft(const std::string & name, bool yes, bool force) {
     try {
-        const ParsedArgs o = parse_simple(args, {"--yes", "-y", "--force"}, {});
-        if (o.pos.empty()) {
-            die("Error: requires at least 1 arg(s), only received 0");
-        }
-        const std::string name  = o.pos[0];
-        const bool        yes   = o.has_flag("--yes") || o.has_flag("-y");
-        const bool        force = o.has_flag("--force");
-        (void) reg;
-
         const Config cfg = load_config();
         ApiClient    api(cfg);
         need_server(api);
@@ -2361,9 +2404,22 @@ int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg) {
     }
 }
 
+int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg) {
+    (void) reg;
+    try {
+        const ParsedArgs o = parse_simple(args, {"--yes", "-y", "--force"}, {});
+        if (o.pos.empty()) {
+            die("Error: requires at least 1 arg(s), only received 0");
+        }
+        return pulldraft(o.pos[0], o.has_flag("--yes") || o.has_flag("-y"), o.has_flag("--force"));
+    } catch (const CliExit & e) {
+        return e.code;
+    }
+}
+
 bool dispatch(const std::string & cmd, const std::vector<std::string> & args, Config & cfg, Registry & reg,
               int & exit_code) {
-    const std::string name = cmd == "ls" ? "list" : cmd;
+    const std::string name = cmd == "ls" ? "list" : cmd == "remove" ? "rm" : cmd;
 
     if (name == "push") {
         exit_code = cmd_push();

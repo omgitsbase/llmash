@@ -142,6 +142,15 @@ QuantInfo Q(const char * name, int64_t size) {
 
 void test_tiers_of() {
     {
+        // a server whose cards are all Blackwell takes an NVFP4 build as medium; any other keeps the 4-bit integer one
+        const std::vector<QuantInfo> qs{Q("IQ3_XXS", 3), Q("Q4_K_M", 5), Q("NVFP4", 6), Q("Q8_0", 9)};
+        eq_str(qs[tiers_of(qs, true).medium].name, "NVFP4", "tiers medium on Blackwell is NVFP4");
+        eq_str(qs[tiers_of(qs, false).medium].name, "Q4_K_M", "tiers medium elsewhere stays Q4_K_M");
+        eq_str(qs[tiers_of(qs).medium].name, "Q4_K_M", "tiers medium by default stays Q4_K_M");
+        const std::vector<QuantInfo> no_fp4{Q("Q4_K_M", 5), Q("Q8_0", 9)};
+        eq_str(no_fp4[tiers_of(no_fp4, true).medium].name, "Q4_K_M", "tiers medium on Blackwell without NVFP4");
+    }
+    {
         // the named builds win outright, whatever their order or size
         const std::vector<QuantInfo> qs{Q("IQ3_XXS", 3), Q("Q4_K_M", 5), Q("Q6_K", 7), Q("Q8_0", 9)};
         const Tiers                  t = tiers_of(qs);
@@ -285,6 +294,37 @@ void test_filter_rows() {
     check(filter_rows(json::parse(R"({"models":"nope"})"), "", true).empty(), "a non-array models field is empty");
 }
 
+// ------------------------------------------------------------ rm's partial name
+
+void test_models_holding() {
+    const json doc = json::parse(R"({
+      "models": [
+        {"name":"qwen3.5:9b"},
+        {"name":"Qwen3-1.7B-UD:iq2_m"},
+        {"name":"gemma4:e4b"},
+        {"name":"gemma3:1b"},
+        {"name":"dirk:rco-3"},
+        "not-an-object"
+      ]
+    })");
+    const auto names = [](const std::vector<std::string> & v) {
+        std::string s;
+        for (const auto & n : v) {
+            s += (s.empty() ? "" : ",") + n;
+        }
+        return s;
+    };
+
+    eq_str(names(models_holding(doc, "dirk")), "dirk:rco-3", "one model holds it: that one");
+    eq_str(names(models_holding(doc, "E4B")), "gemma4:e4b", "case aside");
+    eq_str(names(models_holding(doc, "rco")), "dirk:rco-3", "the tag is part of the name");
+    eq_str(names(models_holding(doc, "qwen")), "qwen3.5:9b,Qwen3-1.7B-UD:iq2_m", "several: every one, in list order");
+    eq_str(names(models_holding(doc, "gemma")), "gemma4:e4b,gemma3:1b", "gemma is two models");
+    check(models_holding(doc, "llama").empty(), "none holds it: nothing");
+    check(models_holding(doc, "").empty(), "an empty name is part of every name, and so of none");
+    check(models_holding(json::object(), "qwen").empty(), "a document with no models array holds nothing");
+}
+
 void test_render_tables() {
     const auto rows = filter_rows(fake_tags(), "", true);
 
@@ -396,8 +436,8 @@ void test_rco_pitch() {
 void test_build_rows() {
     QuantInfo custom = Q("RCO-3", 830 * 1000 * 1000);
     custom.fetch     = 2200LL * 1000 * 1000;
-    const std::string rco = build_row(rco_row_label(custom.name), custom, "Q8 quality, Q4 size");
-    eq_str(rco, "rco 3    Q8 quality, Q4 size     2.2 GB bandwidth",
+    const std::string rco = build_row(rco_row_label(custom.name), custom, "3 bits per weight");
+    eq_str(rco, "rco 3    3 bits per weight       2.2 GB bandwidth",
            "the custom row names the width and the trade");
     check(rco.find("finalized") == std::string::npos, "and promises no size it has not built");
 
@@ -454,6 +494,7 @@ int main() {
     test_base64_url_encode();
     test_path_under();
     test_filter_rows();
+    test_models_holding();
     test_render_tables();
     test_elide();
     test_show_info();

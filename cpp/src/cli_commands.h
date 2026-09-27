@@ -41,6 +41,9 @@ struct Tiers {
     int tiny = 0, medium = 0, large = 0;
 };
 
+// fp4: every card on the server is Blackwell, so an NVFP4 build is the medium one when there is one
+Tiers tiers_of(const std::vector<QuantInfo> & quants, bool fp4);
+
 // What the build picker came back with. `registry` means the model's own
 // build on the Ollama registry, which is not one of the repository's.
 struct BuildChoice {
@@ -84,6 +87,10 @@ bool port_open(int port);
 
 std::vector<nlohmann::json> filter_rows(const nlohmann::json & doc, const std::string & prefix, bool fold);
 
+// The names in an /api/tags document that hold `fragment`, case aside: what
+// `rm` takes a name that is no model's own to mean.
+std::vector<std::string> models_holding(const nlohmann::json & doc, const std::string & fragment);
+
 std::string render_list(const std::vector<nlohmann::json> & rows);
 std::string render_ps(const std::vector<nlohmann::json> & rows);
 
@@ -112,6 +119,8 @@ int cmd_link(const std::vector<std::string> & args, const Config & cfg);
 int cmd_unlink();
 int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg);
 int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg);
+// finds, checks and offers to install a drafter for a local model
+int pulldraft(const std::string & name, bool yes, bool force);
 
 // `run`'s first-use pull: cmdPull(name, "", true), throwing CliExit on failure.
 void pull_model(const std::string & name);
