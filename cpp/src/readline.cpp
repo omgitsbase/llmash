@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -417,7 +418,18 @@ bool read_console_byte(unsigned char & b) {
     if (h == INVALID_HANDLE_VALUE || h == nullptr) {
         return false;
     }
-    return ReadFile(h, &b, 1, &n, nullptr) && n == 1;
+    const bool ok = ReadFile(h, &b, 1, &n, nullptr) && n == 1;
+    // LLMASH_KEYLOG=<file> appends every byte the editor reads, for a key that does nothing in some terminal
+    static const std::string keylog = env_str("LLMASH_KEYLOG");
+    if (ok && !keylog.empty()) {
+        if (FILE * f = std::fopen(keylog.c_str(), "ab")) {
+            std::fprintf(f, b >= 32 && b < 127 ? "%02x '%c'
+" : "%02x
+", b, b);
+            std::fclose(f);
+        }
+    }
+    return ok;
 }
 int utf8_lead_len(unsigned char c) {
     if (c < 0x80) return 1;
