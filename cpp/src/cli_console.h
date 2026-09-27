@@ -4,6 +4,8 @@
 // reads, the pick-menu key decoder, and the colours `link` prints with.
 
 #include <functional>
+#include <nlohmann/json.hpp>
+
 #include <string>
 #include <vector>
 
@@ -52,10 +54,10 @@ ConfirmStep confirm_feed(int ch);
 bool confirm(const std::string & question);
 int  ask_number(const std::string & prompt, int def, int max);
 
-// Yes, no, or no and don't ask again: 'y', 'n' or 'd' for a raw byte, 0 to keep
-// reading. Enter is yes; Escape and Ctrl-C are no.
-char ynd_feed(int ch);
-char ask_ynd(const std::string & question);
+// The drafter offer's memory in local.json: never for any model (ask_drafter: false), or never again for a model it
+// was asked about (drafter_asked). The answer is 0 look now, 1 no for this model, 2 no for any model.
+bool drafter_offer_due(const nlohmann::json & local, const std::string & model);
+void drafter_offer_answered(nlohmann::json & local, const std::string & model, int answer);
 
 // Draws a list with a cursor, moving it with the arrow keys; Enter returns
 // the row, Escape -1, and a key in extra its negative code.

@@ -1,6 +1,7 @@
 #include "registry.h"
 
 #include "caps.h"
+#include "draft.h"
 #include "sha256.h"
 
 #include <nlohmann/json.hpp>
@@ -449,17 +450,13 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.projector    = find_projector_for(path);
         mo.caps         = caps_for(g, mo.projector, dir);
 
-        std::error_code ec;
         mo.size     = model_bytes(path);
         mo.modified = mtime_unix(path);
         mo.digest   = "sha256:" + sha256_hex(fs::path(path).filename().string() + ":" +
                                              std::to_string(mo.size) + ":" +
                                              std::to_string(static_cast<long long>(mo.modified)));
 
-        const fs::path side = fs::path(path).parent_path() / (stem + ".mtp.gguf");
-        if (fs::exists(side, ec)) {
-            mo.mtp_path = side.string();
-        }
+        mo.mtp_path = mtp_path(path);
         out.push_back(std::move(mo));
     }
 

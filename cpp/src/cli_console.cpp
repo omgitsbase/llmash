@@ -104,25 +104,42 @@ bool confirm(const std::string & question) {
     }
 }
 
-char ynd_feed(int ch) {
-    switch (ch) {
-        case 'y': case 'Y': case '\r': case '\n': return 'y';
-        case 'n': case 'N': case 0x1b: case 0x03: return 'n';
-        case 'd': case 'D': return 'd';
-        default: return 0;
+bool drafter_offer_due(const nlohmann::json & local, const std::string & model) {
+    if (!local.is_object()) {
+        return true;
     }
+    if (local.value("ask_drafter", true) == false) {
+        return false;
+    }
+    const auto it = local.find("drafter_asked");
+    if (it != local.end() && it->is_array()) {
+        for (const auto & n : *it) {
+            if (n.is_string() && n.get<std::string>() == model) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
-char ask_ynd(const std::string & question) {
-    std::printf("%s [Y/n/d] ", question.c_str());
-    for (;;) {
-        const char c = ynd_feed(raw_getch());
-        if (c == 0) {
-            continue;
-        }
-        std::printf(c == 'y' ? "yes\n" : c == 'n' ? "no\n" : "no, and don't ask again\n");
-        return c;
+void drafter_offer_answered(nlohmann::json & local, const std::string & model, int answer) {
+    if (!local.is_object()) {
+        local = nlohmann::json::object();
     }
+    if (answer == 2) {
+        local["ask_drafter"] = false;
+        return;
+    }
+    nlohmann::json & asked = local["drafter_asked"];
+    if (!asked.is_array()) {
+        asked = nlohmann::json::array();
+    }
+    for (const auto & n : asked) {
+        if (n == model) {
+            return;
+        }
+    }
+    asked.push_back(model);
 }
 
 int ask_number(const std::string & prompt, int def, int max) {

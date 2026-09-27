@@ -1,0 +1,646 @@
+[
+ {
+  "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "build": "RCO-3",
+  "size_gb": 3.08,
+  "model": "gemma-4-e4b-it:rco-3",
+  "workloads": {
+   "conversation": 324.1,
+   "coding": 477.6,
+   "thinking": 568.8
+  },
+  "tokens": {
+   "conversation": [
+    282,
+    344,
+    342
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    559,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "build": "Q4_K_M",
+  "size_gb": 4.98,
+  "model": "gemma-4-e4b-it:q4_k_m",
+  "workloads": {
+   "conversation": 320.9,
+   "coding": 512.9,
+   "thinking": 543.4
+  },
+  "tokens": {
+   "conversation": [
+    275,
+    278,
+    288
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    425,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "build": "Q8_0",
+  "size_gb": 8.19,
+  "model": "gemma-4-e4b-it:q8_0",
+  "workloads": {
+   "conversation": 245.3,
+   "coding": 397.5,
+   "thinking": 434.1
+  },
+  "tokens": {
+   "conversation": [
+    266,
+    302,
+    319
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    470,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Gemma 4 E4B",
+  "build": "q4_K_M",
+  "size_gb": 9.6,
+  "model": "gemma4:e4b-it-q4_K_M",
+  "workloads": {
+   "conversation": 151.2,
+   "coding": 160.2,
+   "thinking": 162.9
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    516,
+    482
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Gemma 4 E4B",
+  "build": "q8_0",
+  "size_gb": 11.0,
+  "model": "gemma4:e4b-it-q8_0",
+  "workloads": {
+   "conversation": 133.0,
+   "coding": 133.3,
+   "thinking": 137.3
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    438,
+    464
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "vLLM",
+  "label": "Gemma 4 E4B",
+  "build": "NVFP4",
+  "size_gb": 8.14,
+  "model": "m",
+  "workloads": {
+   "conversation": 191.2,
+   "coding": 250.6,
+   "thinking": 280.9
+  },
+  "tokens": {
+   "conversation": [
+    272,
+    306,
+    263
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    444,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "vLLM",
+  "label": "Gemma 4 E4B",
+  "build": "BF16",
+  "size_gb": 16.02,
+  "model": "m",
+  "workloads": {
+   "conversation": 187.4,
+   "coding": 283.3,
+   "thinking": 308.0
+  },
+  "tokens": {
+   "conversation": [
+    256,
+    349,
+    325
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    593,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "build": "RCO-3",
+  "size_gb": 10.27,
+  "model": "qwen3.8-27b:rco-3",
+  "workloads": {
+   "conversation": 182.9,
+   "coding": 191.5,
+   "thinking": 212.9
+  },
+  "tokens": {
+   "conversation": [
+    243,
+    600,
+    389
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "build": "GSQ-RCO",
+  "size_gb": 11.94,
+  "model": "qwen3.8-27b-gsq-rco:iq3_s",
+  "workloads": {
+   "conversation": 192.9,
+   "coding": 188.8,
+   "thinking": 211.1
+  },
+  "tokens": {
+   "conversation": [
+    286,
+    539,
+    337
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    402,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "build": "NVFP4",
+  "size_gb": 17.13,
+  "model": "qwen3.8-27b-imatrix-nvfp4-mtp:gguf",
+  "workloads": {
+   "conversation": 167.9,
+   "coding": 172.4,
+   "thinking": 202.6
+  },
+  "tokens": {
+   "conversation": [
+    333,
+    536,
+    386
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "build": "Q4_K_XL",
+  "size_gb": 17.56,
+  "model": "qwen3.8-27b-ud:q4_k_xl",
+  "workloads": {
+   "conversation": 162.1,
+   "coding": 164.6,
+   "thinking": 173.2
+  },
+  "tokens": {
+   "conversation": [
+    287,
+    396,
+    402
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    319,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Qwen3.8 27B",
+  "build": "q4_K_M",
+  "size_gb": 17.0,
+  "model": "qwen3.8:27b-mtp-q4_K_M",
+  "workloads": {
+   "conversation": 110.3,
+   "coding": 135.5,
+   "thinking": 147.5
+  },
+  "tokens": {
+   "conversation": [
+    579,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "vLLM",
+  "label": "Qwen3.8 27B",
+  "build": "NVFP4",
+  "size_gb": 21.95,
+  "model": "m",
+  "workloads": {
+   "conversation": 111.4,
+   "coding": 114.7,
+   "thinking": 125.4
+  },
+  "tokens": null,
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Qwen3.8 27B",
+  "build": "q8_0",
+  "size_gb": 29.0,
+  "model": "qwen3.8:27b-mtp-q8_0",
+  "workloads": {
+   "conversation": 75.5,
+   "coding": 99.5,
+   "thinking": 103.6
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "vLLM",
+  "label": "Qwen3.8 27B",
+  "build": "FP8",
+  "size_gb": 30.89,
+  "model": "m",
+  "workloads": {
+   "conversation": 88.3,
+   "coding": 93.6,
+   "thinking": 95.4
+  },
+  "tokens": {
+   "conversation": [
+    259,
+    422,
+    511
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    283,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.6 35B-A3B",
+  "build": "RCO-3",
+  "size_gb": 13.42,
+  "model": "qwen3.6-35b-a3b-ud-xl:rco-3",
+  "workloads": {
+   "conversation": 601.4,
+   "coding": 749.1,
+   "thinking": 673.2
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.6 35B-A3B",
+  "build": "NVFP4",
+  "size_gb": 20.49,
+  "model": "qwen3.6-35b-a3b-nvfp4-mtp-hq:gguf",
+  "workloads": {
+   "conversation": 427.9,
+   "coding": 486.4,
+   "thinking": 538.1
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.6 35B-A3B",
+  "build": "Q4_K_XL",
+  "size_gb": 23.26,
+  "model": "qwen3.6-35b-a3b-mtp-ud:q4_k_xl",
+  "workloads": {
+   "conversation": 530.5,
+   "coding": 569.4,
+   "thinking": 612.7
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Qwen3.6 35B-A3B",
+  "build": "q4_K_M",
+  "size_gb": 22.0,
+  "model": "qwen3.6:35b-a3b-mtp-q4_K_M",
+  "workloads": {
+   "conversation": 164.5,
+   "coding": 178.7,
+   "thinking": 180.3
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "vLLM",
+  "label": "Qwen3.6 35B-A3B",
+  "build": "NVFP4",
+  "size_gb": 23.46,
+  "model": "m",
+  "workloads": {
+   "conversation": 252.1,
+   "coding": 270.2,
+   "thinking": 286.7
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "vLLM",
+  "label": "Qwen3.6 35B-A3B",
+  "build": "FP8",
+  "size_gb": 37.49,
+  "model": "m",
+  "workloads": {
+   "conversation": 223.2,
+   "coding": 252.4,
+   "thinking": 270.5
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Qwen3.6 35B-A3B",
+  "build": "q8_0",
+  "size_gb": 38.0,
+  "model": "qwen3.6:35b-a3b-mtp-q8_0",
+  "workloads": {
+   "conversation": 175.8,
+   "coding": 188.5,
+   "thinking": 192.1
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-09-27"
+ }
+]
