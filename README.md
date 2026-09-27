@@ -76,43 +76,65 @@ processing are left out.
 
 ### Against Ollama and vLLM
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/providers-dark.svg">
-  <img alt="Decode speed against size on disk for each build, on llmash, Ollama and vLLM" src="docs/providers-light.svg">
-</picture>
-
-Each dot is one build of the model: across is how fast it generates, up is its
-size on disk, and a provider's builds are joined smallest to largest. Each runs
+One bar per build, grouped by provider, the size on disk in the label. Each runs
 the way its provider runs it: llmash with the drafter it pairs with the model
 (the model's own MTP head, or Gemma's assistant drafter), vLLM with MTP or the
-same assistant drafter at three tokens a round, and Ollama as it ships.
+same assistant drafter at three tokens a round, and Ollama as it ships. A bar is
+the mean of the three workloads; the table under it has each.
 
 <!-- PROVIDERS -->
 
-| model | provider | build | size | conversation | coding | thinking |
-|---|---|---|--:|--:|--:|--:|
-| Gemma 4 E4B | llmash | RCO-3 | 3.1 GB | 324 | 478 | 569 |
-| Gemma 4 E4B | llmash | Q4_K_M | 5.0 GB | 321 | 513 | 543 |
-| Gemma 4 E4B | llmash | Q8_0 | 8.2 GB | 245 | 398 | 434 |
-| Gemma 4 E4B | Ollama | q4_K_M | 9.6 GB | 151 | 160 | 163 |
-| Gemma 4 E4B | Ollama | q8_0 | 11.0 GB | 133 | 133 | 137 |
-| Gemma 4 E4B | vLLM | NVFP4 | 8.1 GB | 191 | 251 | 281 |
-| Gemma 4 E4B | vLLM | BF16 | 16.0 GB | 187 | 283 | 308 |
-| Qwen3.8 27B | llmash | RCO-3 | 10.3 GB | 183 | 192 | 213 |
-| Qwen3.8 27B | llmash | GSQ-RCO | 11.9 GB | 193 | 189 | 211 |
-| Qwen3.8 27B | llmash | NVFP4 | 17.1 GB | 168 | 172 | 203 |
-| Qwen3.8 27B | llmash | Q4_K_XL | 17.6 GB | 162 | 165 | 173 |
-| Qwen3.8 27B | Ollama | q4_K_M | 17.0 GB | 110 | 136 | 148 |
-| Qwen3.8 27B | Ollama | q8_0 | 29.0 GB | 76 | 100 | 104 |
-| Qwen3.8 27B | vLLM | NVFP4 | 21.9 GB | 111 | 115 | 125 |
-| Qwen3.8 27B | vLLM | FP8 | 30.9 GB | 88 | 94 | 95 |
-| Qwen3.6 35B-A3B | llmash | RCO-3 | 13.4 GB | 601 | 749 | 673 |
-| Qwen3.6 35B-A3B | llmash | NVFP4 | 20.5 GB | 428 | 486 | 538 |
-| Qwen3.6 35B-A3B | llmash | Q4_K_XL | 23.3 GB | 530 | 569 | 613 |
-| Qwen3.6 35B-A3B | Ollama | q4_K_M | 22.0 GB | 164 | 179 | 180 |
-| Qwen3.6 35B-A3B | Ollama | q8_0 | 38.0 GB | 176 | 188 | 192 |
-| Qwen3.6 35B-A3B | vLLM | NVFP4 | 23.5 GB | 252 | 270 | 287 |
-| Qwen3.6 35B-A3B | vLLM | FP8 | 37.5 GB | 223 | 252 | 270 |
+#### Gemma 4 E4B
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/speed-gemma-4-e4b-dark.svg">
+  <img alt="Gemma 4 E4B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-gemma-4-e4b-light.svg">
+</picture>
+
+| provider | build | size | conversation | coding | thinking |
+|---|---|--:|--:|--:|--:|
+| llmash | RCO-3 | 3.1 GB | 324 | 478 | 569 |
+| llmash | Q4_K_M | 5.0 GB | 321 | 513 | 543 |
+| llmash | Q8_0 | 8.2 GB | 245 | 398 | 434 |
+| Ollama | q4_K_M | 9.6 GB | 151 | 160 | 163 |
+| Ollama | q8_0 | 11.0 GB | 133 | 133 | 137 |
+| vLLM | NVFP4 | 8.1 GB | 191 | 251 | 281 |
+| vLLM | BF16 | 16.0 GB | 187 | 283 | 308 |
+
+#### Qwen3.8 27B
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/speed-qwen3-8-27b-dark.svg">
+  <img alt="Qwen3.8 27B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-qwen3-8-27b-light.svg">
+</picture>
+
+| provider | build | size | conversation | coding | thinking |
+|---|---|--:|--:|--:|--:|
+| llmash | RCO-3 | 10.3 GB | 183 | 192 | 213 |
+| llmash | GSQ-RCO | 11.9 GB | 193 | 189 | 211 |
+| llmash | NVFP4 | 17.1 GB | 168 | 172 | 203 |
+| llmash | Q4_K_XL | 17.6 GB | 162 | 165 | 173 |
+| Ollama | q4_K_M | 17.0 GB | 110 | 136 | 148 |
+| Ollama | q8_0 | 29.0 GB | 76 | 100 | 104 |
+| vLLM | NVFP4 | 21.9 GB | 111 | 115 | 125 |
+| vLLM | FP8 | 30.9 GB | 88 | 94 | 95 |
+
+#### Qwen3.6 35B-A3B
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/speed-qwen3-6-35b-a3b-dark.svg">
+  <img alt="Qwen3.6 35B-A3B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-qwen3-6-35b-a3b-light.svg">
+</picture>
+
+| provider | build | size | conversation | coding | thinking |
+|---|---|--:|--:|--:|--:|
+| llmash | RCO-3 | 13.4 GB | 601 | 749 | 673 |
+| llmash | NVFP4 | 20.5 GB | 428 | 486 | 538 |
+| llmash | Q4_K_XL | 23.3 GB | 530 | 569 | 613 |
+| Ollama | q4_K_M | 22.0 GB | 164 | 179 | 180 |
+| Ollama | q8_0 | 38.0 GB | 176 | 188 | 192 |
+| vLLM | NVFP4 | 23.5 GB | 252 | 270 | 287 |
+| vLLM | FP8 | 37.5 GB | 223 | 252 | 270 |
 
 <!-- /PROVIDERS -->
 
@@ -122,15 +144,42 @@ thinking usually read higher than conversation.
 
 ### What a 3-bit build costs in accuracy
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/math-dark.svg">
-  <img alt="Correct answers out of 40 math questions against tokens generated, per build" src="docs/math-light.svg">
-</picture>
-
 Forty math questions (ten each from GSM8K, MATH level 3, MATH level 5 and AIME
 2025), thinking on, each family's recommended sampling with a fixed seed per
-question, graded by the final `\boxed{}` answer. Across is how many tokens a
-build generated over the forty.
+question, graded by the final `\boxed{}` answer. Each bar's end says how many
+tokens the build generated over the forty: a build that thinks longer to get
+there spends part of its speed advantage.
+
+<!-- MATH -->
+
+#### Qwen3.8-27B
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/math-qwen3-8-27b-dark.svg">
+  <img alt="Qwen3.8-27B: correct answers out of 40 per build" src="docs/math-qwen3-8-27b-light.svg">
+</picture>
+
+| build | size | GSM8K | MATH L3 | MATH L5 | AIME 2025 | total | tokens |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| Q8_0 | 29.1 GB | 9/10 | 10/10 | 10/10 | 9/10 | 38/40 | 203k |
+| RCO-3 | 10.3 GB | 9/10 | 10/10 | 10/10 | 9/10 | 38/40 | 247k |
+| UD-Q2_K_XL | 9.8 GB | 9/10 | 10/10 | 10/10 | 10/10 | 39/40 | 230k |
+
+#### Gemma 4 E4B
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/math-gemma-4-e4b-dark.svg">
+  <img alt="Gemma 4 E4B: correct answers out of 40 per build" src="docs/math-gemma-4-e4b-light.svg">
+</picture>
+
+| build | size | GSM8K | MATH L3 | MATH L5 | AIME 2025 | total | tokens |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| Q8_0 | 8.2 GB | 8/10 | 9/10 | 10/10 | 2/10 | 29/40 | 113k |
+| Q4_K_M | 5.0 GB | 9/10 | 9/10 | 9/10 | 1/10 | 28/40 | 109k |
+| UD-Q2_K_XL | 3.8 GB | 7/10 | 6/10 | 6/10 | 1/10 | 20/40 | 110k |
+| RCO-3 | 3.1 GB | 7/10 | 9/10 | 10/10 | 1/10 | 27/40 | 142k |
+
+<!-- /MATH -->
 
 On Qwen3.8-27B the RCO-3 build answered as many as Q8_0, 38 of 40, at a third
 of the size. On Gemma 4 E4B it answered 27 to Q8_0's 29 at 38% of the size,
