@@ -423,9 +423,11 @@ bool read_console_byte(unsigned char & b) {
     static const std::string keylog = env_str("LLMASH_KEYLOG");
     if (ok && !keylog.empty()) {
         if (FILE * f = std::fopen(keylog.c_str(), "ab")) {
-            std::fprintf(f, b >= 32 && b < 127 ? "%02x '%c'
-" : "%02x
-", b, b);
+            if (b >= 32 && b < 127) {
+                std::fprintf(f, "%02x '%c'\n", b, b);
+            } else {
+                std::fprintf(f, "%02x\n", b);
+            }
             std::fclose(f);
         }
     }
