@@ -1,0 +1,67 @@
+name: edge
+
+# Every push to main is built into the `edge` prerelease, which `llmash
+# update` installs unless told --stable. Releases are cut by hand when the
+# runtime changes; the edge build takes its runtime from the latest release.
+on:
+  push:
+    branches: [main]
+    paths: ['cpp/**', 'VERSION', 'build.py', 'install.ps1', 'install.sh', 'assets/**', '.github/workflows/edge.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: edge
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: stamp the version with the commit
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim() + '+' + $env:GITHUB_SHA.Substring(0, 7)
+          Set-Content VERSION $v -NoNewline
+      - name: build
+        run: python build.py --no-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/llmash-win-x64.zip
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: stamp the version with the commit
+        run: printf '%s+%s' "$(tr -d '\n' < VERSION)" "${GITHUB_SHA::7}" > VERSION
+      - name: build
+        run: |
+          docker build -t llmash-linux-test -f cpp/Dockerfile.test cpp
+          docker run --rm -v "$PWD:/src" llmash-linux-test bash cpp/build-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/llmash-linux-x64.tar.gz
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: publish edge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="$(tr -d '\n' < VERSION)+${GITHUB_SHA::7}"
+          gh release delete edge --yes --cleanup-tag || echo 'no edge build yet'
+          gh release create edge dist/llmash-win-x64.zip dist/llmash-linux-x64.tar.gz install.ps1 install.sh \
+            --prerelease --target "$GITHUB_SHA" --title "$v" \
+            --notes "Built from $GITHUB_SHA. \`llmash update\` installs this; the runtime comes from the latest release."
