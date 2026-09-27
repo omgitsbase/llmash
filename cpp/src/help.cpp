@@ -150,9 +150,11 @@ Usage:
 
 Flags:
       --force   reinstall even when the installed version is already current
+      --stable  the latest release only, not the latest push
 
-Installs the latest release on GitHub when it is newer than what is here,
-and its runtime when that differs. Nothing updates unless you run this.
+Installs the latest push to main (the `edge` build, made on every push) when
+it is newer than what is here, and the latest release's runtime when that
+differs. Nothing updates unless you run this.
 )HELP";
 
 const std::string k_uninstall_help = R"HELP(Remove llmash from this machine

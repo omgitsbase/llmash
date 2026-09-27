@@ -82,7 +82,7 @@ struct Release {
 std::string release_version(const std::string & tag);
 
 bool latest_release(const std::string & slug, Release & out, std::string & err);
-// The release at a tag.
+// The release at a tag; `edge` is what CI builds from the latest push.
 bool release_by_tag(const std::string & slug, const std::string & tag, Release & out, std::string & err);
 
 // "0.4.19" from "0.4.19+331e038", and a numeric order over such numbers

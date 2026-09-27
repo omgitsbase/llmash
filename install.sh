@@ -25,6 +25,7 @@ SHADOW_OLLAMA=
 RUNTIME=
 UNINSTALL=0
 DOWNLOAD=1
+TAG=
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -35,6 +36,7 @@ while [ $# -gt 0 ]; do
         --ollama) SHADOW_OLLAMA=1; shift ;;
         --no-ollama) SHADOW_OLLAMA=0; shift ;;
         --runtime) RUNTIME=$2; shift 2 ;;
+        --tag) TAG=$2; shift 2 ;;
         --dry-run) DOWNLOAD=0; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
         --yes|-y) shift ;;
@@ -125,10 +127,16 @@ ASSET=llmash-linux-$ARCH.tar.gz
 # the release is kept: its own llama.cpp runtime comes from it further down
 API=${LLMASH_API:-https://api.github.com/repos/$REPO}
 curl -fsSL "$API/releases/latest" -o "$TMP/release.json" 2>/dev/null || : > "$TMP/release.json"
+# --tag edge: the program from that build (every push to main is one), the runtime still from the release
+PROGRAM_JSON=$TMP/release.json
+if [ -n "$TAG" ]; then
+    curl -fsSL "$API/releases/tags/$TAG" -o "$TMP/tag.json" 2>/dev/null || die "could not read the $TAG build of $REPO"
+    PROGRAM_JSON=$TMP/tag.json
+fi
 if [ "$DOWNLOAD" = 0 ]; then
     say "would install $ASSET into $LIB"
 else
-URL=$(sed -n 's/.*"browser_download_url": *"\([^"]*'"$ASSET"'\)".*/\1/p' "$TMP/release.json" | head -1)
+URL=$(sed -n 's/.*"browser_download_url": *"\([^"]*'"$ASSET"'\)".*/\1/p' "$PROGRAM_JSON" | head -1)
 if [ -z "$URL" ]; then
     # A release may ship the Windows build alone. Sorted by the tag in the
     # download path, because /releases is ordered by when a release was

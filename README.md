@@ -299,7 +299,7 @@ conversation already holds.
 | `rco convert` | assemble a custom build from a model already on disk |
 | `models` | show where models are read from, or point llmash at a folder of them |
 | `doctor` | check the install, runtime, GPU, models and routes |
-| `update` | install the latest release when it is newer; `--force` to reinstall |
+| `update` | install the latest push to main (the `edge` build), or with `--stable` the latest release; `--force` to reinstall |
 | `launch` | point Claude Code, Codex, Droid and others at this server |
 | `link` | expose the API over a Tailscale funnel, with a key |
 | `uninstall` | remove everything the installer created |
