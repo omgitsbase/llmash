@@ -784,7 +784,8 @@ namespace {
 
 std::pair<json, int> show_model(const std::string & name) {
     const json body = {{"model", name}};
-    const HttpResult r = http_call_json("POST", "/api/show", &body, 60);
+    // a model pulled before its kind was known may fetch what reads its answers here
+    const HttpResult r = http_call_json("POST", "/api/show", &body, 600);
     if (!r.ok) die("Error: " + r.error);
     return {r.body, r.status};
 }

@@ -1039,6 +1039,98 @@ std::string hf_base_model(const std::string & repo) {
     return "";
 }
 
+std::string hf_find_repo_by_file(const std::string & filename, int64_t size) {
+    // the name without its width: the hub searches repository names, and those carry the model's name
+    static const std::regex width(R"([-_.](i?q\d[a-z0-9_]*|f16|f32|bf16|ud[-_].*|nvfp4.*|mxfp4.*|rco[-_.].*)$)", std::regex::icase);
+    const std::string stem  = fs::path(filename).stem().string();
+    const std::string query = std::regex_replace(stem, width, "");
+    if (query.size() < 3) {
+        return "";
+    }
+    std::string escaped;
+    for (const unsigned char c : query) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.') {
+            escaped += static_cast<char>(c);
+        } else {
+            char buf[4];
+            std::snprintf(buf, sizeof(buf), "%%%02X", c);
+            escaped += buf;
+        }
+    }
+    const HttpResult r = http_request(std::string(HF_BASE) + "/api/models?search=" + escaped + "&filter=gguf&limit=20&full=true",
+                                      "GET", "", {}, 10);
+    if (r.status != 200) {
+        return "";
+    }
+    const json d = json::parse(r.body, nullptr, false);
+    if (!d.is_array()) {
+        return "";
+    }
+    std::vector<std::string> holders;
+    for (const auto & m : d) {
+        if (!m.is_object() || !m.contains("id") || !m["id"].is_string()) {
+            continue;
+        }
+        for (const auto & s : m.value("siblings", json::array())) {
+            const std::string rf = s.is_object() ? s.value("rfilename", "") : "";
+            if (equal_fold(fs::path(rf).filename().string(), filename)) {
+                holders.push_back(m["id"].get<std::string>());
+                break;
+            }
+        }
+    }
+    if (holders.size() == 1) {
+        return holders.front();
+    }
+    for (size_t i = 0; i < holders.size() && i < 4; i++) {
+        for (const HfFile & f : hf_files(holders[i])) {
+            if (equal_fold(fs::path(f.name).filename().string(), filename) && f.size == size) {
+                return holders[i];
+            }
+        }
+    }
+    return "";
+}
+
+SourceRecord read_source(const std::string & dir, const std::string & file) {
+    SourceRecord  s;
+    std::ifstream in(fs::path(dir) / "sources.json", std::ios::binary);
+    if (!in) {
+        return s;
+    }
+    const json j = json::parse(in, nullptr, false);
+    if (!j.is_object() || !j.contains(file) || !j[file].is_object()) {
+        return s;
+    }
+    const json & e = j[file];
+    s.repo         = e.value("repo", "");
+    s.from         = e.value("from", "");
+    s.pipeline_tag = e.value("pipeline_tag", "");
+    s.checked      = e.value("checked", false);
+    return s;
+}
+
+bool write_source(const std::string & dir, const std::string & file, const SourceRecord & s) {
+    const fs::path path = fs::path(dir) / "sources.json";
+    json           data = json::object();
+    {
+        std::ifstream in(path, std::ios::binary);
+        if (in) {
+            json parsed = json::parse(in, nullptr, false);
+            if (!parsed.is_discarded() && parsed.is_object()) {
+                data = std::move(parsed);
+            }
+        }
+    }
+    data[file] = json{{"repo", s.repo}, {"from", s.from}, {"pipeline_tag", s.pipeline_tag}, {"checked", s.checked}};
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return false;
+    }
+    out << data.dump(2) << "\n";
+    return out.good();
+}
+
 std::vector<HfFile> hf_files(const std::string & repo, std::string * err, std::set<std::string> * others) {
     if (err != nullptr) {
         err->clear();
@@ -3116,6 +3208,12 @@ bool finish_hf(const std::string & repo, const std::string & from, const std::st
                 tag = t;
             }
         }
+        SourceRecord src;
+        src.repo         = repo;
+        src.from         = origin;
+        src.pipeline_tag = tag;
+        src.checked      = true;
+        write_source(fs::path(first).parent_path().string(), base_name(first), src);
         if (!tag.empty()) {
             install_classifier(repo, origin, first, tag, emit);
         }
