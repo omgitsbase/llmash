@@ -494,6 +494,18 @@ int free_port() {
 
 bool can_offload() { return can_offload_with(guess_llama_bin()); }
 
+bool gpus_all_blackwell() {
+    static const bool all = [] {
+        if (const char * e = std::getenv("LLMASH_FP4"); e != nullptr && *e != '\0') {
+            return std::string(e) != "0";
+        }
+        std::string out;
+        return run_capture({"nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"}, 8000, out) &&
+               all_blackwell(out);
+    }();
+    return all;
+}
+
 bool has_thinking_block(const std::string & chat_template) {
     const std::string t = lower(chat_template);
     return t.find("<think>") != std::string::npos || t.find("enable_thinking") != std::string::npos ||

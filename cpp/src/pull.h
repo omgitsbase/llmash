@@ -16,7 +16,9 @@
 
 namespace llmash {
 
-void handle_pull(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
+// done runs once the pull has finished, successful or not, before the stream closes
+void handle_pull(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg,
+                 std::function<void()> done = {});
 void handle_quants(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
 void handle_resolve(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg);
 

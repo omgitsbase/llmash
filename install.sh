@@ -255,7 +255,9 @@ cuda13() {
 }
 OWN_ASSET=llmash-runtime-linux-cuda-13-x64.tar.gz
 OWN_URL=$(sed -n 's/.*"browser_download_url": *"\([^"]*'"$OWN_ASSET"'\)".*/\1/p' "$TMP/release.json" 2>/dev/null | head -1)
-STAMP_URL=$(sed -n 's/.*"browser_download_url": *"\([^"]*\/RUNTIME\.txt\)".*/\1/p' "$TMP/release.json" 2>/dev/null | head -1)
+# the Linux runtime's own stamp when the release carries one, since the two runtimes need not be the same build
+STAMP_URL=$(sed -n 's/.*"browser_download_url": *"\([^"]*\/RUNTIME-linux\.txt\)".*/\1/p' "$TMP/release.json" 2>/dev/null | head -1)
+[ -n "$STAMP_URL" ] || STAMP_URL=$(sed -n 's/.*"browser_download_url": *"\([^"]*\/RUNTIME\.txt\)".*/\1/p' "$TMP/release.json" 2>/dev/null | head -1)
 
 # The runtime is llama.cpp, whose licence has to travel with the binaries.
 runtime_notice() {
