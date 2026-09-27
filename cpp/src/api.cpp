@@ -224,11 +224,14 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
     mount(srv, "/api/show", [&cfg, &reg](const Request & req, Response & res) {
         const json  body = read_body(req);
-        std::string                name = first_of(jstr(body, "model"), jstr(body, "name"));
-        const std::optional<Model> m    = reg.find(name);
+        std::string          name = first_of(jstr(body, "model"), jstr(body, "name"));
+        std::optional<Model> m    = reg.find(name);
         if (!m) {
             write_json(res, 404, error_obj("model not found"));
             return;
+        }
+        if (ensure_classifier(*m, cfg, reg)) {
+            m = reg.find(name);
         }
         write_json(res, 200, show_json(*m, cfg));
     });

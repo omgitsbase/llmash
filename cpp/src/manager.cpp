@@ -1433,10 +1433,13 @@ int Manager::fit_ctx(const Model & m, int ctx, const LoadPrefs & prefs) {
 Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bool vision, std::string & err,
                         const LoadPrefs & prefs) {
     drop_dead();
-    const std::optional<Model> m = reg_->find(name);
+    std::optional<Model> m = reg_->find(name);
     if (!m) {
         err = "model not found";
         return nullptr;
+    }
+    if (ensure_classifier(*m, cfg_, *reg_)) {
+        m = reg_->find(name);
     }
     if (!file_exists(m->path)) {
         err = "missing from disk";

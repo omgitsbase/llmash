@@ -43,6 +43,10 @@ std::string classifier_head_path(const std::string & gguf);    // <stem>.classif
 // The runtime flags a kind needs: an encoder serves its states, a scorer its rank.
 std::vector<std::string> classifier_launch_flags(const Model & m);
 
+// A model pulled before its kind was known: its source is found (the record beside it, the header, or the file
+// on the hub) and looked up once, and a classifier gets its pieces. True when the registry has to be re-read.
+bool ensure_classifier(const Model & m, const Config & cfg, Registry & reg);
+
 // At pull: the pipeline tag recorded, and the head or readout config taken from the repository that
 // published the GGUF (`repo`) or the model it was converted from (`from`).
 void install_classifier(const std::string & repo, const std::string & from, const std::string & gguf,

@@ -86,6 +86,17 @@ std::string           hf_pipeline_tag(const std::string & repo);
 std::vector<std::string> hf_repo_files(const std::string & repo);
 // The model a repository says it was made from (its card's base_model), or "".
 std::string              hf_base_model(const std::string & repo);
+// The repository that publishes a file of this name and size, found by searching the hub, or "".
+std::string              hf_find_repo_by_file(const std::string & filename, int64_t size);
+
+// Where a file came from, kept in sources.json beside it: the repository it was taken from, the model it
+// was converted from, and the hub's pipeline tag once looked up.
+struct SourceRecord {
+    std::string repo, from, pipeline_tag;
+    bool        checked = false;  // the tag was looked up, even if the hub said nothing
+};
+SourceRecord read_source(const std::string & dir, const std::string & file);
+bool         write_source(const std::string & dir, const std::string & file, const SourceRecord & s);
 std::vector<HfFile>   hf_files(const std::string & repo, std::string * err = nullptr,
                                std::set<std::string> * others = nullptr);
 

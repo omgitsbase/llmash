@@ -286,8 +286,9 @@ such as Laya, Jev-Style and decider, and rerankers with a scoring head. `pull`
 records the tag and takes whatever the repository publishes for reading the
 answers: Laya's decision head is fetched as a sidecar beside the encoder, a
 verdict or answer-letter model gets its readout written to `<model>.classifier.json`,
-and a scoring head inside the GGUF needs nothing more. `show` lists such a model
-with the capability `classification`.
+and a scoring head inside the GGUF needs nothing more. A model pulled before this
+gets the same the first time it is shown or run. `show` lists such a model with
+the capability `classification`.
 
 `run` on a classifier takes questions first, one per line, then judges every line
 of text against them:

@@ -3,6 +3,7 @@
 #include "api_logic.h"
 #include "caps.h"
 #include "gguf_io.h"
+#include "log.h"
 #include "pull.h"
 
 #include <httplib.h>
@@ -2054,6 +2055,50 @@ void install_classifier(const std::string & repo, const std::string & from, cons
         emit(json{{"status", "a classifier: its answers are read at the answer letter, in the common layout (edit " +
                                  fs::path(sidecar_dest(gguf, ".classifier.json")).filename().string() + " for another)"}});
     }
+}
+
+bool ensure_classifier(const Model & m, const Config & cfg, Registry & reg) {
+    (void) cfg;
+    if (!m.classifier.empty() || !m.manifest.empty() || m.incomplete || m.path.empty()) {
+        return false;
+    }
+    const std::string dir  = fs::path(m.path).parent_path().string();
+    const std::string file = fs::path(m.path).filename().string();
+    SourceRecord      src  = read_source(dir, file);
+    if (!src.checked) {
+        const GGUFInfo g = read_gguf(m.path);
+        if (src.repo.empty()) {
+            src.repo = hf_repo_of(g);
+        }
+        std::string tag = src.repo.empty() ? "" : hf_pipeline_tag(src.repo);
+        if (tag != "text-classification") {
+            // the header names nothing, or only the model it was built from: the file itself, on the hub
+            if (const std::string holder = hf_find_repo_by_file(file, static_cast<int64_t>(m.size)); !holder.empty()) {
+                const std::string t = hf_pipeline_tag(holder);
+                if (t == "text-classification" || src.repo.empty()) {
+                    src.repo = holder;
+                    tag      = t;
+                }
+            }
+        }
+        if (src.from.empty()) {
+            src.from = src.repo;
+        }
+        src.pipeline_tag = tag;
+        src.checked      = true;
+        write_source(dir, file, src);
+    }
+    if (src.pipeline_tag != "text-classification" || src.repo.empty()) {
+        return false;
+    }
+    log_line(m.name + ": tagged text-classification on the hub, taking what reads its answers from " + src.repo);
+    install_classifier(src.repo, src.from, m.path, src.pipeline_tag, [&](const json & j) {
+        if (j.contains("status") && j["status"].is_string() && !j.contains("completed")) {
+            log_line(m.name + ": " + j["status"].get<std::string>());
+        }
+    });
+    reg.invalidate();
+    return !classifier_kind(m.path, read_gguf(m.path)).empty();
 }
 
 }  // namespace llmash
