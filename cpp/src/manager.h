@@ -122,6 +122,11 @@ double scratch_gb(int ctx);
 
 int  free_port();
 bool can_offload();
+// every NVIDIA card here is Blackwell (compute capability 10 or newer), so FP4 weights run on its tensor cores;
+// LLMASH_FP4=1 or 0 says so without asking nvidia-smi
+bool gpus_all_blackwell();
+// nvidia-smi's compute_cap lines ("12.0"): at least one card, and every one Blackwell or newer
+bool all_blackwell(const std::string & compute_caps);
 std::pair<int, uint64_t> cpu_threads_and_mask();
 bool has_thinking_block(const std::string & chat_template);
 

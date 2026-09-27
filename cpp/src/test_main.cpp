@@ -2,6 +2,7 @@
 #include "platform.h"
 #include "gguf.h"
 #include "registry.h"
+#include "cli_console.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -61,6 +62,12 @@ int main() {
     write_gguf(dir / "nested" / "Nail-A3B.gguf", "qwen35moe", "blk.0.nextn.eh_proj.weight");
     write_gguf(dir / "Qwen3-8B-Q8_0.mtp.gguf", "qwen3", "blk.0.nextn.weight");
     { std::ofstream(dir / "notes.txt") << "not a model"; }
+
+    // the drafter question: Enter is yes, Escape and Ctrl-C no, d never again, anything else keeps reading
+    check(ynd_feed('y') == 'y' && ynd_feed(13) == 'y' && ynd_feed(10) == 'y', "y and Enter say yes");
+    check(ynd_feed('N') == 'n' && ynd_feed(0x1b) == 'n' && ynd_feed(0x03) == 'n', "n, Escape and Ctrl-C say no");
+    check(ynd_feed('d') == 'd' && ynd_feed('D') == 'd', "d is don't ask again");
+    check(ynd_feed('x') == 0 && ynd_feed(' ') == 0, "other keys keep reading");
 
     const auto files = walk_gguf(dir.string());
     check(files.size() == 3, "walk finds every gguf, subfolders included");
