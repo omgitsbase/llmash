@@ -561,42 +561,49 @@ size_t Editor::right_word() const {
 }
 
 void Editor::draw(std::ostream & out) {
-    const int         w      = editor_width();
-    const std::string p      = cur_prompt();
-    const int         pw     = disp_width(p);
+    const int         w  = editor_width();
+    const std::string p  = cur_prompt();
+    const int         pw = disp_width(p);
+    // One write with the cursor hidden meanwhile: drawn in pieces, the console shows the cursor jump to the
+    // start of the line and back on every key.
+    std::string f = "\x1b[?25l";
     if (rows_ > 0) {
-        out << "\x1b[" << rows_ << "A";
+        f += "\x1b[" + std::to_string(rows_) + "A";
     }
-    out << "\r" << p << utf8_encode(buf_) << "\x1b[0J";
+    f += "\r" + p + utf8_encode(buf_) + "\x1b[0J";
     const int total   = pw + disp_width(buf_);
     const int end_row = total / w;
     const int end_col = total % w;
     if (end_col == 0 && total > 0) {
-        out << " \r"; // force the deferred wrap so the cursor is on the new row
+        f += " \r"; // force the deferred wrap so the cursor is on the new row
     }
+    bool placed = false;
     if (buf_.empty()) {
         const std::string ph = cur_placeholder();
         if (!ph.empty() && (!pasting_ || use_alt_)) {
-            out << colorGrey << ph << colorDefault;
-            out << "\r";
+            f += colorGrey + ph + colorDefault + "\r";
             if (pw > 0) {
-                out << "\x1b[" << pw << "C";
+                f += "\x1b[" + std::to_string(pw) + "C";
             }
-            rows_ = 0;
-            return;
+            rows_  = 0;
+            placed = true;
         }
     }
-    const int target = pw + disp_width(buf_.substr(0, pos_));
-    const int t_row   = target / w;
-    const int t_col   = target % w;
-    if (end_row > t_row) {
-        out << "\x1b[" << (end_row - t_row) << "A";
+    if (!placed) {
+        const int target = pw + disp_width(buf_.substr(0, pos_));
+        const int t_row  = target / w;
+        const int t_col  = target % w;
+        if (end_row > t_row) {
+            f += "\x1b[" + std::to_string(end_row - t_row) + "A";
+        }
+        f += "\r";
+        if (t_col > 0) {
+            f += "\x1b[" + std::to_string(t_col) + "C";
+        }
+        rows_ = t_row;
     }
-    out << "\r";
-    if (t_col > 0) {
-        out << "\x1b[" << t_col << "C";
-    }
-    rows_ = t_row;
+    f += "\x1b[?25h";
+    out << f << std::flush;
 }
 
 void Editor::pasted_line(std::ostream & out) {
@@ -618,7 +625,16 @@ StepResult Editor::step(RuneSource & in, std::ostream & out) {
     const char32_t r = *ro;
 
     if (escex_) {
+        // a control sequence: parameter bytes, then the final byte names the key
+        if (r >= 0x30 && r <= 0x3F) {
+            csi_ += static_cast<char>(r);
+            return {false, "", ReadStatus::Ok};
+        }
         escex_ = false;
+        const std::string params = csi_;
+        csi_.clear();
+        // 1;5 is ctrl, 1;3 alt: either moves by words
+        const bool by_word = params == "1;5" || params == "5" || params == "1;3" || params == "3";
         switch (r) {
             case keyUp:
                 if (hist_.pos > 0) {
@@ -640,42 +656,39 @@ StepResult Editor::step(RuneSource & in, std::ostream & out) {
                 }
                 break;
             case keyLeft:
-                if (pos_ > 0) {
+                if (by_word) {
+                    pos_ = left_word();
+                } else if (pos_ > 0) {
                     pos_--;
                 }
                 break;
             case keyRight:
-                if (pos_ < buf_.size()) {
+                if (by_word) {
+                    pos_ = right_word();
+                } else if (pos_ < buf_.size()) {
                     pos_++;
                 }
-                break;
-            case pasteMarker: {
-                std::u32string code;
-                for (int i = 0; i < 3; i++) {
-                    const auto c = in.next();
-                    if (!c) {
-                        return {true, "", ReadStatus::Eof};
-                    }
-                    code += *c;
-                }
-                if (code == U"00~") {
-                    pasting_ = true;
-                } else if (code == U"01~") {
-                    pasting_ = false;
-                }
-                break;
-            }
-            case keyDel:
-                if (pos_ < buf_.size()) {
-                    buf_.erase(buf_.begin() + pos_);
-                }
-                metaDel_ = true;
                 break;
             case metaStart:
                 pos_ = 0;
                 break;
             case metaEnd:
                 pos_ = buf_.size();
+                break;
+            case U'~':
+                if (params == "3") {
+                    if (pos_ < buf_.size()) {
+                        buf_.erase(buf_.begin() + pos_);
+                    }
+                } else if (params == "200") {
+                    pasting_ = true;
+                } else if (params == "201") {
+                    pasting_ = false;
+                } else if (params == "1" || params == "7") {
+                    pos_ = 0;
+                } else if (params == "4" || params == "8") {
+                    pos_ = buf_.size();
+                }
                 break;
             default:
                 return {false, "", ReadStatus::Ok};
@@ -833,10 +846,6 @@ StepResult Editor::step(RuneSource & in, std::ostream & out) {
             return {true, text, ReadStatus::Ok};
         }
         default:
-            if (metaDel_) {
-                metaDel_ = false;
-                return {false, "", ReadStatus::Ok};
-            }
             if (r >= charSpace) {
                 insert(r);
             }
@@ -851,7 +860,8 @@ LineResult Editor::read_line(RuneSource & in, std::ostream & out) {
     rows_ = 0;
     buf_.clear();
     pos_ = 0;
-    esc_ = escex_ = metaDel_ = false;
+    esc_ = escex_ = false;
+    csi_.clear();
     saved_.clear();
     out << cur_prompt();
 

@@ -112,9 +112,9 @@ private:
     int                      rows_ = 0; // rows below the first that the last redraw used
     std::vector<std::string> pasted_lines_; // lines already committed inside this one prompt
 
-    bool           esc_    = false;
-    bool           escex_  = false;
-    bool           metaDel_ = false;
+    bool           esc_   = false;
+    bool           escex_ = false;
+    std::string    csi_;  // the parameter bytes of the control sequence being read
     std::u32string saved_;
 
     std::string cur_prompt() const;
