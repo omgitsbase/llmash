@@ -488,5 +488,4 @@ case ":$PATH:" in
     *":$BIN:"*) ;;
     *) say "$BIN is not on your PATH; add it to your shell profile" ;;
 esac
-warn 'pull is not available on Linux yet; models already on disk are served normally'
 say 'try:  llmash list'
