@@ -7,7 +7,7 @@
 #   -NoStartup        do not start llmash at login
 #   -Runtime <kind>   llama.cpp build to fetch: auto (default), cuda, vulkan, cpu, none
 #   -Dir <path>       install somewhere other than %ProgramData%\llmash
-#   -Tag <tag>        take the program from that release; update passes edge, the latest push
+#   -Tag <tag>        take the program from that release instead of the latest
 #   -Mbps <n>         cap the download at n megabits per second (default 0, no cap)
 #   -Streams <n>      parallel ranged connections per file (default 8)
 #   -Yes              answer yes to every prompt

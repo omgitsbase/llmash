@@ -1,0 +1,189 @@
+[
+ {
+  "label": "Qwen3.8 27B",
+  "format": "NVFP4",
+  "build": "NVFP4, 17.1 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 168.9,
+   "coding": 173.7,
+   "thinking": 203.7
+  },
+  "acceptance": {
+   "conversation": 0.518,
+   "coding": 0.539,
+   "thinking": 0.653
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "Qwen3.8 27B",
+  "format": "GSQ-RCO",
+  "build": "GSQ-RCO IQ3_S, 11.9 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 192.9,
+   "coding": 188.3,
+   "thinking": 211.0
+  },
+  "acceptance": {
+   "conversation": 0.517,
+   "coding": 0.547,
+   "thinking": 0.647
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "Qwen3.6 35B-A3B",
+  "format": "RCO-3",
+  "build": "RCO-3, 13.4 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 603.7,
+   "coding": 749.7,
+   "thinking": 734.8
+  },
+  "acceptance": {
+   "conversation": 0.546,
+   "coding": 0.691,
+   "thinking": 0.755
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "gemma-4 26B-A4B",
+  "format": "RCO-3",
+  "build": "RCO-3, 9.5 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 436.3,
+   "coding": 546.8,
+   "thinking": 564.4
+  },
+  "acceptance": {
+   "conversation": 0.554,
+   "coding": 0.781,
+   "thinking": 0.791
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "Qwen3.6 35B-A3B",
+  "format": "INT4",
+  "build": "UD-Q4_K_XL, 23.3 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 583.0,
+   "coding": 627.2,
+   "thinking": 682.9
+  },
+  "acceptance": {
+   "conversation": 0.589,
+   "coding": 0.631,
+   "thinking": 0.735
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "gemma-4 E4B",
+  "format": "INT4",
+  "build": "Q4_K_M, 5.0 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 269.6,
+   "coding": 269.6,
+   "thinking": 270.7
+  },
+  "acceptance": {
+   "conversation": 0.031,
+   "coding": 0.016,
+   "thinking": null
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "Qwen3.6 35B-A3B",
+  "format": "NVFP4",
+  "build": "NVFP4, 20.5 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 413.4,
+   "coding": 443.4,
+   "thinking": 514.0
+  },
+  "acceptance": {
+   "conversation": 0.593,
+   "coding": 0.674,
+   "thinking": 0.791
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "gemma-4 26B-A4B",
+  "format": "NVFP4",
+  "build": "NVFP4, 14.4 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 302.5,
+   "coding": 307.2,
+   "thinking": 297.0
+  },
+  "acceptance": {
+   "conversation": 0.031,
+   "coding": null,
+   "thinking": null
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "GLM-4.7 Flash",
+  "format": "NVFP4",
+  "build": "NVFP4, 17.0 GB",
+  "runtime": "current",
+  "workloads": {
+   "conversation": 279.5,
+   "coding": 231.5,
+   "thinking": 231.4
+  },
+  "acceptance": {
+   "conversation": 0.07,
+   "coding": 0.297,
+   "thinking": null
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "Qwen3.6 35B-A3B",
+  "format": "INT4",
+  "build": "UD-Q4_K_XL, 23.3 GB",
+  "runtime": "previous",
+  "workloads": {
+   "conversation": 488.7,
+   "coding": 514.7,
+   "thinking": 575.9
+  },
+  "acceptance": {
+   "conversation": 0.584,
+   "coding": 0.62,
+   "thinking": 0.723
+  },
+  "measured": "2026-09-27"
+ },
+ {
+  "label": "Qwen3.8 27B",
+  "format": "GSQ-RCO",
+  "build": "GSQ-RCO IQ3_S, 11.9 GB",
+  "runtime": "previous",
+  "workloads": {
+   "conversation": 187.3,
+   "coding": 180.7,
+   "thinking": 207.1
+  },
+  "acceptance": {
+   "conversation": 0.517,
+   "coding": 0.534,
+   "thinking": 0.641
+  },
+  "measured": "2026-09-27"
+ }
+]

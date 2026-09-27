@@ -290,6 +290,76 @@ void test_hf_parsing_and_pickers() {
     check_eq(proj->name, std::string("mmproj-Qwen3.6-27B-f16.gguf"), "f16 wins over the larger f32 projector");
 }
 
+// A search hit as /api/models?search= gives it: the card's base model only as
+// the base_model tags the hub derives from it.
+HubModel hub_hit(const std::string & id, const std::string & base = "", const std::string & relation = "quantized") {
+    HubModel m;
+    m.id = id;
+    if (!base.empty()) {
+        m.tags = {"gguf", "base_model:" + base, "base_model:" + relation + ":" + base};
+    }
+    return m;
+}
+
+void test_gguf_conversions() {
+    section("converts: a GGUF of the model asked for, never of a derivative");
+
+    // what the hub's search turned up for this repo, which holds only safetensors
+    const std::string mimo = "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B";
+    const std::string ablit = "Hikari07jp/MiMo-V2.6-Distill-Qwen-9B-Ablitrated";
+    for (const HubModel & m : {hub_hit("bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF", mimo),
+                               hub_hit("ggml-org/MiMo-V2.6-Distill-Qwen-9B-GGUF", mimo),
+                               hub_hit("mradermacher/MiMo-V2.6-Distill-Qwen-9B-i1-GGUF", mimo),
+                               hub_hit("mradermacher/MiMo-V2.6-Distill-Qwen-9B-GGUF", mimo),
+                               hub_hit("bartowski/XiaomiMiMo_MiMo-V2.6-Distill-Qwen-9B-GGUF", mimo),
+                               hub_hit("CNWPlayer/MiMo-V2.6-Distill-Qwen-9B-Q4_K_M-GGUF", mimo),
+                               hub_hit("holooo/MiMo-V2.6-Distill-Qwen-9B-Q5_K_S-GGUF", mimo, "finetune"),
+                               hub_hit("someone/mimo-v2.6-distill-qwen-9b-gguf")}) {
+        check(converts(m, mimo), m.id + " is a GGUF of " + mimo);
+    }
+    for (const HubModel & m : {hub_hit("mradermacher/MiMo-V2.6-Distill-Qwen-9B-ablit-i1-GGUF", ablit),
+                               hub_hit("mradermacher/MiMo-V2.6-Distill-Qwen-9B-ablit-GGUF", ablit),
+                               // its card claims the original; its name says otherwise
+                               hub_hit("BoldingBuilds/Abliterated-MiMo-V2.6-Distill-Qwen-9B-GGUF", mimo),
+                               hub_hit("geantendormi/MiMo-V2.6-Distill-Qwen-9B-Abliterated-GGUF"),
+                               hub_hit("quimmedes/MiMo-V2.6-Distill-Qwen-9B-XYZ-GGUF", "Qwen/Qwen3.5-9B"),
+                               hub_hit("VitreousCut/MiMo-V2.6-Distill-Qwen-9B-MTP-GGUF", mimo),
+                               hub_hit("wepiqx/MiMo-V2.6-Distill-Qwen-9B-GGUF-MERNIK", mimo),
+                               hub_hit("0xSojalSec/Abliterated-MiMo-V2.6-Distill-Qwen-9B-GGUF-MLX", mimo),
+                               hub_hit("Brunobkr/OFFFELLIA_MiMo-V2.6-Distill-Qwen-9B.gguf"),
+                               hub_hit("someone/MiMo-V2.6-Distill-Qwen-9B-heretic-uncensored-GGUF"),
+                               // the right name over a card naming another model: a namesake
+                               hub_hit("someone/MiMo-V2.6-Distill-Qwen-9B-GGUF", ablit),
+                               hub_hit("unsloth/Qwen3.5-9B-GGUF", "Qwen/Qwen3.5-9B")}) {
+        check(!converts(m, mimo), m.id + " is not a GGUF of " + mimo);
+    }
+
+    // a mirror's GGUF names the original as its base, and bartowski puts that org in front
+    check(converts(hub_hit("unsloth/Qwen3-8B-GGUF", "Qwen/Qwen3-8B"), "unsloth/Qwen3-8B"),
+          "a card naming a repo of the same name is the same model");
+    check(converts(hub_hit("bartowski/Qwen_Qwen3-8B-GGUF", "Qwen/Qwen3-8B"), "mlx-community/Qwen3-8B-4bit"),
+          "an MLX build's model is found under its base's org");
+    check(!converts(hub_hit("bartowski/Qwen_Qwen3-8B-GGUF"), "mlx-community/Qwen3-8B-4bit"),
+          "with no card, an org in front has to be the one asked about");
+    check(converts(hub_hit("TheBloke/Llama-2-7B-Chat-GGUF", "meta-llama/Llama-2-7b-chat-hf"),
+                   "meta-llama/Llama-2-7b-chat-hf"),
+          "meta-llama's -hf is not part of the model's name");
+    check(!converts(hub_hit("unsloth/Qwen3-8B-128K-GGUF", "Qwen/Qwen3-8B"), "Qwen/Qwen3-8B"),
+          "a word added is another build of the model, not a GGUF of it");
+
+    // the published GSQ-RCO builds, which gsq_rco_quants offers under the model's name
+    check(converts(hub_hit("ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF", "Qwen/Qwen3.8-27B"), "Qwen/Qwen3.8-27B"),
+          "a GSQ-RCO build of the model");
+    check(!converts(hub_hit("0bserverx/Qwen3.8-27B-Heretic-GSQ-RCO-GGUF",
+                            "0bserverx/Qwen3.8-27B-Heretic-Abliterated-Uncensored"),
+                    "Qwen/Qwen3.8-27B"),
+          "a GSQ-RCO build of a Heretic fine-tune is not");
+
+    check_eq(model_name_of("mlx-community/Qwen3-8B-MLX-4bit"), std::string("qwen3-8b"), "format words come off");
+    check_eq(model_name_of("XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B"), std::string("mimo-v2.6-distill-qwen-9b"),
+             "a name with none is only lower-cased");
+}
+
 void test_already_have() {
     section("already_have");
     const fs::path dir = scratch() / "have";
@@ -715,6 +785,15 @@ void test_model_stem() {
              "the packaging suffixes come off in order, -GGUF then -Instruct");
 }
 
+void test_all_blackwell() {
+    check(all_blackwell("12.0\n"), "one Blackwell card");
+    check(all_blackwell("12.0\r\n10.0\r\n"), "two Blackwell cards, CRLF");
+    check(!all_blackwell("12.0\n8.9\n"), "a Blackwell card beside an Ada one is not all Blackwell");
+    check(!all_blackwell("8.6\n"), "Ampere");
+    check(!all_blackwell(""), "no card");
+    check(!all_blackwell("NVIDIA-SMI has failed\n"), "nvidia-smi's error text");
+}
+
 } // namespace
 
 int main() {
@@ -727,9 +806,11 @@ int main() {
     std::cout << "scratch: " << scratch().string() << "\n";
 
     test_quant_tag();
+    test_all_blackwell();
     test_other_formats();
     test_kind_of();
     test_hf_parsing_and_pickers();
+    test_gguf_conversions();
     test_rco_source_pick();
     test_already_have();
     test_block_map_resume();

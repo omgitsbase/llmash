@@ -138,12 +138,10 @@ Usage:
   llmash update [flags]
 
 Flags:
-      --stable  take the latest release rather than the latest push
       --force   reinstall even when the installed version is already current
 
-Every push to main is built into the `edge` prerelease on GitHub, and update
-installs that when it is newer than what is here. The runtime only changes
-with a release.
+Installs the latest release on GitHub when it is newer than what is here,
+and its runtime when that differs. Nothing updates unless you run this.
 )HELP";
 
 const std::string k_uninstall_help = R"HELP(Remove llmash from this machine
@@ -378,6 +376,13 @@ const std::string k_rm_help = R"HELP(Remove a model
 
 Usage:
   ollama rm MODEL [MODEL...] [flags]
+
+Aliases:
+  rm, remove
+
+A name that is no model's own can be part of one: rm qwen removes the one
+model here with qwen in its name. When several have it, none is removed and
+they are listed.
 
 Flags:
   -h, --help   help for rm

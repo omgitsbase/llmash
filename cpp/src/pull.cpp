@@ -1,4 +1,5 @@
 #include "pull.h"
+#include "manager.h"
 
 #include "gguf.h"
 #include "gguf_io.h"
@@ -1010,9 +1011,121 @@ std::vector<HfFile> hf_files(const std::string & repo, std::string * err, std::s
     return out;
 }
 
-// Repos carrying a GGUF of the same model, for one that carries none. The
-// query is the repo's own name with the format words taken off it.
-std::vector<std::string> gguf_repos_for(const std::string & repo, int want) {
+namespace {
+
+// The model a repo's name says it holds, lower-cased and without the words for
+// the format it is kept in, so another repo's name can be held against it.
+std::string model_name_of(const std::string & repo) {
+    std::string name = lower(repo.substr(repo.find('/') + 1));
+    for (const char * drop : {"-mlx", "-exl3", "-exl2", "-awq", "-gptq", "-4bit", "-8bit", "-bf16", "-fp8", "-i1-gguf",
+                              "-gguf", "-gsq-rco"}) {
+        for (size_t at = name.find(drop); at != std::string::npos; at = name.find(drop)) {
+            name.erase(at, std::strlen(drop));
+        }
+    }
+    if (ends_with(name, "-hf")) {
+        name.resize(name.size() - 3);  // meta-llama's -hf repos, which no GGUF of them is named after
+    }
+    return name;
+}
+
+// The repos a hub entry's card names as its base: cardData's base_model, and
+// the base_model:<repo> and base_model:<relation>:<repo> tags the hub makes of it.
+std::vector<std::string> base_models_of(const HubModel & m) {
+    std::vector<std::string> out;
+    const auto add = [&out](const std::string & b) {
+        const auto same = [&b](const std::string & o) { return equal_fold(o, b); };
+        if (!b.empty() && std::none_of(out.begin(), out.end(), same)) {
+            out.push_back(b);
+        }
+    };
+    for (const std::string & b : m.base_models) {
+        add(b);
+    }
+    for (const std::string & t : m.tags) {
+        if (starts_with(t, "base_model:")) {
+            const std::string b = t.substr(std::strlen("base_model:"));
+            add(b.substr(b.find(':') + 1));  // a repo id holds no colon, a relation is followed by one
+        }
+    }
+    return out;
+}
+
+// Whether a hub entry is a GGUF of `repo`'s model itself rather than of a
+// fine-tune, merge or abliteration of it. Its name has to be the model's own
+// with nothing added but what GGUF repos are named with: "-GGUF", mradermacher's
+// "-i1", a GSQ-RCO build's marker, one build's quant as GGUF-my-repo names its
+// repos, and bartowski's "<org>_" in front. A card that names a base has to
+// name this repo or one of the same name, as unsloth/Qwen3-8B's GGUF names
+// Qwen/Qwen3-8B; a derivative's names the derivative.
+bool converts(const HubModel & hit, const std::string & repo) {
+    const std::string want = model_name_of(repo);
+    if (want.empty()) {
+        return false;
+    }
+    std::vector<std::string> orgs{lower(repo.substr(0, repo.find('/')))};
+    const std::vector<std::string> bases = base_models_of(hit);
+    bool                           named = bases.empty();
+    for (const std::string & b : bases) {
+        if (equal_fold(b, repo) || model_name_of(b) == want) {
+            named = true;
+            orgs.push_back(lower(b.substr(0, b.find('/'))));
+        }
+    }
+    if (!named) {
+        return false;
+    }
+    std::string name = lower(hit.id.substr(hit.id.find('/') + 1));
+    bool        gguf = false;
+    for (const char * suffix : {"-gguf", "_gguf", ".gguf"}) {
+        if (ends_with(name, suffix)) {
+            name.resize(name.size() - std::strlen(suffix));
+            gguf = true;
+            break;
+        }
+    }
+    if (!gguf) {
+        return false;  // "-GGUF-MLX", "-GGUF-<someone>": a word after it is a word added
+    }
+    const auto is_want = [&](const std::string & n) {
+        return n == want ||
+               std::any_of(orgs.begin(), orgs.end(), [&](const std::string & o) { return n == o + "_" + want; });
+    };
+    static const std::regex quant_end(
+        R"([-_.]((?:ud-)?(?:iq|q|tq)[1-8](?:_[0-9a-z]+)*|bf16|f16|f32|mxfp4(?:_moe)?|nvfp4)$)");
+    // the naming words come off the end one at a time, in any order, and the
+    // name is tried after each in case the model's own name ends in one
+    for (;;) {
+        if (is_want(name)) {
+            return true;
+        }
+        std::smatch m;
+        if (std::regex_search(name, m, quant_end)) {
+            name.resize(static_cast<size_t>(m.position(0)));
+            continue;
+        }
+        bool cut = false;
+        for (const char * word : {"-i1", "-imatrix", "-gsq-rco"}) {
+            if (ends_with(name, word)) {
+                name.resize(name.size() - std::strlen(word));
+                cut = true;
+                break;
+            }
+        }
+        if (!cut) {
+            return false;
+        }
+    }
+}
+
+} // namespace
+
+// Repos carrying a GGUF of `repo`'s model itself, for one that carries none, in
+// the hub's order. The query is the repo's own name with the format words taken
+// off it. The GGUFs of other models the search turns up, fine-tunes, merges and
+// abliterations of it or the model it came from, go into `lookalikes`: they are
+// named when nothing else is found, never taken in its place.
+std::vector<std::string> gguf_repos_for(const std::string & repo, int want, std::vector<std::string> * lookalikes) {
     std::string name = repo.substr(repo.find('/') + 1);
     for (const char * drop : {"-mlx", "-MLX", "-exl3", "-EXL3", "-exl2", "-AWQ", "-awq", "-GPTQ", "-gptq", "-4bit",
                               "-8bit", "-bf16", "-BF16", "-fp8", "-FP8"}) {
@@ -1021,7 +1134,8 @@ std::vector<std::string> gguf_repos_for(const std::string & repo, int want) {
         }
     }
     // A fine-tune's full name matches nothing, so the query gives up words from
-    // the end until it does: the family alone always finds a GGUF.
+    // the end until some GGUF turns up. A shorter name only finds other models,
+    // which are there to be named.
     std::vector<std::string> parts;
     for (size_t at = 0; at < name.size();) {
         const size_t dash = name.find('-', at);
@@ -1029,7 +1143,8 @@ std::vector<std::string> gguf_repos_for(const std::string & repo, int want) {
         at = dash == std::string::npos ? name.size() : dash + 1;
     }
     std::vector<std::string> out;
-    for (size_t keep = parts.size(); keep >= 1 && out.empty(); keep--) {
+    bool                     found = false;
+    for (size_t keep = parts.size(); keep >= 1 && !found; keep--) {
         std::string q;
         for (size_t i = 0; i < keep; i++) {
             q += (i ? "-" : "") + parts[i];
@@ -1038,9 +1153,13 @@ std::vector<std::string> gguf_repos_for(const std::string & repo, int want) {
             if (!contains(lower(m.id), "gguf") || equal_fold(m.id, repo)) {
                 continue;
             }
-            out.push_back(m.id);
-            if (static_cast<int>(out.size()) >= want) {
-                break;
+            found = true;
+            if (converts(m, repo)) {
+                if (static_cast<int>(out.size()) < want) {
+                    out.push_back(m.id);
+                }
+            } else if (lookalikes != nullptr && static_cast<int>(lookalikes->size()) < want) {
+                lookalikes->push_back(m.id);
             }
         }
     }
@@ -1062,8 +1181,9 @@ std::vector<QuantInfo> gsq_rco_quants(const std::string & repo) {
     std::string found;
     for (const HubModel & m : hub_search(base + " GSQ-RCO", 10)) {
         const std::string low = lower(m.id);
-        if (low.find("gsq-rco") == std::string::npos || low.find("gguf") == std::string::npos || equal_fold(m.id, repo)) {
-            continue;
+        if (low.find("gsq-rco") == std::string::npos || low.find("gguf") == std::string::npos ||
+            equal_fold(m.id, repo) || !converts(m, repo)) {
+            continue;  // a Heretic or Uncensored GSQ-RCO build is another model's
         }
         if (found.empty() || starts_with(low, "ista-daslab/")) {
             found = m.id;
@@ -1083,10 +1203,13 @@ std::vector<QuantInfo> gsq_rco_quants(const std::string & repo) {
 }
 
 // The repo itself when it carries a GGUF build, otherwise the best-placed
-// repo on the hub carrying one of the same model, otherwise empty. `files`
-// comes back holding the chosen repo's listing.
+// repo on the hub carrying a GGUF of that same model, otherwise empty. A GGUF
+// of a fine-tune, merge or abliteration of it is never taken: those come back
+// in `lookalikes`, to be named. `files` comes back holding the chosen repo's
+// listing.
 std::string resolve_gguf_repo(const std::string & repo, const std::string & quant, double bpw,
-                              std::vector<HfFile> & files, std::set<std::string> & others, std::string & err) {
+                              std::vector<HfFile> & files, std::set<std::string> & others, std::string & err,
+                              std::vector<std::string> * lookalikes = nullptr) {
     const auto usable = [&](const std::vector<HfFile> & fs) {
         return bpw > 0 ? !pick_rco_source(fs, bpw).empty() : !quants_of(fs).empty();
     };
@@ -1101,15 +1224,8 @@ std::string resolve_gguf_repo(const std::string & repo, const std::string & quan
         std::vector<HfFile> files;
         int                 score = 0;
     };
-    // the model's own name, as a GGUF repo would carry it
-    std::string base = lower(repo.substr(repo.find('/') + 1));
-    for (const char * drop : {"-mlx", "-exl3", "-exl2", "-awq", "-gptq", "-4bit", "-8bit", "-bf16", "-fp8", "-i1-gguf", "-gguf"}) {
-        for (size_t at = base.find(drop); at != std::string::npos; at = base.find(drop)) {
-            base.erase(at, std::strlen(drop));
-        }
-    }
     std::vector<Cand> cands;
-    for (const std::string & alt : gguf_repos_for(repo, 8)) {
+    for (const std::string & alt : gguf_repos_for(repo, 8, lookalikes)) {
         std::string           aerr;
         std::set<std::string> aothers;
         std::vector<HfFile>   afiles = hf_files(alt, &aerr, &aothers);
@@ -1117,15 +1233,6 @@ std::string resolve_gguf_repo(const std::string & repo, const std::string & quan
             continue;
         }
         int score = static_cast<int>(quants_of(afiles).size());
-        std::string an = lower(alt.substr(alt.find('/') + 1));
-        for (const char * drop : {"-i1-gguf", "-gguf"}) {
-            if (const size_t at = an.rfind(drop); at != std::string::npos && at + std::strlen(drop) == an.size()) {
-                an.erase(at);
-            }
-        }
-        if (an == base) {
-            score += 10000;  // the model itself, not a fine-tune of it
-        }
         if (bpw > 0) {
             score += static_cast<int>(bits_of_quant(quant_tag(pick_rco_source(afiles, bpw).front().name)) * 100);
         } else if (!quant.empty() && equal_fold(quant_tag(pick_gguf(afiles, quant).front().name), quant)) {
@@ -3459,16 +3566,29 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
             }
         }
         // a repo with no GGUF is answered by one of the same model that has one
-        std::vector<HfFile>   files;
-        std::set<std::string> others;
-        std::string           rerr;
+        std::vector<HfFile>      files;
+        std::set<std::string>    others;
+        std::string              rerr;
+        std::vector<std::string> lookalikes;
         emit(json{{"status", "looking up " + from + " on Hugging Face"}});
-        const std::string used = resolve_gguf_repo(from, q, rco_bpw_of_quant(q), files, others, rerr);
+        const std::string used = resolve_gguf_repo(from, q, rco_bpw_of_quant(q), files, others, rerr, &lookalikes);
         if (used.empty()) {
+            if (!rerr.empty()) {
+                emit(error_obj(rerr));
+                return;
+            }
             const std::string has = other_formats_text(others);
-            emit(error_obj(!rerr.empty() ? rerr
-                                         : repo + " holds no GGUF build" + (has.empty() ? "" : ", only " + has) +
-                                               ", and no GGUF of the same model turned up on the hub."));
+            std::string       msg = repo + " holds no GGUF build" + (has.empty() ? "" : ", only " + has) +
+                              ", and no GGUF of that exact model turned up on the hub.";
+            // what the search did find is a different model, and is only named
+            if (!lookalikes.empty()) {
+                msg += " The nearest are GGUFs of different models (fine-tunes, merges, abliterations, or the model it "
+                       "came from), so none was taken in its place:";
+                for (const std::string & l : lookalikes) {
+                    msg += "\n  hf:" + l;
+                }
+            }
+            emit(error_obj(msg));
             return;
         }
         if (used != from) {
@@ -3628,26 +3748,65 @@ json api_quants(const std::string & repo_arg) {
 
 // -------------------------------------------------------------- httplib
 
-void handle_pull(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg) {
+void handle_pull(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg,
+                 std::function<void()> done) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.is_object()) {
         body = json::object();
     }
     res.status = 200;
-    res.set_chunked_content_provider("application/x-ndjson", [body, &cfg, &reg](size_t, httplib::DataSink & sink) {
+    res.set_chunked_content_provider("application/x-ndjson",
+                                     [body, &cfg, &reg, done](size_t, httplib::DataSink & sink) {
         run_pull(body, cfg, reg, [&sink](const json & ev) {
             const std::string line = ev.dump() + "\n";
             sink.write(line.data(), line.size());
         });
+        if (done) {
+            done();
+        }
         sink.done();
         return true;
     });
 }
 
+bool all_blackwell(const std::string & compute_caps) {
+    std::istringstream in(compute_caps);
+    std::string        line;
+    int                n = 0;
+    while (std::getline(in, line)) {
+        line.erase(std::remove_if(line.begin(), line.end(), [](unsigned char c) { return std::isspace(c) != 0; }),
+                   line.end());
+        if (line.empty()) {
+            continue;
+        }
+        try {
+            if (std::stod(line) < 10.0) {
+                return false;
+            }
+        } catch (const std::exception &) {
+            return false;
+        }
+        n++;
+    }
+    return n > 0;
+}
+
+// the llmash runtime's build number, from the RUNTIME.txt beside llama-server; 0 for any other runtime
+static int runtime_build(const Config & cfg) {
+    std::ifstream     in(fs::path(cfg.llama_bin).parent_path() / "RUNTIME.txt");
+    const std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const size_t      i = s.find("build ");
+    return i == std::string::npos ? 0 : std::atoi(s.c_str() + i + 6);
+}
+
 void handle_quants(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg) {
-    (void) cfg;
     (void) reg;
-    const json out = api_quants(req.get_param_value("repo"));
+    json out = api_quants(req.get_param_value("repo"));
+    // the picker offers an NVFP4 build as the medium one when every card here runs FP4 natively, on a runtime
+    // whose mixture-of-experts verify takes NVFP4 (build 143 on)
+    if (!out.contains("error")) {
+        out["fp4"] = gpus_all_blackwell() && runtime_build(cfg) >= 143;
+    }
     res.status     = out.contains("error") ? 502 : 200;
     res.set_content(out.dump(), "application/json");
 }

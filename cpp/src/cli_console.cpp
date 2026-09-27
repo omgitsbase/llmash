@@ -104,6 +104,27 @@ bool confirm(const std::string & question) {
     }
 }
 
+char ynd_feed(int ch) {
+    switch (ch) {
+        case 'y': case 'Y': case '\r': case '\n': return 'y';
+        case 'n': case 'N': case 0x1b: case 0x03: return 'n';
+        case 'd': case 'D': return 'd';
+        default: return 0;
+    }
+}
+
+char ask_ynd(const std::string & question) {
+    std::printf("%s [Y/n/d] ", question.c_str());
+    for (;;) {
+        const char c = ynd_feed(raw_getch());
+        if (c == 0) {
+            continue;
+        }
+        std::printf(c == 'y' ? "yes\n" : c == 'n' ? "no\n" : "no, and don't ask again\n");
+        return c;
+    }
+}
+
 int ask_number(const std::string & prompt, int def, int max) {
     std::printf("%s [%d] ", prompt.c_str(), def);
     std::string buf;

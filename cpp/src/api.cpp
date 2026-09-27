@@ -366,8 +366,13 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
 
     // -------------------------------------------------------------- pull
 
-    mount(srv, "/api/pull", [&cfg, &reg](const Request & req, Response & res) {
-        handle_pull(req, res, cfg, reg);
+    // a `list` right after a pull must not print the table rendered while the file was still a .part
+    mount(srv, "/api/pull", [&cfg, &reg, st](const Request & req, Response & res) {
+        handle_pull(req, res, cfg, reg, [&cfg, st] {
+            std::error_code rm;
+            std::filesystem::remove(std::filesystem::path(cfg.root) / "cache" / "list.txt", rm);
+            st->cli.invalidate();
+        });
     });
     mount(srv, "/api/quants", [&cfg, &reg](const Request & req, Response & res) {
         handle_quants(req, res, cfg, reg);
