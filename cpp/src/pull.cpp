@@ -1105,7 +1105,7 @@ bool converts(const HubModel & hit, const std::string & repo) {
             continue;
         }
         bool cut = false;
-        for (const char * word : {"-i1", "-imatrix", "-gsq-rco"}) {
+        for (const char * word : {"-i1", "-imatrix", "-imat", "-gsq-rco", "-mtp"}) {
             if (ends_with(name, word)) {
                 name.resize(name.size() - std::strlen(word));
                 cut = true;
@@ -1119,6 +1119,8 @@ bool converts(const HubModel & hit, const std::string & repo) {
 }
 
 } // namespace
+
+bool gguf_of_model(const HubModel & hit, const std::string & model) { return converts(hit, "x/" + model); }
 
 // Repos carrying a GGUF of `repo`'s model itself, for one that carries none, in
 // the hub's order. The query is the repo's own name with the format words taken
@@ -1197,6 +1199,36 @@ std::vector<QuantInfo> gsq_rco_quants(const std::string & repo) {
         if (err.empty()) {
             q.repo = found;
             out.push_back(q);
+        }
+    }
+    return out;
+}
+
+// An NVFP4 build of the same model from another repository, for a machine whose cards run FP4 when the repo asked
+// for holds none: the same exact-model check as a GSQ-RCO build, the most downloaded repository first.
+std::vector<QuantInfo> nvfp4_quants(const std::string & repo) {
+    std::vector<QuantInfo> out;
+    std::string            base = repo.substr(repo.find('/') + 1);
+    for (const char * drop : {"-i1-GGUF", "-GGUF", "-gguf"}) {
+        if (const size_t at = base.find(drop); at != std::string::npos) {
+            base.erase(at, std::strlen(drop));
+        }
+    }
+    for (const HubModel & m : hub_search(base + " NVFP4", 10)) {
+        const std::string low = lower(m.id);
+        if (low.find("nvfp4") == std::string::npos || low.find("gguf") == std::string::npos ||
+            equal_fold(m.id, repo) || !converts(m, repo)) {
+            continue;
+        }
+        std::string err;
+        for (QuantInfo q : quants_of(hf_files(m.id, &err))) {
+            if (err.empty() && contains(lower(q.name), "nvfp4")) {
+                q.repo = m.id;
+                out.push_back(q);
+            }
+        }
+        if (!out.empty()) {
+            break;
         }
     }
     return out;
@@ -2102,6 +2134,10 @@ std::vector<RowBlock> plan_blocks(const ggufio::Layout & l, const rco::Ggml & g,
 
 } // namespace
 
+bool hub_span(const std::string & url, int64_t from, int64_t bytes, char * out, std::string & err) {
+    return fetch_span(url, from, bytes, out, nullptr, err, 0);
+}
+
 // The repository's own file, fetched into the cache once.
 bool cache_file(const std::string & repo, const std::string & rel, const Config & cfg, std::string & path,
                 std::string & err) {
@@ -2865,7 +2901,8 @@ std::string hf_pull(const std::string & repo, const std::string & quant, const s
         emit(error_obj(err));
         return "";
     }
-    const std::vector<HfFile> want = pick_gguf(files, quant);
+    // nothing asked for by name: the usual 4-bit build, or the nearest thing the repo has, without comment
+    const std::vector<HfFile> want = pick_gguf(files, quant.empty() ? "Q4_K_M" : quant);
     if (want.empty()) {
         const std::string has = other_formats_text(others);
         emit(error_obj(repo + " holds no GGUF build" + (has.empty() ? "" : ", only " + has) +
@@ -3217,6 +3254,10 @@ std::vector<std::string> manifest_digests(const std::string & path, bool & ok) {
 
 } // namespace
 
+bool hub_head(const std::string & url, int64_t bytes, std::string & out, std::string & err) {
+    return read_head(url, bytes, out, err);
+}
+
 void remove_manifest_model(const Config & cfg, Registry & reg, const std::string & manifest_path) {
     bool                           ok    = false;
     const std::vector<std::string> gone  = manifest_digests(manifest_path, ok);
@@ -3549,9 +3590,6 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
         if (!quant.empty()) {
             q = quant;
         }
-        if (q.empty()) {
-            q = "Q4_K_M";
-        }
         // A published GSQ-RCO build of this model is listed by the picker under
         // this repo's name. --quant has to reach it the same way choosing the
         // row does, or it lands on a mirror that has no such build.
@@ -3803,9 +3841,21 @@ void handle_quants(const httplib::Request & req, httplib::Response & res, Config
     (void) reg;
     json out = api_quants(req.get_param_value("repo"));
     // the picker offers an NVFP4 build as the medium one when every card here runs FP4 natively, on a runtime
-    // whose mixture-of-experts verify takes NVFP4 (build 143 on)
+    // whose mixture-of-experts verify takes NVFP4 (build 143 on); a repo holding none borrows one of the same model
     if (!out.contains("error")) {
-        out["fp4"] = gpus_all_blackwell() && runtime_build(cfg) >= 143;
+        const bool fp4 = gpus_all_blackwell() && runtime_build(cfg) >= 143;
+        out["fp4"]     = fp4;
+        bool has_fp4   = false;
+        for (const auto & q : out["quants"]) {
+            has_fp4 = has_fp4 || contains(lower(q.value("name", "")), "nvfp4");
+        }
+        if (fp4 && !has_fp4) {
+            const std::string model = out.value("from", "").empty() ? out.value("repo", "") : out.value("from", "");
+            for (const QuantInfo & q : nvfp4_quants(model)) {
+                out["quants"].push_back(
+                    json{{"name", q.name}, {"size", q.size}, {"files", q.files}, {"fetch", q.fetch}, {"repo", q.repo}});
+            }
+        }
     }
     res.status     = out.contains("error") ? 502 : 200;
     res.set_content(out.dump(), "application/json");

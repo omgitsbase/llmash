@@ -927,7 +927,7 @@ std::vector<std::string> Instance::args() {
     const int         mtp_draft  = env_int("LLMASH_MTP_DRAFT", 3);
     const int         dspark_max = env_int("LLMASH_DSPARK_DRAFT", 6);
     const int         dspark_min = env_int("LLMASH_DSPARK_DRAFT_MIN", 6);
-    const std::string mtp        = !model.mtp_path.empty() ? model.mtp_path : sidecar_path(model.path, ".mtp.gguf");
+    const std::string mtp        = !model.mtp_path.empty() ? model.mtp_path : mtp_path(model.path);
     const std::string eagle3     = sidecar_path(model.path, ".eagle3.gguf");
     const std::string dspark     = dspark_path(model.path);
     const std::string dflash     = dflash_path(model.path);

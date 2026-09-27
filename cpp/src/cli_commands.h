@@ -120,7 +120,7 @@ int cmd_unlink();
 int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg);
 int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg);
 // finds, checks and offers to install a drafter for a local model
-int pulldraft(const std::string & name, bool yes, bool force);
+int pulldraft(const std::string & name, bool yes, bool force, const std::string & drafter = "", bool verbose = false);
 
 // `run`'s first-use pull: cmdPull(name, "", true), throwing CliExit on failure.
 void pull_model(const std::string & name);

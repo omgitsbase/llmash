@@ -63,11 +63,21 @@ int main() {
     write_gguf(dir / "Qwen3-8B-Q8_0.mtp.gguf", "qwen3", "blk.0.nextn.weight");
     { std::ofstream(dir / "notes.txt") << "not a model"; }
 
-    // the drafter question: Enter is yes, Escape and Ctrl-C no, d never again, anything else keeps reading
-    check(ynd_feed('y') == 'y' && ynd_feed(13) == 'y' && ynd_feed(10) == 'y', "y and Enter say yes");
-    check(ynd_feed('N') == 'n' && ynd_feed(0x1b) == 'n' && ynd_feed(0x03) == 'n', "n, Escape and Ctrl-C say no");
-    check(ynd_feed('d') == 'd' && ynd_feed('D') == 'd', "d is don't ask again");
-    check(ynd_feed('x') == 0 && ynd_feed(' ') == 0, "other keys keep reading");
+    // the drafter offer: asked once per model, or never with ask_drafter off
+    {
+        nlohmann::json local;
+        check(drafter_offer_due(local, "gemma4:e4b"), "a model never asked about is asked");
+        drafter_offer_answered(local, "gemma4:e4b", 1);
+        check(!drafter_offer_due(local, "gemma4:e4b"), "a no is not asked again");
+        check(drafter_offer_due(local, "qwen3:8b"), "while another model still is");
+        drafter_offer_answered(local, "qwen3:8b", 0);
+        check(!drafter_offer_due(local, "qwen3:8b"), "a model searched for is not asked again");
+        drafter_offer_answered(local, "qwen3:8b", 0);
+        check(local["drafter_asked"].size() == 2, "and is remembered once");
+        drafter_offer_answered(local, "glm:9b", 2);
+        check(!drafter_offer_due(local, "anything:new"), "no for any model stops every offer");
+        check(!drafter_offer_due(nlohmann::json{{"ask_drafter", false}}, "x"), "as ask_drafter: false always has");
+    }
 
     const auto files = walk_gguf(dir.string());
     check(files.size() == 3, "walk finds every gguf, subfolders included");

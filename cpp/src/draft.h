@@ -28,7 +28,17 @@ struct DraftCand {
     std::vector<std::string> bases;
     int                      score = 0;
     std::string              note;
+    bool                     embedded = false; // an MTP head inside a full build: only the head is fetched
+    std::string              via;             // the model it was trained on, when that is not this model
 };
+
+// What a file is, by its own header: the model these weights are (Qwen3.5-4B), and the model it was tuned from
+// when the header names one (Qwen3.5-9B for a MiMo distill of it).
+struct ModelIdent {
+    std::string name;
+    std::string tuned_from;
+};
+ModelIdent identify(const Model & m);
 
 // Anything larger is a whole model that happens to mention a drafter.
 constexpr int64_t DRAFT_SIZE_CEILING = 6ll << 30;
@@ -36,7 +46,7 @@ constexpr int64_t DRAFT_SIZE_CEILING = 6ll << 30;
 // Lower-cased, everything but [a-z0-9] dropped.
 std::string normalise(const std::string & s);
 
-std::string model_stem(const Model & m);
+std::string model_stem(const Model & m);  // identify(m).name
 
 bool hub_info_reason(const std::string & repo, HubModel & out, std::string & err);
 
@@ -50,6 +60,9 @@ std::string other_runtime(const std::string & repo);
 
 // Is `a` a more useful quantisation to take than `b`.
 bool prefer_quant(const std::string & a, const std::string & b);
+
+// A repo named as an assistant drafter (Gemma 4's MTP heads): <model>-assistant.
+bool assistant_named(const std::string & repo);
 
 // One search hit judged: false, with `say` told why, for anything that is not
 // a drafter for this exact model.
@@ -67,6 +80,8 @@ struct GGUFSpec {
     int64_t              vocab   = 0; // number of tokens in the vocabulary
     std::vector<int64_t> layers;      // <arch>.target_layers, what a drafter reads from
     int64_t              enc     = 0; // fc.weight's input width = layers.size() * target embed
+    int64_t              nextn_layer = -1; // the block an MTP head sits at, when the file carries one
+    int64_t              embed_out = 0; // <arch>.embedding_length_out: the width an assistant drafter hands back
     int64_t              tensors = 0;
     bool                 partial = false; // the read ended early: a zero field means "not reached"
 
@@ -104,6 +119,8 @@ std::string dspark_path(const std::string & gguf);
 // A DFlash drafter beside the weights, as <stem>.dflash.gguf or trained for the base model the
 // target's header names, or "".
 std::string dflash_path(const std::string & gguf);
+// <stem>.mtp.gguf, or the MTP drafter beside another build of the same model.
+std::string mtp_path(const std::string & gguf);
 
 // "an MTP head" / "a DSpark drafter" / "a draft model" / "an EAGLE-3
 // drafter", or "" when none is installed.
@@ -123,7 +140,9 @@ std::string verify_draft(const Model & m, const std::string & path);
 std::string install_draft(const Model & m, const DraftCand & c, const Config & cfg, const ProgressFn & progress,
                           std::string & err);
 
-// The first candidate whose header says it fits, checked before downloading.
-bool pick_drafter(const Model & m, const std::vector<DraftCand> & cands, const Say & say, DraftCand & out);
+
+// A drafter named rather than searched for: REPO, REPO:FILE or REPO@QUANT, with or without hf.co/. Its best build
+// or the file asked for, typed by its name or else by the architecture in its header.
+bool drafter_from(const std::string & ref, DraftCand & out, std::string & err);
 
 } // namespace llmash

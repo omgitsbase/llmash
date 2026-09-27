@@ -889,33 +889,38 @@ json show_or_pull(RunOptions & o) {
     return d;
 }
 
-// A model with nothing to draft for it runs slower than it could: offer to look for a drafter, unless the
-// answer was once "don't ask again" (ask_drafter: false in local.json).
+// A model with nothing to draft for it runs slower than it could: offer once to look for a drafter. Whatever the
+// answer, the model is not asked about again; Escape leaves it for next time.
 static void offer_drafter(const json & info, const std::string & name) {
     const std::string from = j_str(info, "modelfile");
     Model             m;
     m.path    = from.rfind("FROM ", 0) == 0 ? from.substr(5) : "";
     m.has_mtp = info.value("mtp", false);
     if (m.path.empty() || !clidoc::file_exists(m.path) || !has_own_drafter(m).empty()) return;
+    if (!is_console(stdin) || !is_console(stdout)) return;
     const Config cfg   = load_config();
     json         local = clidoc::read_local_json(cfg.root);
-    if (local.is_object() && local.value("ask_drafter", true) == false) return;
+    if (!drafter_offer_due(local, name)) return;
     const std::string instead = spec_fallback().rfind("ngram", 0) == 0
                                     ? ", so it drafts by n-gram lookup, which only speeds up text the chat already holds"
                                     : "";
     std::printf("%s has no MTP head or draft model%s.\n", name.c_str(), instead.c_str());
-    const char c = ask_ynd("Look for a draft model on Hugging Face?");
-    if (c == 'y') {
+    const int c = pick_menu("Look for a draft model on Hugging Face?",
+                            {"yes, look now", "no, and don't ask about " + name + " again",
+                             "no, and don't ask about any model again"},
+                            0, "\xe2\x86\x91\xe2\x86\x93 move   enter choose   esc ask me next time", "");
+    if (c < 0) {
+        return;
+    }
+    if (c == 0) {
         pulldraft(name, false, false);
         std::printf("\n");
-    } else if (c == 'd') {
-        if (!local.is_object()) local = json::object();
-        local["ask_drafter"] = false;
-        std::string err;
-        if (clidoc::write_local_json(cfg.root, local, err)) {
-            std::printf("%snot asking again; `%s pulldraft MODEL` still looks for one%s\n", kDim, prog_name().c_str(),
-                        kReset);
-        }
+    }
+    drafter_offer_answered(local, name, c);
+    std::string err;
+    if (clidoc::write_local_json(cfg.root, local, err) && c > 0) {
+        std::printf("%s`%s pulldraft %s` still looks for one%s\n", kDim, prog_name().c_str(),
+                    c == 1 ? name.c_str() : "MODEL", kReset);
     }
 }
 

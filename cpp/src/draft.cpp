@@ -1,4 +1,5 @@
 #include "draft.h"
+#include "gguf_io.h"
 
 #include "gguf.h"
 
@@ -52,7 +53,7 @@ const std::regex & shard_suffix_re() {
 }
 
 const std::regex & quant_suffix_re() {
-    static const std::regex re(R"(-(?:i?q\d+(?:_[a-z0-9]+)*|f16|bf16|f32|mxfp4)$)", std::regex::icase);
+    static const std::regex re(R"(-(?:i?q\d+(?:_[a-z0-9]+)*|f16|bf16|f32|mxfp4|nvfp4|rco-\d+)$)", std::regex::icase);
     return re;
 }
 
@@ -81,7 +82,7 @@ std::string trim_set(const std::string & s, const char * set) {
 
 // The keys hfRepoOf and modelStem read.
 struct RepoMeta {
-    std::string bm_repo_url, repo_url, bm_org, bm_name, size_label;
+    std::string bm_repo_url, repo_url, bm_org, bm_name, size_label, name, basename;
 };
 
 RepoMeta read_repo_meta(const std::string & path) {
@@ -125,6 +126,10 @@ RepoMeta read_repo_meta(const std::string & path) {
             m.bm_name = v;
         } else if (k == "general.size_label") {
             m.size_label = v;
+        } else if (k == "general.name") {
+            m.name = v;
+        } else if (k == "general.basename") {
+            m.basename = v;
         }
     }
     return m;
@@ -226,6 +231,37 @@ std::string sidecar_path(const std::string & gguf, const char * suffix) { return
 
 std::string dspark_path(const std::string & gguf) { return find_dspark(gguf); }
 
+// An MTP drafter is trained against the model, not one quantisation of it: <stem>.mtp.gguf first, else one beside
+// another build of the same model (Gemma's assistant drafter serves its Q4, Q8 and RCO builds alike).
+std::string mtp_path(const std::string & gguf) {
+    if (const std::string direct = sidecar_named(gguf, ".mtp.gguf"); !direct.empty()) {
+        return direct;
+    }
+    // an Ollama store's blobs are content-addressed; nothing there is named for a model
+    if (fs::path(gguf).parent_path().filename() == "blobs") {
+        return "";
+    }
+    const std::string        want = pair_stem(strip_shard(stem_of(gguf)));
+    std::error_code          ec;
+    std::vector<std::string> cands;
+    for (auto it = fs::directory_iterator(fs::path(gguf).parent_path(), ec); !ec && it != fs::directory_iterator(); ++it) {
+        if (ends_with(lower(it->path().filename().string()), ".mtp.gguf")) {
+            cands.push_back(it->path().string());
+        }
+    }
+    std::sort(cands.begin(), cands.end());
+    for (const auto & c : cands) {
+        std::string st = stem_of(c);
+        if (ends_with(lower(st), ".mtp")) {
+            st = st.substr(0, st.size() - 4);
+        }
+        if (pair_stem(strip_shard(st)) == want) {
+            return c;
+        }
+    }
+    return "";
+}
+
 std::string normalise(const std::string & s) {
     std::string out;
     for (const char c : lower(s)) {
@@ -264,26 +300,17 @@ std::string dflash_path(const std::string & gguf) {
     return "";
 }
 
-std::string model_stem(const Model & m) {
-    const RepoMeta meta = read_repo_meta(m.path);
+// A size already in the name (27B, 0.6B, E4B) is the one repos are named by; a header's size label can count the
+// parameters another way (gemma-4-E4B's says 7.5B).
+static bool names_size(const std::string & name) {
+    static const std::regex re(R"((^|[-_.])[eE]?[0-9]+(\.[0-9]+)?[bBmM]([-_.]|$))");
+    return std::regex_search(name, re);
+}
 
-    std::string       name = m.name;
-    const std::string repo = hf_repo_of(meta);
-    if (!repo.empty()) {
-        const size_t i = repo.find('/');
-        name           = i == std::string::npos ? repo : repo.substr(i + 1);
-    }
-    const size_t      colon = name.find(':');
-    const std::string tail  = colon == std::string::npos ? std::string() : name.substr(colon + 1);
-    name                    = colon == std::string::npos ? name : name.substr(0, colon);
-    if (colon != std::string::npos && tail != "latest" && tail != "gguf") {
-        // a registry tag carries the size (e2b, 26b-a4b), which tells the
-        // drafters for one size of a family from another
-        name += "-" + tail;
-    } else if (!meta.size_label.empty()) {
-        name += "-" + meta.size_label;
-    }
-    for (const char * junk : {"-GGUF", "-gguf", "-it-GGUF", "-UD", "-Instruct"}) {
+// The packaging words and the quantisation taken off a name, spaces to dashes.
+static std::string bare_name(std::string name) {
+    std::replace(name.begin(), name.end(), ' ', '-');
+    for (const char * junk : {"-GGUF", "-gguf", "-it-GGUF", "-UD", "-Instruct", "-MTP", "-mtp", "-NVFP4", "-nvfp4"}) {
         if (ends_with(name, junk)) {
             name = name.substr(0, name.size() - std::strlen(junk));
         }
@@ -291,6 +318,48 @@ std::string model_stem(const Model & m) {
     name = std::regex_replace(name, quant_suffix_re(), "");
     return trim_set(name, "-_. ");
 }
+
+static bool is_base_of(const std::string & base, const std::string & name) {
+    const std::string b = normalise(base), n = normalise(name);
+    return b == n + "base" || b == n;
+}
+
+ModelIdent identify(const Model & m) {
+    const RepoMeta meta = read_repo_meta(m.path);
+    ModelIdent     id;
+
+    // the model's own name: what the converter wrote (Qwen3.5 + 4B), else the registry name with its tag, else
+    // the file's name; the base it names is not it, even when that base is the same model before tuning
+    std::string       name = m.name;
+    const size_t      colon = name.find(':');
+    const std::string tail  = colon == std::string::npos ? std::string() : name.substr(colon + 1);
+    name                    = colon == std::string::npos ? name : name.substr(0, colon);
+    if (!meta.basename.empty() && !meta.size_label.empty()) {
+        name = meta.basename + "-" + meta.size_label;
+    } else if (!meta.name.empty() && names_size(meta.name)) {
+        name = meta.name;
+    } else if (colon != std::string::npos && tail != "latest" && tail != "gguf") {
+        name += "-" + tail;  // a registry tag carries the size (e2b, 26b-a4b)
+    } else if (!meta.size_label.empty() && !names_size(name)) {
+        name += "-" + meta.size_label;
+    }
+    id.name = bare_name(name);
+
+    // the base the header names: the same model before instruction tuning is not another model; anything else is
+    const std::string base_repo = hf_repo_of(meta);
+    if (!base_repo.empty()) {
+        std::string base = bare_name(base_repo.substr(base_repo.find('/') + 1));
+        if (ends_with(lower(base), "-base")) {
+            base = base.substr(0, base.size() - 5);
+        }
+        if (!is_base_of(base, id.name) && !base.empty()) {
+            id.tuned_from = base;
+        }
+    }
+    return id;
+}
+
+std::string model_stem(const Model & m) { return identify(m).name; }
 
 bool hub_info_reason(const std::string & repo, HubModel & out, std::string & err) {
     const HttpResult r =
@@ -344,16 +413,20 @@ std::string foreign_base(const std::vector<std::string> & bases, const std::stri
     static const char * markers[] = {"abliterat", "uncensored", "caption",  "distill",  "merge",
                                      "roleplay",  "magic",      "agentic",  "heretic",  "aggressive"};
     for (const auto & b : bases) {
+        std::string  name = b;
+        const size_t i    = name.find_last_of('/');
+        if (i != std::string::npos) {
+            name = name.substr(i + 1);
+        }
+        // the model itself, whatever its name says it was made from (a distill is its own base)
+        if (!want.empty() && normalise(name) == want) {
+            continue;
+        }
         const std::string low = lower(b);
         for (const char * m : markers) {
             if (contains(low, m)) {
                 return b;
             }
-        }
-        std::string  name = b;
-        const size_t i    = name.find_last_of('/');
-        if (i != std::string::npos) {
-            name = name.substr(i + 1);
         }
         std::string rest = normalise(name);
         if (!want.empty()) {
@@ -365,7 +438,7 @@ std::string foreign_base(const std::vector<std::string> & bases, const std::stri
         for (const char * innocuous :
              {"instruct", "it",     "chat",   "base",   "gguf",   "hf",     "llamacpp", "llama",
               "nvfp",     "fp",     "unsloth", "quant",
-              "speculator", "eagle3", "eagle", "dspark", "dflash", "draft",  "model",
+              "speculator", "eagle3", "eagle", "dspark", "dflash", "draft",  "model", "assistant",
               "f16",      "bf16",   "fp16",   "q4km",   "q4",     "q8",     "iq4xs",    "test", "preview",
               "v1",       "v2",     "v3",     "0",      "1",      "2",      "3",        "4",    "5",
               "6",        "7",      "8",      "9"}) {
@@ -410,6 +483,15 @@ bool prefer_quant(const std::string & a, const std::string & b) {
 
 // ============================================================= candidates
 
+bool assistant_named(const std::string & repo) {
+    std::string  base = lower(repo);
+    const size_t i    = base.find_last_of('/');
+    if (i != std::string::npos) {
+        base = base.substr(i + 1);
+    }
+    return contains(base, "-assistant") || contains(base, "_assistant") || contains(base, ".assistant");
+}
+
 bool consider_repo(const HubModel & hit, const std::string & want, const std::string & stem, const Say & say,
                    DraftCand & out) {
     const auto tell = [&](const std::string & line) {
@@ -426,6 +508,11 @@ bool consider_repo(const HubModel & hit, const std::string & want, const std::st
                 break;
             }
         }
+    }
+    // Gemma 4 publishes its MTP drafter as <model>-assistant, whatever the repo's tags say; the word also names chat
+    // fine-tunes, so the file's architecture decides (fits_target)
+    if (assistant_named(hit.id)) {
+        kind = &draft_kinds()[0];
     }
     if (kind == nullptr) {
         return false;
@@ -499,37 +586,88 @@ bool consider_repo(const HubModel & hit, const std::string & want, const std::st
     return true;
 }
 
-std::vector<DraftCand> find_drafters(const Model & m, bool verbose, const Say & say_in) {
-    const std::string stem = model_stem(m);
-    if (stem.empty()) {
-        return {};
+// A full build of the model that carries its MTP head (an -MTP GGUF): the head alone is fetched from it, as a
+// sidecar. The candidate's size is the file's; the fetch is a fraction of it.
+static bool consider_embedded(const HubModel & hit, const std::string & name, const Say & say, DraftCand & out) {
+    const std::string low = lower(hit.id);
+    if (low.find("mtp") == std::string::npos || low.find("gguf") == std::string::npos) {
+        return false;
     }
-    const std::string want = normalise(stem);
-
-    const Say say = [&](const std::string & line) {
-        if (verbose && say_in) {
-            say_in(line);
+    if (!gguf_of_model(hit, name)) {
+        say("    " + hit.id + ": not a build of " + name);
+        return false;
+    }
+    if (const std::string runtime = other_runtime(hit.id); !runtime.empty()) {
+        return false;
+    }
+    HubFile best;
+    for (const auto & f : hub_files(hit.id)) {
+        const std::string fl = lower(f.path);
+        if (f.type != "file" || !ends_with(fl, ".gguf") || contains(fl, "mmproj") || kind_of(f.path) != nullptr) {
+            continue;
         }
-    };
-    say("  looking for a drafter trained on " + stem);
+        if (best.path.empty() || prefer_quant(f.path, best.path)) {
+            best = f;
+        }
+    }
+    if (best.path.empty()) {
+        return false;
+    }
+    out          = DraftCand{};
+    out.repo     = hit.id;
+    out.file     = best.path;
+    out.kind     = &draft_kinds()[0];
+    out.size     = best.size;
+    out.embedded = true;
+    out.score    = out.kind->rank + (hit.downloads > 100 ? 5 : 0);
+    out.note     = "MTP head, extracted from a " + human_bytes(best.size) + " build";
+    return true;
+}
 
+static std::vector<DraftCand> search_for(const std::string & name, const Say & say) {
+    const std::string        want = normalise(name);
     std::vector<std::string> seen;
     std::vector<DraftCand>   cands;
-    for (const std::string & q : {stem + " eagle3", stem + " dspark", stem + " speculator", stem + " draft GGUF",
-                                  stem + " dflash"}) {
+    for (const std::string & q : {name + " eagle3", name + " dspark", name + " speculator", name + " draft GGUF",
+                                  name + " dflash", name + " assistant", name + " MTP GGUF"}) {
         for (const auto & hit : hub_search(q, 25)) {
             if (std::find(seen.begin(), seen.end(), hit.id) != seen.end()) {
                 continue;
             }
             seen.push_back(hit.id);
             DraftCand c;
-            if (consider_repo(hit, want, stem, say, c)) {
+            if (consider_repo(hit, want, name, say, c) || consider_embedded(hit, name, say, c)) {
                 cands.push_back(std::move(c));
             }
         }
     }
     std::stable_sort(cands.begin(), cands.end(),
                      [](const DraftCand & a, const DraftCand & b) { return a.score > b.score; });
+    return cands;
+}
+
+// Drafters for the model these weights are; when none is published under its own name and the header names the
+// model it was tuned from, that model's, said so: they share the vocabulary and width, and draft somewhat less well.
+std::vector<DraftCand> find_drafters(const Model & m, bool verbose, const Say & say_in) {
+    const ModelIdent id = identify(m);
+    if (id.name.empty()) {
+        return {};
+    }
+    const Say say = [&](const std::string & line) {
+        if (verbose && say_in) {
+            say_in(line);
+        }
+    };
+    say("  looking for a drafter trained on " + id.name);
+    std::vector<DraftCand> cands = search_for(id.name, say);
+    if (cands.empty() && !id.tuned_from.empty()) {
+        say("  none under its own name; looking under " + id.tuned_from + ", which it was tuned from");
+        cands = search_for(id.tuned_from, say);
+        for (DraftCand & c : cands) {
+            c.via = id.tuned_from;
+            c.note += ", trained on " + id.tuned_from + " which this model was tuned from";
+        }
+    }
     return cands;
 }
 
@@ -595,6 +733,8 @@ std::string scan_gguf(std::istream & in, bool want_tensors, GGUFSpec & s) {
             }
             if (ends_with(k, ".embedding_length")) {
                 s.embed = v;
+            } else if (ends_with(k, ".embedding_length_out")) {
+                s.embed_out = v;
             } else if (ends_with(k, ".block_count")) {
                 s.blocks = v;
             } else if (ends_with(k, ".vocab_size") && s.vocab == 0) {
@@ -657,6 +797,9 @@ std::string scan_gguf(std::istream & in, bool want_tensors, GGUFSpec & s) {
         }
         if ((name == "fc.weight" || ends_with(name, ".fc.weight")) && !dims.empty()) {
             s.enc = dims[0];
+        }
+        if (name.rfind("blk.", 0) == 0 && name.find(".nextn.") != std::string::npos) {
+            s.nextn_layer = std::max<int64_t>(s.nextn_layer, std::atoll(name.c_str() + 4));
         }
     }
     s.partial = false;
@@ -724,6 +867,15 @@ std::string pairs(const GGUFSpec & target, const GGUFSpec & draft) {
                    std::to_string(target.vocab);
         }
     }
+    // an assistant drafter works in the target's own hidden width
+    if (draft.embed_out > 0 && target.embed > 0 && draft.embed_out != target.embed) {
+        return "it drafts for a model " + std::to_string(draft.embed_out) + " wide, and this one is " +
+               std::to_string(target.embed);
+    }
+    if (draft.nextn_layer >= 0 && target.blocks > 0 && draft.nextn_layer != target.blocks) {
+        return "its MTP head sits after layer " + std::to_string(draft.nextn_layer) + ", and this model has " +
+               std::to_string(target.blocks);
+    }
     if (!draft.hidden()) {
         return "";
     }
@@ -765,7 +917,86 @@ std::string fits_target(const Model & m, const DraftCand & c) {
     if (!err.empty()) {
         return err;
     }
+    if (assistant_named(c.repo) && !contains(lower(draft.arch), "assistant")) {
+        return "it is a whole " + draft.arch + " model, not an assistant drafter";
+    }
+    if (c.embedded && draft.nextn_layer < 0) {
+        return "it carries no MTP head after all";
+    }
     return pairs(target, draft);
+}
+
+// The head out of a full build: the file's own header (the runtime reads a sidecar as the model it belongs to)
+// with only the head's block, the embedding and the output kept, each fetched by its byte range.
+static bool extract_mtp_head(const std::string & url, const std::string & tmp, const ProgressFn & progress,
+                             std::string & err) {
+    std::string    head;
+    ggufio::Layout l;
+    for (const int64_t window : {32ll << 20, 128ll << 20}) {
+        if (!hub_head(url, window, head, err)) {
+            return false;
+        }
+        l = ggufio::layout_from(head);
+        if (l.error.empty()) {
+            break;
+        }
+    }
+    if (!l.error.empty()) {
+        err = "could not read the build's header: " + l.error;
+        return false;
+    }
+    int64_t layer = -1;
+    for (const auto & t : l.tensors) {
+        if (t.name.rfind("blk.", 0) == 0 && t.name.find(".nextn.") != std::string::npos) {
+            layer = std::max<int64_t>(layer, std::atoll(t.name.c_str() + 4));
+        }
+    }
+    if (layer < 0) {
+        err = "the build carries no MTP head";
+        return false;
+    }
+    ggufio::Layout side = l;
+    side.tensors.clear();
+    side.data_start.clear();
+    const std::string prefix = "blk." + std::to_string(layer) + ".";
+    int64_t           total  = 0;
+    for (const auto & t : l.tensors) {
+        if (t.name.rfind(prefix, 0) == 0 || t.name == "token_embd.weight" || t.name == "output.weight" ||
+            t.name == "output_norm.weight") {
+            side.tensors.push_back(t);
+            total += t.bytes;
+        }
+    }
+    if (ggufio::write_header(tmp, side, err) < 0) {
+        return false;
+    }
+    std::ofstream out(tmp, std::ios::binary | std::ios::app);
+    int64_t       done = 0;
+    for (const auto & t : side.tensors) {
+        const int64_t from = l.file_offset(t);
+        for (int64_t at = 0; at < t.bytes;) {
+            const int64_t     piece = std::min<int64_t>(t.bytes - at, 64ll << 20);
+            std::vector<char> buf(static_cast<size_t>(piece));
+            if (!hub_span(url, from + at, piece, buf.data(), err)) {
+                return false;
+            }
+            out.write(buf.data(), static_cast<std::streamsize>(piece));
+            at += piece;
+            done += piece;
+            if (progress) {
+                progress(done);
+            }
+        }
+        const int64_t pad = (t.bytes + l.align - 1) / l.align * l.align - t.bytes;
+        for (int64_t k = 0; k < pad; k++) {
+            out.put('\0');
+        }
+    }
+    if (!out) {
+        err = "could not write " + tmp;
+        return false;
+    }
+    return true;
 }
 
 // ============================================================= installing
@@ -801,7 +1032,7 @@ std::string installed_drafter(const Model & m) {
     if (!m.mtp_path.empty() && fs::is_regular_file(m.mtp_path, ec)) {
         return "an MTP head";
     }
-    if (!sidecar_named(m.path, ".mtp.gguf").empty()) {
+    if (!mtp_path(m.path).empty()) {
         return "an MTP head";
     }
     if (!find_dspark(m.path).empty()) {
@@ -855,7 +1086,9 @@ std::string install_draft(const Model & m, const DraftCand & c, const Config & c
     const std::string tmp = dest + ".part";
     fs::remove(tmp, ec);
 
-    if (!fetch_blocks(hf_download_url(c.repo, c.file), tmp, c.size, progress, err)) {
+    const bool ok = c.embedded ? extract_mtp_head(hf_download_url(c.repo, c.file), tmp, progress, err)
+                               : fetch_blocks(hf_download_url(c.repo, c.file), tmp, c.size, progress, err);
+    if (!ok) {
         fs::remove(tmp, ec);
         fs::remove(tmp + ".idx", ec);
         return "";
@@ -876,19 +1109,78 @@ std::string install_draft(const Model & m, const DraftCand & c, const Config & c
     return dest;
 }
 
-bool pick_drafter(const Model & m, const std::vector<DraftCand> & cands, const Say & say, DraftCand & out) {
-    for (const auto & c : cands) {
-        const std::string why = fits_target(m, c);
-        if (!why.empty()) {
-            if (say) {
-                say("    " + c.repo + ": " + why);
+bool drafter_from(const std::string & ref_in, DraftCand & out, std::string & err) {
+    std::string ref = ref_in;
+    for (const char * p : {"https://huggingface.co/", "http://huggingface.co/", "huggingface.co/", "hf.co/", "hf:"}) {
+        if (starts_with(lower(ref), p)) {
+            ref = ref.substr(std::strlen(p));
+            break;
+        }
+    }
+    std::string repo = ref, want;
+    if (const size_t c = ref.find_first_of(":@"); c != std::string::npos) {
+        repo = ref.substr(0, c);
+        want = lower(ref.substr(c + 1));
+    }
+    if (std::count(repo.begin(), repo.end(), '/') != 1) {
+        err = repo + " is not a Hugging Face repository (org/name)";
+        return false;
+    }
+    HubModel info;
+    if (!hub_info_reason(repo, info, err)) {
+        return false;
+    }
+    HubFile best;
+    for (const auto & f : hub_files(repo)) {
+        if (f.type != "file" || !ends_with(lower(f.path), ".gguf")) {
+            continue;
+        }
+        const std::string base = lower(fs::path(f.path).filename().string());
+        if (!want.empty()) {
+            // a file named in full wins over one that only contains the name (a quantisation, say)
+            if (base == want || (contains(base, want) && (best.path.empty() || prefer_quant(f.path, best.path)))) {
+                best = f;
+                if (base == want) {
+                    break;
+                }
             }
             continue;
         }
-        out = c;
-        return true;
+        if (best.path.empty() || prefer_quant(f.path, best.path)) {
+            best = f;
+        }
     }
-    return false;
+    if (best.path.empty()) {
+        err = want.empty() ? repo + " holds no GGUF file" : "no GGUF file in " + repo + " matches " + want;
+        return false;
+    }
+    // typed by its name, else by the architecture its header names; anything else drafts as a plain model
+    const DraftKind * kind = assistant_named(repo) ? &draft_kinds()[0] : kind_of(repo);
+    if (kind == nullptr) {
+        kind = kind_of(best.path);
+    }
+    if (kind == nullptr) {
+        GGUFSpec s;
+        bool     unreadable = false;
+        spec_of_url(hf_download_url(repo, best.path), s, unreadable);
+        const std::string arch = lower(s.arch);
+        for (const auto & k : draft_kinds()) {
+            if (arch == k.name) {
+                kind = &k;
+            }
+        }
+        if (kind == nullptr) {
+            kind = contains(arch, "assistant") ? &draft_kinds()[0] : &draft_kinds().back();
+        }
+    }
+    out       = DraftCand{};
+    out.repo  = repo;
+    out.file  = best.path;
+    out.kind  = kind;
+    out.size  = best.size;
+    out.bases = info.base_models;
+    out.note  = kind->name + ", " + human_bytes(best.size);
+    return true;
 }
 
 } // namespace llmash

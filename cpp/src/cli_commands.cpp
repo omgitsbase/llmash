@@ -577,7 +577,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             qi.fetch = static_cast<int64_t>(j_num(q, "fetch"));
             qi.repo  = j_str(q, "repo");
             quants.push_back(qi);
-            if (!qi.repo.empty()) {
+            if (!qi.repo.empty() && !equal_fold(qi.name, "NVFP4")) {
                 published.push_back(qi);  // a GSQ-RCO build from elsewhere
             } else {
                 (is_rco(qi.name) ? custom : plain).push_back(qi);
@@ -628,7 +628,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         for (const auto & [label, idx] : {std::pair{"medium", t.medium}, {"large", t.large}}) {
             const QuantInfo & q    = plain[static_cast<size_t>(idx)];
             const bool        nvfp = equal_fold(q.name, "NVFP4");
-            basic.push_back(Row{build_row(label, q, nvfp ? "NVFP4, FP8 quality" : ""), q.name, q.size, false});
+            basic.push_back(Row{build_row(label, q, nvfp ? "NVFP4, FP8 quality" : ""), q.name, q.size, false, q.repo});
         }
     } else {
         for (const auto & q : plain) {
@@ -637,7 +637,10 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     std::stable_sort(basic.begin(), basic.end(), [](const Row & a, const Row & b) { return a.size < b.size; });
     for (const auto & q : quants) {
-        full.push_back(Row{build_row(q.repo.empty() ? "" : "rco", q, q.repo.empty() ? "" : "GSQ-RCO " + q.name), q.name, q.size, false, q.repo});
+        const bool gsq  = !q.repo.empty() && !equal_fold(q.name, "NVFP4");
+        const bool nvfp = equal_fold(q.name, "NVFP4");
+        full.push_back(Row{build_row(gsq ? "rco" : "", q, gsq ? "GSQ-RCO " + q.name : nvfp ? "NVFP4, FP8 quality" : ""),
+                           q.name, q.size, false, q.repo});
     }
     if (registry_build) {
         const Row own{build_row("ollama", *registry_build, ""), "", registry_build->size, true};
@@ -2337,7 +2340,7 @@ int cmd_uninstall(const std::vector<std::string> & args, const Config & cfg) {
     }
 }
 
-int pulldraft(const std::string & name, bool yes, bool force) {
+int pulldraft(const std::string & name, bool yes, bool force, const std::string & drafter, bool verbose) {
     try {
         const Config cfg = load_config();
         ApiClient    api(cfg);
@@ -2362,8 +2365,42 @@ int pulldraft(const std::string & name, bool yes, bool force) {
             return 0;
         }
 
-        std::printf("looking for a draft model for %s\n", name.c_str());
-        const std::vector<DraftCand> cands = find_drafters(*m, true, say_line);
+        const auto install = [&](const DraftCand & c) {
+            if (force) {
+                std::error_code ec;
+                fs::remove(draft_path(*m, *c.kind, cfg), ec);
+            }
+            std::string       err;
+            const std::string path = install_draft_shown(*m, c, cfg, err);
+            if (path.empty()) {
+                die("could not install it: " + err);
+            }
+            std::printf("\ninstalled as %s\n", fs::path(path).filename().string().c_str());
+            std::printf("%s now loads with --spec-type %s.\n", name.c_str(), c.kind->spec_arg.c_str());
+            return 0;
+        };
+
+        // the drafter named on the command line: fetched as asked, once it is shown to fit
+        if (!drafter.empty()) {
+            DraftCand   c;
+            std::string err;
+            if (!drafter_from(drafter, c, err)) {
+                die("Error: " + err);
+            }
+            std::printf("%s: %s (%s)\n", c.repo.c_str(), c.file.c_str(), c.note.c_str());
+            if (const std::string why = fits_target(*m, c); !why.empty()) {
+                die("Error: it does not pair with " + name + ": " + why);
+            }
+            if (!yes && !confirm("Install it?")) {
+                return 0;
+            }
+            return install(c);
+        }
+
+        const ModelIdent ident = identify(*m);
+        std::printf("looking for a drafter for %s%s\n", ident.name.c_str(),
+                    ident.tuned_from.empty() ? "" : (", tuned from " + ident.tuned_from).c_str());
+        const std::vector<DraftCand> cands = find_drafters(*m, verbose, say_line);
         if (cands.empty()) {
             std::printf("\nnothing published for this model. A drafter has to be trained against\n");
             std::printf("these exact weights, and either none exists or the ones that do ship\n");
@@ -2372,33 +2409,41 @@ int pulldraft(const std::string & name, bool yes, bool force) {
             return 0;
         }
 
-        std::printf("\nfound:\n");
-        for (size_t i = 0; i < cands.size(); i++) {
-            std::printf("  %d. %-58s %s\n", static_cast<int>(i + 1), cands[i].repo.c_str(), cands[i].note.c_str());
+        std::printf("%zu published; checking which fit these weights\n", cands.size());
+        std::vector<DraftCand> fit;
+        for (const DraftCand & c : cands) {
+            if (const std::string why = fits_target(*m, c); !why.empty()) {
+                if (verbose) {
+                    say_line("    " + c.repo + ": " + why);
+                }
+                continue;
+            }
+            fit.push_back(c);
+            if (fit.size() == 6) {
+                break;
+            }
         }
-        std::printf("\nchecking which of them fits these weights\n");
-        DraftCand best;
-        if (!pick_drafter(*m, cands, say_line, best)) {
-            std::printf("\nnone of them pairs with %s. It keeps its self-speculation (%s).\n", name.c_str(),
-                        spec_fallback().c_str());
+        if (fit.empty()) {
+            std::printf("\nnone of them pairs with %s. It keeps its self-speculation (%s).%s\n", name.c_str(),
+                        spec_fallback().c_str(), verbose ? "" : " --verbose says why each was passed over.");
             return 0;
         }
-        std::printf("\nbest match: %s (%s)\n\n", best.repo.c_str(), best.note.c_str());
-        if (!yes && !confirm("Install it?")) {
+        if (yes || fit.size() == 1) {
+            std::printf("\nbest match: %s (%s)\n\n", fit[0].repo.c_str(), fit[0].note.c_str());
+            if (!yes && !confirm("Install it?")) {
+                return 0;
+            }
+            return install(fit[0]);
+        }
+        std::printf("\nthese fit, best first:\n");
+        for (size_t i = 0; i < fit.size(); i++) {
+            std::printf("  %d. %-58s %s\n", static_cast<int>(i + 1), fit[i].repo.c_str(), fit[i].note.c_str());
+        }
+        const int n = ask_number("Install which? (0 for none)", 1, static_cast<int>(fit.size()));
+        if (n <= 0) {
             return 0;
         }
-        if (force) {
-            std::error_code ec;
-            fs::remove(draft_path(*m, *best.kind, cfg), ec);
-        }
-        std::string       err;
-        const std::string path = install_draft_shown(*m, best, cfg, err);
-        if (path.empty()) {
-            die("could not install it: " + err);
-        }
-        std::printf("\ninstalled as %s\n", fs::path(path).filename().string().c_str());
-        std::printf("%s now loads with --spec-type %s.\n", name.c_str(), best.kind->spec_arg.c_str());
-        return 0;
+        return install(fit[static_cast<size_t>(n - 1)]);
     } catch (const CliExit & e) {
         return e.code;
     }
@@ -2407,11 +2452,12 @@ int pulldraft(const std::string & name, bool yes, bool force) {
 int cmd_pulldraft(const std::vector<std::string> & args, Registry & reg) {
     (void) reg;
     try {
-        const ParsedArgs o = parse_simple(args, {"--yes", "-y", "--force"}, {});
+        const ParsedArgs o = parse_simple(args, {"--yes", "-y", "--force", "--verbose"}, {});
         if (o.pos.empty()) {
             die("Error: requires at least 1 arg(s), only received 0");
         }
-        return pulldraft(o.pos[0], o.has_flag("--yes") || o.has_flag("-y"), o.has_flag("--force"));
+        return pulldraft(o.pos[0], o.has_flag("--yes") || o.has_flag("-y"), o.has_flag("--force"),
+                         o.pos.size() > 1 ? o.pos[1] : "", o.has_flag("--verbose"));
     } catch (const CliExit & e) {
         return e.code;
     }

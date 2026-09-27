@@ -112,6 +112,8 @@ struct HubModel {
     std::vector<std::string> base_models;
 };
 std::vector<HubModel> hub_search(const std::string & query, int limit);
+// Is this hub entry a GGUF build of the model named (Qwen3.5-4B), by its name and the base it declares.
+bool gguf_of_model(const HubModel & hit, const std::string & model);
 bool                  hub_info(const std::string & repo, HubModel & out);
 
 struct HubFile {
@@ -134,6 +136,9 @@ bool already_have(const std::string & dest, int64_t total);
 // the file so an interrupted download resumes instead of restarting.
 bool fetch_blocks(const std::string & url, const std::string & tmp, int64_t total,
                    const ProgressFn & progress, std::string & err);
+// One byte range of a file on the hub, into `out`; and the first `bytes` of one.
+bool hub_span(const std::string & url, int64_t from, int64_t bytes, char * out, std::string & err);
+bool hub_head(const std::string & url, int64_t bytes, std::string & out, std::string & err);
 
 // One connection when the server does not honour Range, fetch_blocks when
 // it does and the file is worth splitting.

@@ -90,16 +90,27 @@ Usage:
 const std::string k_pulldraft_help = R"HELP(Find and install a draft model to make a model faster
 
 Usage:
-  llmash pulldraft MODEL [flags]
+  llmash pulldraft MODEL [DRAFTER] [flags]
 
 Flags:
   -y, --yes     do not ask before downloading
       --force   fetch it again when one is already installed
+      --verbose say why each candidate was passed over
 
 A draft model guesses the next few tokens so the real model can check several
 at once. Hugging Face is searched for one trained against this exact model;
 candidates built for a fine-tune, or packaged for another runtime, are refused.
-A model with an MTP head of its own is left alone. No account is needed.
+When several fit, you choose. A build of the model that carries its MTP head
+counts: the head alone is fetched out of it, as a sidecar. A model with an MTP
+head of its own is left alone. A fine-tune with nothing published under its own
+name is offered the drafters of the model it was tuned from, which share its
+vocabulary and draft somewhat less well. No account is needed.
+
+DRAFTER names one instead of searching: a repository, hf.co/ORG/REPO, with
+:FILE or @QUANT for one of its builds. It is still checked against the model's
+vocabulary and width before anything downloads.
+
+  llmash pulldraft gemma4:e4b hf.co/AtomicChat/gemma-4-E4B-it-assistant-GGUF@Q8_0
 )HELP";
 
 const std::string k_models_help = R"HELP(Show where models are read from, or point llmash at a folder

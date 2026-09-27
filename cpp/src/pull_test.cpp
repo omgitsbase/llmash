@@ -314,6 +314,8 @@ void test_gguf_conversions() {
                                hub_hit("bartowski/XiaomiMiMo_MiMo-V2.6-Distill-Qwen-9B-GGUF", mimo),
                                hub_hit("CNWPlayer/MiMo-V2.6-Distill-Qwen-9B-Q4_K_M-GGUF", mimo),
                                hub_hit("holooo/MiMo-V2.6-Distill-Qwen-9B-Q5_K_S-GGUF", mimo, "finetune"),
+                               // a build that kept the model's MTP head is a build of it
+                               hub_hit("VitreousCut/MiMo-V2.6-Distill-Qwen-9B-MTP-GGUF", mimo),
                                hub_hit("someone/mimo-v2.6-distill-qwen-9b-gguf")}) {
         check(converts(m, mimo), m.id + " is a GGUF of " + mimo);
     }
@@ -323,7 +325,6 @@ void test_gguf_conversions() {
                                hub_hit("BoldingBuilds/Abliterated-MiMo-V2.6-Distill-Qwen-9B-GGUF", mimo),
                                hub_hit("geantendormi/MiMo-V2.6-Distill-Qwen-9B-Abliterated-GGUF"),
                                hub_hit("quimmedes/MiMo-V2.6-Distill-Qwen-9B-XYZ-GGUF", "Qwen/Qwen3.5-9B"),
-                               hub_hit("VitreousCut/MiMo-V2.6-Distill-Qwen-9B-MTP-GGUF", mimo),
                                hub_hit("wepiqx/MiMo-V2.6-Distill-Qwen-9B-GGUF-MERNIK", mimo),
                                hub_hit("0xSojalSec/Abliterated-MiMo-V2.6-Distill-Qwen-9B-GGUF-MLX", mimo),
                                hub_hit("Brunobkr/OFFFELLIA_MiMo-V2.6-Distill-Qwen-9B.gguf"),
@@ -697,6 +698,26 @@ void test_pairs() {
     check_eq(pairs(target, plain), std::string(""), "a plain draft model only has to match the vocabulary");
 
     check_eq(pairs(target, GGUFSpec{}), std::string("no architecture in its header"), "an unreadable drafter");
+
+    GgufBuilder ab;
+    ab.kv_string("general.architecture", "gemma4-assistant");
+    ab.kv_u32("gemma4-assistant.embedding_length", 16);
+    ab.kv_u32("gemma4-assistant.embedding_length_out", 64);
+    ab.kv_u32("gemma4-assistant.block_count", 4);
+    ab.kv_tokens("tokenizer.ggml.tokens", 200);
+    ab.tensor("token_embd.weight", {16, 200});
+    GGUFSpec assistant = spec_of_bytes(ab.bytes(), err);
+    check_eq(assistant.embed_out, int64_t(64), "an assistant drafter's output width is read from its header");
+    check_eq(assistant.embed, int64_t(16), "apart from its own width");
+    check_eq(pairs(target, assistant), std::string(""), "an assistant drafter for this width pairs");
+    assistant.embed_out = 96;
+    check_eq(pairs(target, assistant), std::string("it drafts for a model 96 wide, and this one is 64"),
+             "one made for another width does not");
+
+    check(assistant_named("google/gemma-4-E4B-it-assistant"), "Gemma's drafter repo is an assistant");
+    check(assistant_named("AtomicChat/gemma-4-E4B-it-assistant-GGUF"), "and so is its GGUF conversion");
+    check(!assistant_named("org/assistant-llama-8b"), "a name that only starts with the word is not");
+    check(!assistant_named("org/gemma-4-E4B-it-GGUF"), "and the model itself is not");
 }
 
 void test_draft_naming() {
@@ -711,6 +732,11 @@ void test_draft_naming() {
 
     const std::string want = normalise("Qwen3-8B");
     check_eq(foreign_base({"Qwen/Qwen3-8B"}, want), std::string(""), "the target itself is not a foreign base");
+    check_eq(foreign_base({"google/Qwen3-8B-assistant"}, want), std::string(""), "nor is its assistant drafter");
+    check_eq(foreign_base({"XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B"}, normalise("MiMo-V2.6-Distill-Qwen-9B")),
+             std::string(""), "a distill is its own base, whatever the word says");
+    check_eq(foreign_base({"someone/Qwen3-8B-distill"}, want), std::string("someone/Qwen3-8B-distill"),
+             "while a distill of the target is another model");
     check_eq(foreign_base({"Qwen/Qwen3-8B-Instruct-GGUF"}, want), std::string(""),
              "packaging and quantisation words do not make it foreign");
     check_eq(foreign_base({"huihui/Qwen3-8B-abliterated"}, want), std::string("huihui/Qwen3-8B-abliterated"),
@@ -749,6 +775,73 @@ void test_draft_naming() {
              "a folder that cannot be written to sends the sidecar to the loose folder");
 }
 
+void test_mtp_path() {
+    section("mtp_path: one MTP drafter serves every build of its model");
+
+    const fs::path  dir = scratch() / "mtp_pair";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    for (const char * f : {"gemma-4-E4B-it-Q4_K_M.gguf", "gemma-4-E4B-it-Q4_K_M.mtp.gguf", "gemma-4-E4B-it-RCO-3.gguf",
+                           "gemma-4-E4B-it-UD-Q2_K_XL.gguf", "gemma-4-E2B-it-Q8_0.gguf"}) {
+        write_file(dir / f, target_gguf(64, 8, 20));
+    }
+    const std::string side = (dir / "gemma-4-E4B-it-Q4_K_M.mtp.gguf").string();
+    check_eq(mtp_path((dir / "gemma-4-E4B-it-Q4_K_M.gguf").string()), side, "the build it is named for");
+    check_eq(mtp_path((dir / "gemma-4-E4B-it-RCO-3.gguf").string()), side, "an RCO build of the same model");
+    check_eq(mtp_path((dir / "gemma-4-E4B-it-UD-Q2_K_XL.gguf").string()), side, "an unsloth dynamic build of it");
+    check_eq(mtp_path((dir / "gemma-4-E2B-it-Q8_0.gguf").string()), std::string(""), "never a different model");
+}
+
+void test_identify() {
+    section("identify: what a file is, by its header");
+
+    const fs::path  dir = scratch() / "ident";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const auto build = [&](const char * file, const char * name, const char * basename, const char * size,
+                           const char * base_repo) {
+        GgufBuilder b;
+        b.kv_string("general.architecture", "qwen35");
+        if (*name) b.kv_string("general.name", name);
+        if (*basename) b.kv_string("general.basename", basename);
+        if (*size) b.kv_string("general.size_label", size);
+        if (*base_repo) b.kv_string("general.base_model.0.repo_url", base_repo);
+        b.tensor("token_embd.weight", {64, 20});
+        write_file(dir / file, b.bytes());
+        Model m;
+        m.path = (dir / file).string();
+        m.name = std::string(file).substr(0, std::string(file).size() - 5) + ":gguf";
+        return identify(m);
+    };
+    ModelIdent id = build("qwen3.5-4b-nvfp4.gguf", "Qwen3.5 4B", "Qwen3.5", "4B", "https://huggingface.co/Qwen/Qwen3.5-4B-Base");
+    check_eq(id.name, std::string("Qwen3.5-4B"), "the converter's basename and size name the model");
+    check_eq(id.tuned_from, std::string(""), "its own pretraining base is not another model");
+
+    id = build("mimo-v2.6-distill-qwen-9b-q4_k_m.gguf", "MiMo V2.6 Distill Qwen 9B", "MiMo-V2.6-Distill-Qwen", "9B",
+               "https://huggingface.co/Qwen/Qwen3.5-9B");
+    check_eq(id.name, std::string("MiMo-V2.6-Distill-Qwen-9B"), "a distill is named as itself");
+    check_eq(id.tuned_from, std::string("Qwen3.5-9B"), "and knows what it was tuned from");
+
+    id = build("some-model-q8_0.gguf", "", "", "", "");
+    check_eq(id.name, std::string("some-model"), "with nothing in the header, the file's name without its quantisation");
+
+    GgufBuilder h;
+    h.kv_string("general.architecture", "qwen35");
+    h.kv_u32("qwen35.block_count", 33);
+    h.kv_tokens("tokenizer.ggml.tokens", 200);
+    h.tensor("blk.31.attn_q.weight", {64, 64});
+    h.tensor("blk.32.nextn.eh_proj.weight", {128, 64});
+    std::string    err;
+    const GGUFSpec s = spec_of_bytes(h.bytes(), err);
+    check_eq(s.nextn_layer, int64_t(32), "an MTP head is found by its tensors, at its layer");
+    GGUFSpec t;
+    t.arch = "qwen35", t.blocks = 32, t.vocab = 200, t.embed = 64;
+    check_eq(pairs(t, s), std::string(""), "a head at the layer after the model's last pairs");
+    t.blocks = 40;
+    check_eq(pairs(t, s), std::string("its MTP head sits after layer 32, and this model has 40"), "one for another depth does not");
+}
+
 void test_model_stem() {
     section("model_stem");
 
@@ -768,8 +861,13 @@ void test_model_stem() {
     check_eq(model_stem(m), std::string("qwen3-8B"), "a `latest` tag defers to general.size_label");
 
     m.name = "Qwen3-8B-Q4_K_M:gguf";
-    check_eq(model_stem(m), std::string("Qwen3-8B-Q4_K_M-8B"),
-             "a `gguf` tag also defers to the size label, before any suffix is stripped");
+    check_eq(model_stem(m), std::string("Qwen3-8B"), "a name that carries its size takes no second one from the header");
+
+    m.name = "gemma-4-E4B-it:gguf";
+    check_eq(model_stem(m), std::string("gemma-4-E4B-it"), "nor does one sized the family's own way");
+
+    m.name = "Mistral-Small:gguf";
+    check_eq(model_stem(m), std::string("Mistral-Small-8B"), "a `gguf` tag with no size in the name takes the label");
 
     // The same loose file with nothing in its header to name the size: now
     // the quantisation is the tail, and it is not part of the identity.
@@ -819,6 +917,8 @@ int main() {
     test_gguf_reader();
     test_pairs();
     test_draft_naming();
+    test_mtp_path();
+    test_identify();
     test_model_stem();
     test_fetch_blocks_offline(); // last: the retry backoff makes it the slow one
 
