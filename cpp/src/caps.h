@@ -14,6 +14,9 @@ std::vector<std::string> hf_caps(const std::string & repo, const std::string & c
 
 std::string hf_repo_of(const GGUFInfo & g);
 
+// An encoder: it serves states, not text.
+bool is_embedding(const GGUFInfo & g);
+
 std::vector<std::string> caps_for(const GGUFInfo & g, const std::string & projector,
                                   const std::string & cache_dir);
 

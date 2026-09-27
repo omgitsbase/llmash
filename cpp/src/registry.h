@@ -22,6 +22,7 @@ struct Model {
     bool        in_library = false;   // read-only: never deleted from
     bool        incomplete = false;   // a `.part` file: listed and removable, never loaded
     std::string mtp_path;             // a sidecar drafter, when there is one
+    std::string classifier;           // how its answers are read (head, verdict, letters, labels); empty: it chats
     // An Ollama-store model is a manifest plus shared blobs, so `path` alone
     // cannot delete it. Empty for a loose GGUF.
     std::string manifest;

@@ -2,6 +2,7 @@
 
 #include "gguf.h"
 
+#include "classify.h"
 #include "draft.h"
 #include "log.h"
 #include "platform.h"
@@ -910,6 +911,13 @@ std::vector<std::string> Instance::args() {
     if (!model.projector.empty() && file_exists(model.projector) &&
         (vision || !(mmproj_blocked(*cfg_, model.name) || on_demand))) {
         a.insert(a.end(), {"--mmproj", model.projector});
+    }
+
+    if (!model.classifier.empty()) {
+        const std::vector<std::string> cf = classifier_launch_flags(model);
+        a.insert(a.end(), cf.begin(), cf.end());
+        spec_note = "none (a classifier generates nothing)";
+        return a;
     }
 
     // no GPU: speculation costs more than it saves.

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace llmash {
 
@@ -25,6 +26,12 @@ struct GGUFInfo {
     int         experts      = 0;  // <arch>.expert_count
     int         experts_used = 0;  // <arch>.expert_used_count
     bool        has_pooling  = false; // an embedding model
+
+    // The tokenizer's special ids, -1 when the header names none.
+    int bos_id = -1, eos_id = -1, sep_id = -1, cls_id = -1, mask_id = -1, pad_id = -1;
+    bool                     has_cls   = false; // cls.weight: a scorer over the pooled state
+    int                      n_cls_out = 0;     // its outputs
+    std::vector<std::string> cls_labels;        // <arch>.classifier.output_labels
 
     bool        has_vision_encoder = false; // clip.has_vision_encoder, mmproj files
     bool        has_audio_encoder  = false; // clip.has_audio_encoder

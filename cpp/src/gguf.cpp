@@ -64,6 +64,32 @@ struct Reader {
         }
         return out;
     }
+    std::vector<std::string> strs(uint32_t type) {
+        std::vector<std::string> out;
+        if (type == T_STRING) {
+            out.push_back(str());
+            return out;
+        }
+        if (type != T_ARRAY) {
+            skip_value(type);
+            return out;
+        }
+        const uint32_t et = num<uint32_t>();
+        const uint64_t n  = num<uint64_t>();
+        if (bad || n > (1ull << 32)) {
+            bad = true;
+            return out;
+        }
+        for (uint64_t i = 0; i < n && !bad; i++) {
+            if (et != T_STRING) {
+                skip_value(et);
+            } else if (std::string v = str(); out.size() < 4096) {
+                out.push_back(std::move(v));
+            }
+        }
+        return out;
+    }
+
     uint64_t num_any(uint32_t type) {
         switch (type) {
             case T_UINT8:  case T_INT8:  case T_BOOL: { uint8_t v = num<uint8_t>();  return v; }
@@ -251,6 +277,20 @@ GGUFInfo read_gguf(const std::string & path) {
             info.experts_used = static_cast<int>(r.num_any(type));
         } else if (ends_with(key, ".pooling_type")) {
             info.has_pooling = r.num_any(type) != 0;
+        } else if (ends_with(key, ".classifier.output_labels")) {
+            info.cls_labels = r.strs(type);
+        } else if (key == "tokenizer.ggml.bos_token_id") {
+            info.bos_id = static_cast<int>(r.num_any(type));
+        } else if (key == "tokenizer.ggml.eos_token_id") {
+            info.eos_id = static_cast<int>(r.num_any(type));
+        } else if (key == "tokenizer.ggml.seperator_token_id") {
+            info.sep_id = static_cast<int>(r.num_any(type));
+        } else if (key == "tokenizer.ggml.cls_token_id") {
+            info.cls_id = static_cast<int>(r.num_any(type));
+        } else if (key == "tokenizer.ggml.mask_token_id") {
+            info.mask_id = static_cast<int>(r.num_any(type));
+        } else if (key == "tokenizer.ggml.padding_token_id") {
+            info.pad_id = static_cast<int>(r.num_any(type));
         } else if (ends_with(key, ".block_count")) {
             info.n_layer = static_cast<int>(r.num_any(type));
         } else if (ends_with(key, ".embedding_length")) {
@@ -323,13 +363,25 @@ GGUFInfo read_gguf(const std::string & path) {
         if (r.bad || dims > 4) {
             break;
         }
+        uint64_t rows = 1;  // every dimension but the first
         for (uint32_t d = 0; d < dims && !r.bad; d++) {
-            r.num<uint64_t>();
+            const uint64_t ne = r.num<uint64_t>();
+            if (d > 0) {
+                rows *= ne;
+            }
         }
         r.num<uint32_t>(); // ggml type
         const uint64_t offset = r.num<uint64_t>();
         if (contains(name, "nextn") || contains(name, "mtp")) {
             info.has_mtp = true;
+        }
+        if (name == "cls.output.weight") {
+            info.n_cls_out = static_cast<int>(rows);
+        } else if (name == "cls.weight") {
+            info.has_cls = true;
+            if (info.n_cls_out == 0) {
+                info.n_cls_out = static_cast<int>(rows);
+            }
         }
         spans.emplace_back(offset, name == "token_embd.weight" || name == "per_layer_token_embd.weight");
     }
@@ -351,6 +403,9 @@ GGUFInfo read_gguf(const std::string & path) {
         }
     }
 
+    if (!info.cls_labels.empty()) {
+        info.n_cls_out = static_cast<int>(info.cls_labels.size());
+    }
     info.ok = !r.bad && !shard_only;
     return info;
 }

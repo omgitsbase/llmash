@@ -2,6 +2,7 @@
 
 #include "api_logic.h"
 #include "chat.h"
+#include "classify.h"
 #include "pull.h"
 #include "table.h"
 
@@ -407,6 +408,12 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     });
     mount(srv, "/api/embeddings", [&cfg, &mgr, &reg](const Request & req, Response & res) {
         handle_embed(req, res, cfg, mgr, reg);
+    });
+    mount(srv, "/api/classify", [&cfg, &mgr, &reg](const Request & req, Response & res) {
+        handle_classify(req, res, cfg, mgr, reg);
+    });
+    mount(srv, "/v1/systemone", [&cfg, &mgr, &reg](const Request & req, Response & res) {
+        handle_classify(req, res, cfg, mgr, reg);
     });
     mount(srv, "/v1/chat/completions", [&cfg, &mgr, &reg](const Request & req, Response & res) {
         handle_v1_chat_completions(req, res, cfg, mgr, reg);

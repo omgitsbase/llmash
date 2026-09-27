@@ -22,6 +22,7 @@ build at the size you want, the build itself.
 - [Weight formats](#weight-formats)
 - [The runtime](#the-runtime)
 - [Models and pulling](#models-and-pulling)
+- [Classifiers](#classifiers)
 - [Context](#context)
 - [Custom builds](#custom-builds)
 - [Speculation](#speculation)
@@ -276,6 +277,53 @@ connections at once, inside the server, so closing the terminal does not stop it
 `rm` takes a model's full name or any part of it (0.5.0 and up): `llmash rm qwen`
 removes the one model with qwen in its name, and when several match it lists
 them and removes none.
+
+## Classifiers
+
+A classifier answers questions about a text from one forward pass and generates
+nothing (0.5.2 and up). The hub tags them `text-classification`: decision models
+such as Laya, Jev-Style and decider, and rerankers with a scoring head. `pull`
+records the tag and takes whatever the repository publishes for reading the
+answers: Laya's decision head is fetched as a sidecar beside the encoder, a
+verdict or answer-letter model gets its readout written to `<model>.classifier.json`,
+and a scoring head inside the GGUF needs nothing more. `show` lists such a model
+with the capability `classification`.
+
+`run` on a classifier takes questions first, one per line, then judges every line
+of text against them:
+
+```
+>>> Which team should handle this? [billing, technical, sales]
+>>> score: How urgent is it? [not at all, slightly, very]
+>>> Is the customer angry?
+>>> I was charged twice for my subscription this month and nobody answers.
+Which team should handle this?  billing 91%  ·  technical 6%  ·  sales 3%
+score: How urgent is it?        1.7 of 0-2  ·  not at all 4%  ·  slightly 22%  ·  very 74%
+Is the customer angry?          yes 83%
+```
+
+A choice lists its options in brackets and `name: description` describes one;
+`score:` lists ordered levels, lowest first; a question with no options is
+answered yes or no. The same lines work in any chat window pointed at llmash, put
+after the text or in the system prompt, and `/api/chat`, `/api/generate` and
+`/v1/chat/completions` answer with the lines above plus an `answers` object.
+`POST /api/classify` (also `/v1/systemone`, the shape decision models share)
+takes the questions as JSON:
+
+```json
+{"model": "laya:q8_0",
+ "state": "I was charged twice for my subscription this month.",
+ "questions": {"team": {"type": "choice", "instructions": "Which team should handle this?",
+                        "criteria": {"billing": "payments, invoices, refunds", "technical": "bugs and outages"}},
+               "urgent": {"type": "score", "instructions": "How urgent is it?",
+                          "criteria": ["not at all", "slightly", "very"]},
+               "angry": {"type": "noul", "instructions": "Is the customer angry?"}}}
+```
+
+and answers `{"answers": {"team": {"type": "choice", "choice": "billing", "probabilities": {...}, "confidence": 0.8}, ...}}`.
+`state` may be an object. A chat model asked on `/api/classify` is read at the
+answer letter of the common decision prompt, which works less well than a model
+trained for it; `<model>.classifier.json` beside a GGUF says how any model is read.
 
 ## Context
 

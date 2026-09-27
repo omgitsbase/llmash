@@ -1,4 +1,6 @@
 #include "pull.h"
+
+#include "classify.h"
 #include "manager.h"
 
 #include "gguf.h"
@@ -990,6 +992,52 @@ bool parse_hf_siblings(const std::string & body, std::vector<HfFile> & out, std:
 }
 
 } // namespace
+
+std::string hf_pipeline_tag(const std::string & repo) {
+    const HttpResult r = http_request(std::string(HF_BASE) + "/api/models/" + repo, "GET", "", {}, 5);
+    if (r.status != 200) {
+        return "";
+    }
+    const json d = json::parse(r.body, nullptr, false);
+    return d.is_object() && d.contains("pipeline_tag") && d["pipeline_tag"].is_string() ? d["pipeline_tag"].get<std::string>() : "";
+}
+
+std::vector<std::string> hf_repo_files(const std::string & repo) {
+    std::vector<std::string> out;
+    const HttpResult         r = http_request(std::string(HF_BASE) + "/api/models/" + repo, "GET", "", {}, 20);
+    if (r.status != 200) {
+        return out;
+    }
+    const json d = json::parse(r.body, nullptr, false);
+    if (!d.is_object()) {
+        return out;
+    }
+    for (const auto & s : d.value("siblings", json::array())) {
+        if (s.is_object() && s.contains("rfilename") && s["rfilename"].is_string()) {
+            out.push_back(s["rfilename"].get<std::string>());
+        }
+    }
+    return out;
+}
+
+std::string hf_base_model(const std::string & repo) {
+    const HttpResult r = http_request(std::string(HF_BASE) + "/api/models/" + repo, "GET", "", {}, 20);
+    if (r.status != 200) {
+        return "";
+    }
+    const json d = json::parse(r.body, nullptr, false);
+    if (!d.is_object() || !d.contains("cardData") || !d["cardData"].is_object()) {
+        return "";
+    }
+    const json b = d["cardData"].value("base_model", json());
+    if (b.is_string()) {
+        return b.get<std::string>();
+    }
+    if (b.is_array() && !b.empty() && b[0].is_string()) {
+        return b[0].get<std::string>();
+    }
+    return "";
+}
 
 std::vector<HfFile> hf_files(const std::string & repo, std::string * err, std::set<std::string> * others) {
     if (err != nullptr) {
@@ -3016,8 +3064,8 @@ std::string hf_pull(const std::string & repo, const std::string & quant, const s
     return first;
 }
 
-bool finish_hf(const std::string & repo, const std::string & first, const std::string & as, const std::string & mtp,
-               const Config & cfg, Registry & reg, const Emit & emit) {
+bool finish_hf(const std::string & repo, const std::string & from, const std::string & first, const std::string & as,
+               const std::string & mtp, const Config & cfg, Registry & reg, const Emit & emit) {
     std::error_code ec;
     if (!as.empty()) {
         std::string err;
@@ -3057,6 +3105,19 @@ bool finish_hf(const std::string & repo, const std::string & first, const std::s
             }
             fs::rename(tmp, dest, ec);
             emit(json{{"status", "pulling " + mtp}, {"digest", mtp}, {"total", total}, {"completed", total}});
+        }
+    }
+    // What the hub says the model is for: a classifier gets the pieces that read its answers.
+    {
+        const std::string origin = from.empty() ? repo : from;
+        std::string       tag    = hf_pipeline_tag(origin);
+        if (tag != "text-classification" && origin != repo) {
+            if (const std::string t = hf_pipeline_tag(repo); t == "text-classification" || tag.empty()) {
+                tag = t;
+            }
+        }
+        if (!tag.empty()) {
+            install_classifier(repo, origin, first, tag, emit);
         }
     }
     reg.invalidate();
@@ -3490,7 +3551,7 @@ void registry_pull(const std::string & ref, const Config & cfg, Registry & reg, 
             return;
         }
         remove_manifest_model(cfg, reg, mf_path);
-        finish_hf(b.hf_repo, first, name, "", cfg, reg, emit);
+        finish_hf(b.hf_repo, "", first, name, "", cfg, reg, emit);
         return;
     }
 
@@ -3656,7 +3717,7 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
                     remove_manifest_model(cfg, reg, m.manifest_path(cfg));
                 }
             }
-            finish_hf(used, first, as, mtp, cfg, reg, emit);
+            finish_hf(used, from, first, as, mtp, cfg, reg, emit);
         }
         return;
     }
@@ -3669,7 +3730,7 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
             const std::string first =
                 hf_pull(rep.second.first, first_non_empty(quant, rep.second.second), as, cfg, reg, emit);
             if (!first.empty()) {
-                finish_hf(rep.second.first, first, as, mtp, cfg, reg, emit);
+                finish_hf(rep.second.first, "", first, as, mtp, cfg, reg, emit);
             }
             return;
         }

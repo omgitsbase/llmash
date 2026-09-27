@@ -840,9 +840,10 @@ void offer_draft(ApiClient & api, const std::string & name, bool yes) {
     }
     std::printf("\n%slooking for a draft model...%s ", kDim, kReset);
     std::fflush(stdout);
-    const std::vector<DraftCand> cands = find_drafters(*m, false);
+    const std::vector<DraftCand> cands = find_drafters(*m, false, nullptr, 20);
     if (cands.empty()) {
-        std::printf("%snone published%s\n", kDim, kReset);
+        std::printf("%snone found in twenty seconds; `%s pulldraft %s` looks longer%s\n", kDim, prog().c_str(),
+                    name.c_str(), kReset);
         return;
     }
     std::vector<DraftCand> fit;

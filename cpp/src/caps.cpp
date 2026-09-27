@@ -41,16 +41,17 @@ const std::map<std::string, std::vector<std::string>> & pipeline_caps() {
     return m;
 }
 
-bool is_embedding(const GGUFInfo & g) {
-    static const std::set<std::string> embed_arch = {"bert",   "nomic-bert", "nomic-bert-moe", "jina-bert-v2",
-                                                     "xlm-roberta", "mpnet",  "gte",           "t5encoder"};
-    return g.has_pooling || embed_arch.count(lower(g.arch)) != 0;
-}
-
 std::mutex                                        g_mem_mu;
 std::map<std::string, std::pair<std::vector<std::string>, bool>> g_mem;
 
 } // namespace
+
+bool is_embedding(const GGUFInfo & g) {
+    static const std::set<std::string> embed_arch = {"bert",   "nomic-bert", "nomic-bert-moe", "jina-bert-v2",
+                                                     "xlm-roberta", "mpnet",  "gte",           "t5encoder",
+                                                     "modern-bert", "neo-bert", "eurobert"};
+    return g.has_pooling || embed_arch.count(lower(g.arch)) != 0;
+}
 
 std::vector<std::string> projector_caps(const std::string & mmproj_path) {
     const GGUFInfo g = read_gguf(mmproj_path);
