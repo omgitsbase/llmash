@@ -147,19 +147,21 @@ Forty questions is a sample, not a benchmark.
 |---|---|---|
 | `rco` | a published GSQ-RCO build: learned 3-bit grids, one type per tensor | the hub has one for the model |
 | `custom` | an RCO build assembled here: 3 bits, one type per tensor | always, for a model with no published one |
-| `medium` | NVFP4 on an all-Blackwell machine (0.5.0 and up), from another repository of the same model when this one has none (0.5.1 and up); otherwise Q4_K_M or the nearest 4-bit build | always |
+| `medium` | NVFP4 when every card is sm_120 (0.5.0 and up), from another repository of the same model when this one has none (0.5.1 and up); otherwise Q4_K_M or the nearest 4-bit build | always |
 | `large` | Q8_0, or the nearest 6-8 bit build | always |
 
 NVFP4 stores weights as 4-bit floats with an FP8 scale per 16 values, which
-keeps close to FP8 quality at the size of a 4-bit build. Blackwell cards (RTX
-50, RTX PRO 6000, B200) have FP4 tensor cores for it. On a dense model it is the
+keeps close to FP8 quality at the size of a 4-bit build. Cards of compute capability 12.0
+(sm_120: the RTX 50 series and the Blackwell RTX PRO cards) run it on their FP4
+tensor cores; a B200 is sm_100, which this runtime's FP4 kernels are not built
+for. On a dense model it is the
 better 4-bit format there: Qwen3.8-27B NVFP4 generates 2-14% faster than the
 UD-Q4_K_XL build of the same size and reads a long prompt 31% faster. On a
 mixture-of-experts model it reads prompts at the same rate as Q4 and, depending
 on what the file keeps at higher precision, can generate slower. So on a machine
-where every card is Blackwell, the medium row is an NVFP4 build when the
+where every card is sm_120, the medium row is an NVFP4 build when the
 repository has one. Older cards decode it in software, and a Q4_K_M runs faster
-there. `LLMASH_FP4=1` or `0` overrides the detection. On an all-Blackwell
+there. `LLMASH_FP4=1` or `0` overrides the detection. On such a
 machine, a repository holding an NVFP4 build next to the others reads like this:
 
 ```

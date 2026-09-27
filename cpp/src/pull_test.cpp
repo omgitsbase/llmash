@@ -884,9 +884,11 @@ void test_model_stem() {
 }
 
 void test_all_blackwell() {
-    check(all_blackwell("12.0\n"), "one Blackwell card");
-    check(all_blackwell("12.0\r\n10.0\r\n"), "two Blackwell cards, CRLF");
-    check(!all_blackwell("12.0\n8.9\n"), "a Blackwell card beside an Ada one is not all Blackwell");
+    check(all_blackwell("12.0\n"), "one sm_120 card");
+    check(all_blackwell("12.0\r\n12.1\r\n"), "two sm_120 cards, CRLF");
+    check(!all_blackwell("12.0\n10.0\n"), "a B200 (sm_100) beside an RTX 50 is not all sm_120: the FP4 kernels are not built for it");
+    check(!all_blackwell("12.0\n8.9\n"), "nor is an Ada card beside one");
+    check(!all_blackwell("13.0\n"), "nor a card the runtime does not know yet");
     check(!all_blackwell("8.6\n"), "Ampere");
     check(!all_blackwell(""), "no card");
     check(!all_blackwell("NVIDIA-SMI has failed\n"), "nvidia-smi's error text");
