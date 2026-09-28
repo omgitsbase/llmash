@@ -274,6 +274,30 @@ std::string normalise(const std::string & s) {
     return out;
 }
 
+std::string model_key(const std::string & s) {
+    std::string out, token;
+    const auto  flush = [&] {
+        static const char * wrap[] = {"instruct", "it", "chat", "base", "gguf", "hf"};
+        bool                skip   = false;
+        for (const char * w : wrap) {
+            skip = skip || token == w;
+        }
+        if (!skip) {
+            out += token;
+        }
+        token.clear();
+    };
+    for (const char c : lower(s)) {
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            token += c;
+        } else {
+            flush();
+        }
+    }
+    flush();
+    return out;
+}
+
 // A DFlash drafter is trained against a base model and drafts for any quantisation of it, so
 // besides <stem>.dflash.gguf it is matched by the base model the target's header names.
 std::string dflash_path(const std::string & gguf) {
@@ -457,17 +481,25 @@ std::string foreign_base(const std::vector<std::string> & bases, const std::stri
                 return b;
             }
         }
-        std::string rest = normalise(name);
+        std::string rest = model_key(name);
         if (!want.empty()) {
             const size_t p = rest.find(want);
             if (p != std::string::npos) {
                 rest.erase(p, want.size());
             }
         }
+        // a drafter's own words come after its kind (DFlash-UltraChat, EAGLE3-converted); what stands before the
+        // model's name is what could name another model (Bible-Assistant-Qwen3.5-4B)
+        for (const char * kindword : {"dflash", "eagle3", "eagle", "dspark", "speculator", "assistant", "draft", "mtp"}) {
+            if (const size_t k = rest.find(kindword); k != std::string::npos) {
+                rest.erase(k);
+            }
+        }
         for (const char * innocuous :
              {"instruct", "it",     "chat",   "base",   "gguf",   "hf",     "llamacpp", "llama",
               "nvfp",     "fp",     "unsloth", "quant",
               "speculator", "eagle3", "eagle", "dspark", "dflash", "draft",  "model", "assistant",
+              "specforge",  "sglang", "vllm",  "speculators", "converted", "redhatai", "nvidia",
               "f16",      "bf16",   "fp16",   "q4km",   "q4",     "q8",     "iq4xs",    "test", "preview",
               "v1",       "v2",     "v3",     "0",      "1",      "2",      "3",        "4",    "5",
               "6",        "7",      "8",      "9"}) {
@@ -557,11 +589,11 @@ bool consider_repo(const HubModel & hit, const std::string & want, const std::st
 
     bool matched = false;
     for (const auto & b : bases) {
-        if (contains(normalise(b), want)) {
+        if (contains(model_key(b), want)) {
             matched = true;
         }
     }
-    if (!matched && !contains(normalise(hit.id), want)) {
+    if (!matched && !contains(model_key(hit.id), want)) {
         tell("    " + hit.id + ": does not name " + stem + " as a base");
         return false;
     }

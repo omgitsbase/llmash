@@ -45,6 +45,9 @@ constexpr int64_t DRAFT_SIZE_CEILING = 6ll << 30;
 
 // Lower-cased, everything but [a-z0-9] dropped.
 std::string normalise(const std::string & s);
+// normalise() with the words a name adds around a model's (Instruct, it, chat, base, GGUF) taken out, so
+// LLaMA3.1-Instruct-8B and Llama-3.1-8B-Instruct-GGUF both read as llama318b
+std::string model_key(const std::string & s);
 
 std::string model_stem(const Model & m);  // identify(m).name
 
