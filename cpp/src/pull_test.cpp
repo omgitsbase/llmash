@@ -622,6 +622,26 @@ void test_rco_source_pick() {
                  "pick_gguf takes it");
         check_eq(find_imatrix(named), std::string("imatrix.dat"), "find_imatrix passes the build over");
     }
+    {
+        // builds named with no width at all: listed by what sets them apart, the middle one the default
+        const std::vector<HfFile> apex = {HfFile{"Laguna-XS-2.1-APEX-Balanced.gguf", 24308693536},
+                                          HfFile{"Laguna-XS-2.1-APEX-Compact.gguf", 15775073312},
+                                          HfFile{"Laguna-XS-2.1-APEX-I-Mini.gguf", 12827817504},
+                                          HfFile{"Laguna-XS-2.1-APEX-Quality.gguf", 21819406880}};
+        std::string names;
+        for (const QuantInfo & q : quants_of(apex)) {
+            names += (names.empty() ? "" : ",") + q.name;
+        }
+        check_eq(names, std::string("I-Mini,Compact,Quality,Balanced"), "tagless builds are named by their own part, smallest first");
+        check_eq(join_names(pick_gguf(apex, "Balanced")), std::string("Laguna-XS-2.1-APEX-Balanced.gguf"), "a tagless build asked for by name");
+        check_eq(join_names(pick_gguf(apex, "Q4_K_M")), std::string("Laguna-XS-2.1-APEX-Quality.gguf"), "the middle one stands in for the medium");
+        const std::vector<HfFile> lone = {HfFile{"gemma-2b.gguf", 10000000000}};
+        check(quants_of(lone).size() == 1 && quants_of(lone)[0].name == "gemma-2b", "a single tagless build keeps its whole name");
+        check_eq(join_names(pick_gguf(lone, "Q4_K_M")), std::string("gemma-2b.gguf"), "and is what a pull takes");
+        check_eq(quant_tag("Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf"), std::string("PTQ1_0"), "a ternary width is read");
+        check_eq(quant_tag("Bonsai-2-27B-PQ2_0-CRACK.gguf"), std::string("PQ2_0"), "and the packed spelling");
+        check(!quants_of({HfFile{"Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf", 7012820512}}).empty(), "a full build with its own head is a build");
+    }
     check(pick_rco_source({HfFile{"imatrix_unsloth.gguf", 100}}, 3.0).empty(),
           "a repo with no weights at all has no source");
     check(pick_rco_source({HfFile{"M-Q8_0.mmproj.gguf", 1000}}, 3.0).empty(), "a projector is never a source");

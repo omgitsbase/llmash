@@ -273,6 +273,10 @@ no GGUF is answered only by a GGUF conversion of that exact model, never a
 fine-tune, merge or abliteration of it; when there is none, the pull says so and
 lists the near matches as different models. Files come down over several
 connections at once, inside the server, so closing the terminal does not stop it.
+A gated repository (Gemma and Llama as their makers publish them) is read with
+the token `hf auth login` stores, or `HF_TOKEN`; the token goes to the hub only.
+A build named without a width (`-APEX-Balanced`, `gemma-2b.gguf`) is listed by
+what sets it apart and taken by that name.
 
 `rm` takes a model's full name or any part of it (0.5.0 and up): `llmash rm qwen`
 removes the one model with qwen in its name, and when several match it lists
