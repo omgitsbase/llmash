@@ -955,6 +955,17 @@ std::string hf_download_url(const std::string & repo, const std::string & file) 
     return std::string(HF_BASE) + "/" + repo + "/resolve/main/" + file;
 }
 
+bool is_imatrix_file(const HfFile & f) {
+    const std::string low = lower(f.name);
+    if (!contains(low, "imatrix")) {
+        return false;
+    }
+    if (!ends_with(low, ".gguf") || quant_tag(f.name).empty()) {
+        return true;
+    }
+    return f.size > 0 && f.size < (64ll << 20);
+}
+
 namespace {
 
 // The GGUF entries of /api/models/<repo>?blobs=true, and the extensions of
@@ -1450,7 +1461,7 @@ std::vector<HfFile> pick_gguf(const std::vector<HfFile> & files, const std::stri
     std::vector<HfFile> builds;
     for (const auto & f : files) {
         const std::string low = lower(f.name);
-        if (ends_with(low, ".gguf") && !contains(low, "mmproj") && kind_of(f.name) == nullptr) {
+        if (ends_with(low, ".gguf") && !contains(low, "mmproj") && kind_of(f.name) == nullptr && !is_imatrix_file(f)) {
             builds.push_back(f);
         }
     }
@@ -1547,8 +1558,7 @@ std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files) {
     std::vector<QuantInfo> out; // insertion order, then a stable sort by size
     for (const auto & f : files) {
         const std::string low = lower(f.name);
-        if (!ends_with(low, ".gguf") || contains(low, "mmproj") || contains(low, "imatrix") ||
-            kind_of(f.name) != nullptr) {
+        if (!ends_with(low, ".gguf") || contains(low, "mmproj") || is_imatrix_file(f) || kind_of(f.name) != nullptr) {
             continue; // a projector, a draft head or an imatrix is not a build
         }
         const std::string q = quant_tag(f.name);
@@ -2071,7 +2081,7 @@ std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files, double bp
         std::vector<HfFile> cand;
         for (const HfFile & f : files) {
             const std::string low = lower(f.name);
-            if (contains(low, want) && !contains(low, "mmproj") && !contains(low, "imatrix") &&
+            if (contains(low, want) && !contains(low, "mmproj") && !is_imatrix_file(f) &&
                 kind_of(f.name) == nullptr && ends_with(low, ".gguf")) {
                 cand.push_back(f);
             }
@@ -2110,7 +2120,7 @@ std::vector<HfFile> pick_rco_source(const std::vector<HfFile> & files, double bp
 
 std::string find_imatrix(const std::vector<HfFile> & files) {
     for (const HfFile & f : files) {
-        if (contains(lower(f.name), "imatrix")) {
+        if (is_imatrix_file(f)) {
             return f.name;
         }
     }
