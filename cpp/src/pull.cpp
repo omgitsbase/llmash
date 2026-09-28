@@ -23,6 +23,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <regex>
 #include <sstream>
@@ -1121,25 +1122,46 @@ std::vector<std::string> hf_repo_files(const std::string & repo) {
 }
 
 std::string hf_base_model(const std::string & repo, std::string * relation) {
-    const HttpResult r = http_request(std::string(HF_BASE) + "/api/models/" + repo, "GET", "", {}, 20);
-    if (r.status != 200) {
-        return "";
+    static std::mutex                                                     mu;
+    static std::map<std::string, std::pair<std::string, std::string>> known;  // repo -> base, relation
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        if (const auto it = known.find(repo); it != known.end()) {
+            if (relation != nullptr) {
+                *relation = it->second.second;
+            }
+            return it->second.first;
+        }
     }
-    const json d = json::parse(r.body, nullptr, false);
-    if (!d.is_object() || !d.contains("cardData") || !d["cardData"].is_object()) {
-        return "";
+    HttpResult r;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        r = http_request(std::string(HF_BASE) + "/api/models/" + repo, "GET", "", {}, 20);
+        if (r.status == 200 || r.status == 401 || r.status == 404) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    std::string base, rel;
+    if (r.status == 200) {
+        const json d = json::parse(r.body, nullptr, false);
+        if (d.is_object() && d.contains("cardData") && d["cardData"].is_object()) {
+            rel          = d["cardData"].value("base_model_relation", std::string());
+            const json b = d["cardData"].value("base_model", json());
+            if (b.is_string()) {
+                base = b.get<std::string>();
+            } else if (b.is_array() && !b.empty() && b[0].is_string()) {
+                base = b[0].get<std::string>();
+            }
+        }
+    }
+    if (r.status == 200 || r.status == 401 || r.status == 404) {
+        std::lock_guard<std::mutex> lock(mu);
+        known[repo] = {base, rel};
     }
     if (relation != nullptr) {
-        *relation = d["cardData"].value("base_model_relation", std::string());
+        *relation = rel;
     }
-    const json b = d["cardData"].value("base_model", json());
-    if (b.is_string()) {
-        return b.get<std::string>();
-    }
-    if (b.is_array() && !b.empty() && b[0].is_string()) {
-        return b[0].get<std::string>();
-    }
-    return "";
+    return base;
 }
 
 std::string hf_find_repo_by_file(const std::string & filename, int64_t size) {

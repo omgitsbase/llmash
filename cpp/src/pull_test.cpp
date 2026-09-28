@@ -853,6 +853,13 @@ void test_identify() {
     check_eq(id.name, std::string("Qwen3.5-4B"), "a basename that already carries the size is not given it twice");
     check_eq(id.tuned_from, std::string(""), "and the model it names as its base is itself");
 
+    check_eq(model_key("lmsys/sglang-EAGLE3-LLaMA3.1-Instruct-8B"), std::string("lmsyssglangeagle3llama318b"), "a name's wrapping words are taken out");
+    check(foreign_base({"z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"}, "llama318b").empty(),
+          "a drafter's own words after its kind do not make it another model");
+    check(foreign_base({"lmsys/SGLang-EAGLE3-Llama-3.1-8B-Instruct-SpecForge"}, "llama318b").empty(), "nor does the framework it was made with");
+    check(!foreign_base({"Ttimms/Bible-Assistant-Qwen3.5-4B-v2"}, "qwen354b").empty(), "words before the model's name still do");
+    check(!foreign_base({"mradermacher/Qwen3.5-4B-MiniFantasy-MTP-GGUF"}, "qwen354b").empty(), "a fine-tune carrying a head is another model");
+
     id = build("GLM-4.7-Flash-UD-Q4_K_XL.gguf", "GLM 4.7 Flash", "GLM-4.7-Flash", "64x2.6B", "https://huggingface.co/zai-org/GLM-4.7-Flash");
     check_eq(id.name, std::string("GLM-4.7-Flash"), "an expert-count label is not part of the name");
     check_eq(id.tuned_from, std::string(""), "and the model then names itself as its base");
