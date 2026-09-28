@@ -106,6 +106,9 @@ std::vector<HfFile>   pick_gguf(const std::vector<HfFile> & files, const std::st
 std::optional<HfFile> pick_mmproj(const std::vector<HfFile> & files);
 std::string           quant_tag(const std::string & name);
 std::string           hf_download_url(const std::string & repo, const std::string & file);
+// An importance-matrix file, as against a build quantized with one: imatrix.dat, *.imatrix, imatrix_unsloth.gguf.
+// A GGUF that carries a width in its name and weighs what a model weighs is a build however it is named.
+bool                  is_imatrix_file(const HfFile & f);
 
 struct QuantInfo {
     std::string name;

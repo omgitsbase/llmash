@@ -611,6 +611,17 @@ void test_rco_source_pick() {
                                 HfFile{"imatrix_unsloth.gguf", 100}};
     check(pick_rco_source(thin, 3.0).empty(), "a repo holding only a Q4 build has no source to quantize from");
 
+    {
+        // a build named for the imatrix it was made with is a build; the importance file beside it is not
+        const std::vector<HfFile> named = {HfFile{"Agents-A1-IQ4_XS-imatrix-gguf-fable5-calibrated.gguf", 18728777792},
+                                           HfFile{"imatrix.dat", 5000000}, HfFile{"imatrix_unsloth.gguf", 100}};
+        check(!is_imatrix_file(named[0]) && is_imatrix_file(named[1]) && is_imatrix_file(named[2]),
+              "an imatrix-named build with a width is a build, the small files are importance files");
+        check(quants_of(named).size() == 1 && quants_of(named)[0].name == "IQ4_XS", "quants_of lists the imatrix-named build");
+        check_eq(join_names(pick_gguf(named, "IQ4_XS")), std::string("Agents-A1-IQ4_XS-imatrix-gguf-fable5-calibrated.gguf"),
+                 "pick_gguf takes it");
+        check_eq(find_imatrix(named), std::string("imatrix.dat"), "find_imatrix passes the build over");
+    }
     check(pick_rco_source({HfFile{"imatrix_unsloth.gguf", 100}}, 3.0).empty(),
           "a repo with no weights at all has no source");
     check(pick_rco_source({HfFile{"M-Q8_0.mmproj.gguf", 1000}}, 3.0).empty(), "a projector is never a source");
