@@ -853,6 +853,23 @@ void test_identify() {
     check_eq(id.name, std::string("Qwen3.5-4B"), "a basename that already carries the size is not given it twice");
     check_eq(id.tuned_from, std::string(""), "and the model it names as its base is itself");
 
+    id = build("GLM-4.7-Flash-UD-Q4_K_XL.gguf", "GLM 4.7 Flash", "GLM-4.7-Flash", "64x2.6B", "https://huggingface.co/zai-org/GLM-4.7-Flash");
+    check_eq(id.name, std::string("GLM-4.7-Flash"), "an expert-count label is not part of the name");
+    check_eq(id.tuned_from, std::string(""), "and the model then names itself as its base");
+
+    id = build("Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf", "Meta Llama 3.1 8B Instruct", "Meta-Llama-3.1", "8B", "");
+    check_eq(id.name, std::string("Llama-3.1-8B"), "Meta's own prefix is dropped: the hub names the model without it");
+
+    {
+        // a header that cannot name the model: the repository the pull was asked for names it
+        SourceRecord src;
+        src.repo = "fr0stbit3/laya-gguf";
+        src.from = "convaiinnovations/laya";
+        write_source(dir.string(), "laya-Q8_0.gguf", src);
+        id = build("laya-Q8_0.gguf", "tmp.YeNP5CCHM8", "", "", "");
+        check_eq(id.name, std::string("laya"), "named by the repository it was pulled as");
+    }
+
     id = build("mimo-v2.6-distill-qwen-9b-q4_k_m.gguf", "MiMo V2.6 Distill Qwen 9B", "MiMo-V2.6-Distill-Qwen", "9B",
                "https://huggingface.co/Qwen/Qwen3.5-9B");
     check_eq(id.name, std::string("MiMo-V2.6-Distill-Qwen-9B"), "a distill is named as itself");

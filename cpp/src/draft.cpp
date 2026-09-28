@@ -3,6 +3,7 @@
 #include "gguf_io.h"
 
 #include "gguf.h"
+#include "pull.h"
 
 #include <algorithm>
 #include <cctype>
@@ -337,18 +338,44 @@ ModelIdent identify(const Model & m) {
     name                    = colon == std::string::npos ? name : name.substr(0, colon);
     if (!meta.basename.empty() && !meta.size_label.empty()) {
         // a converter that wrote the whole name as the basename (Qwen3.5-4B) does not get its size twice
-        name = names_size(meta.basename) ? meta.basename : meta.basename + "-" + meta.size_label;
+        name = names_size(meta.basename) || meta.size_label.find('x') != std::string::npos ? meta.basename
+                                                                                             : meta.basename + "-" + meta.size_label;
     } else if (!meta.name.empty() && names_size(meta.name)) {
         name = meta.name;
     } else if (colon != std::string::npos && tail != "latest" && tail != "gguf") {
         name += "-" + tail;  // a registry tag carries the size (e2b, 26b-a4b)
-    } else if (!meta.size_label.empty() && !names_size(name)) {
+    } else if (!meta.size_label.empty() && !names_size(name) && meta.size_label.find('x') == std::string::npos) {
         name += "-" + meta.size_label;
     }
     id.name = bare_name(name);
 
+    // A header that cannot name the model (no basename, a name without its size: Agents-A1's says "A1") is named by
+    // where the file came from: the repository the pull was asked for, or the model the hub's card says the
+    // repository quantized. A card naming a fine-tune's base counts as the header naming it.
+    const bool  poor      = meta.basename.empty() && !names_size(meta.name);
+    std::string base_repo = hf_repo_of(meta);
+    if (poor || base_repo.empty()) {
+        const SourceRecord src = read_source(fs::path(m.path).parent_path().string(), fs::path(m.path).filename().string());
+        if (!src.repo.empty()) {
+            if (poor && !src.from.empty() && src.from != src.repo) {
+                id.name = bare_name(src.from.substr(src.from.find('/') + 1));
+            } else {
+                std::string       relation;
+                const std::string card = hf_base_model(src.repo, &relation);
+                if (!card.empty() && poor && (relation == "quantized" || relation.empty())) {
+                    id.name = bare_name(card.substr(card.find('/') + 1));
+                } else if (!card.empty() && base_repo.empty()) {
+                    base_repo = "https://huggingface.co/" + card;
+                }
+            }
+        }
+    }
+    // Meta-Llama-3.1-8B is published everywhere as Llama-3.1-8B
+    if (starts_with(id.name, "Meta-")) {
+        id.name = id.name.substr(5);
+    }
+
     // the base the header names: the same model before instruction tuning is not another model; anything else is
-    const std::string base_repo = hf_repo_of(meta);
     if (!base_repo.empty()) {
         std::string base = bare_name(base_repo.substr(base_repo.find('/') + 1));
         if (ends_with(lower(base), "-base")) {
@@ -912,7 +939,7 @@ std::string pairs(const GGUFSpec & target, const GGUFSpec & draft) {
     return "";
 }
 
-std::string fits_target(const Model & m, const DraftCand & c) {
+std::string fits_target(const Model & m, DraftCand & c) {
     GGUFSpec target;
     if (!spec_of_file(m.path, target).empty()) {
         return ""; // a target we cannot read is not the candidate's fault
@@ -931,6 +958,14 @@ std::string fits_target(const Model & m, const DraftCand & c) {
     }
     if (c.embedded && draft.nextn_layer < 0) {
         return "it carries no MTP head after all";
+    }
+    // a head published on its own (blk.N.nextn.* and little else) is an MTP drafter however its repository is named;
+    // as a plain draft model the runtime could not load it
+    if (draft.nextn_layer >= 0 && draft.tensors < 64 && (c.kind == nullptr || c.kind->name != "mtp")) {
+        c.kind     = &draft_kinds()[0];
+        c.embedded = false;
+        c.note     = "MTP head, " + human_bytes(c.size);
+        c.score    = std::max(c.score, c.kind->rank);
     }
     return pairs(target, draft);
 }

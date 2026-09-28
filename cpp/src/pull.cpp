@@ -1120,7 +1120,7 @@ std::vector<std::string> hf_repo_files(const std::string & repo) {
     return out;
 }
 
-std::string hf_base_model(const std::string & repo) {
+std::string hf_base_model(const std::string & repo, std::string * relation) {
     const HttpResult r = http_request(std::string(HF_BASE) + "/api/models/" + repo, "GET", "", {}, 20);
     if (r.status != 200) {
         return "";
@@ -1128,6 +1128,9 @@ std::string hf_base_model(const std::string & repo) {
     const json d = json::parse(r.body, nullptr, false);
     if (!d.is_object() || !d.contains("cardData") || !d["cardData"].is_object()) {
         return "";
+    }
+    if (relation != nullptr) {
+        *relation = d["cardData"].value("base_model_relation", std::string());
     }
     const json b = d["cardData"].value("base_model", json());
     if (b.is_string()) {
