@@ -135,6 +135,49 @@ int64_t j_int(const json & j, const char * key) {
     return it->get<int64_t>();
 }
 
+// The token a gated repository needs: HF_TOKEN, or what `hf auth login` stored.
+const std::string & hf_token() {
+    static const std::string token = [] {
+        for (const char * v : {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN"}) {
+            if (const std::string t = env_str(v); !t.empty()) {
+                return t;
+            }
+        }
+        const std::string hf_home = env_str("HF_HOME");
+        const std::string home    = env_str("USERPROFILE", env_str("HOME"));
+        for (const fs::path p : {fs::path(hf_home) / "token", fs::path(home) / ".cache" / "huggingface" / "token"}) {
+            std::ifstream in(p, std::ios::binary);
+            std::string   t;
+            if (!hf_home.empty() || p.string().find(".cache") != std::string::npos) {
+                if (in && std::getline(in, t)) {
+                    while (!t.empty() && (t.back() == '\r' || t.back() == '\n' || t.back() == ' ')) {
+                        t.pop_back();
+                    }
+                    if (!t.empty()) {
+                        return t;
+                    }
+                }
+            }
+        }
+        return std::string();
+    }();
+    return token;
+}
+
+std::string url_host(const std::string & url) {
+    const size_t at = url.find("://");
+    if (at == std::string::npos) {
+        return "";
+    }
+    const size_t end = url.find_first_of("/:?", at + 3);
+    return url.substr(at + 3, end == std::string::npos ? std::string::npos : end - at - 3);
+}
+
+// The token goes to the hub and nowhere else: a download is answered with a redirect to a signed CDN URL, which
+// refuses a request that also carries the token.
+thread_local bool g_without_token = false;
+bool token_for(const std::string & url) { return !g_without_token && url_host(url) == "huggingface.co" && !hf_token().empty(); }
+
 #ifdef _WIN32
 
 std::wstring widen(const std::string & s) {
@@ -276,7 +319,13 @@ bool open_stream(const std::string & url, const std::string & method, const std:
         return false;
     }
 
+    const bool  with_token = token_for(url);
     std::string extra_headers;
+    if (with_token) {
+        extra_headers += "Authorization: Bearer " + hf_token() + "\r\n";
+        DWORD off = WINHTTP_DISABLE_REDIRECTS;
+        WinHttpSetOption(st.request.get(), WINHTTP_OPTION_DISABLE_FEATURE, &off, sizeof(off));
+    }
     for (const auto & h : headers) {
         extra_headers += h + "\r\n";
     }
@@ -302,6 +351,33 @@ bool open_stream(const std::string & url, const std::string & method, const std:
     if (WinHttpQueryHeaders(st.request.get(), WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                             WINHTTP_HEADER_NAME_BY_INDEX, &code, &len, WINHTTP_NO_HEADER_INDEX)) {
         st.status = static_cast<int>(code);
+    }
+    if (with_token && code == 401) {
+        // the token was refused: a public repository is still readable without it
+        g_without_token = true;
+        const bool ok   = open_stream(url, method, range, headers, st, err, timeout_s);
+        g_without_token = false;
+        return ok;
+    }
+    if (with_token && (code == 301 || code == 302 || code == 303 || code == 307 || code == 308)) {
+        static thread_local int hops = 0;
+        wchar_t                 loc[4096] = {};
+        DWORD                   ll        = sizeof(loc);
+        if (hops < 5 && WinHttpQueryHeaders(st.request.get(), WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, loc, &ll,
+                                            WINHTTP_NO_HEADER_INDEX)) {
+            const int   n = WideCharToMultiByte(CP_UTF8, 0, loc, -1, nullptr, 0, nullptr, nullptr);
+            std::string next(static_cast<size_t>(n > 0 ? n - 1 : 0), '\0');
+            if (n > 1) {
+                WideCharToMultiByte(CP_UTF8, 0, loc, -1, &next[0], n, nullptr, nullptr);
+            }
+            if (starts_with(next, "/")) {
+                next = "https://huggingface.co" + next;
+            }
+            hops++;
+            const bool ok = open_stream(next, method, range, headers, st, err, timeout_s);
+            hops--;
+            return ok;
+        }
     }
 
     wchar_t clen[64] = {};
@@ -412,6 +488,10 @@ bool open_stream(const std::string & url, const std::string & method, const std:
         const std::string bytes = starts_with(range, "bytes=") ? range.substr(6) : range;
         curl_easy_setopt(st.easy, CURLOPT_RANGE, bytes.c_str());
     }
+    if (token_for(url)) {
+        curl_easy_setopt(st.easy, CURLOPT_XOAUTH2_BEARER, hf_token().c_str());
+        curl_easy_setopt(st.easy, CURLOPT_HTTPAUTH, static_cast<long>(CURLAUTH_BEARER));
+    }
     for (const std::string & h : headers) {
         st.hdrs = curl_slist_append(st.hdrs, h.c_str());
     }
@@ -452,6 +532,15 @@ bool open_stream(const std::string & url, const std::string & method, const std:
             return false;
         }
         curl_multi_poll(st.multi, nullptr, 0, 200, nullptr);
+    }
+    if (st.status == 401 && token_for(url)) {
+        // the token was refused: a public repository is still readable without it
+        curl_multi_remove_handle(st.multi, st.easy);
+        st.pending.clear();
+        g_without_token = true;
+        const bool ok   = open_stream(url, method, range, headers, st, err, timeout_s);
+        g_without_token = false;
+        return ok;
     }
     curl_off_t len = -1;
     if (curl_easy_getinfo(st.easy, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &len) == CURLE_OK && len >= 0) {
@@ -941,7 +1030,7 @@ const DraftKind * kind_of(const std::string & text) {
 
 std::string quant_tag(const std::string & name) {
     static const std::regex re(
-        R"((?:^|[-_.])((?:UD-)?(?:IQ|Q|TQ)[1-8](?:_[0-9A-Z]+)*|BF16|F16|F32|MXFP4(?:_MOE)?|NVFP4)(?:[-_.]|$))",
+        R"((?:^|[-_.])((?:UD-)?(?:IQ|Q|TQ|PQ|PTQ)[1-8](?:_[0-9A-Z]+)*|BF16|F16|F32|MXFP4(?:_MOE)?|NVFP4)(?:[-_.]|$))",
         std::regex::icase);
     const std::string base = name.substr(name.find_last_of("/\\") + 1);  // a repo may keep each build in a folder
     std::smatch       m;
@@ -1489,6 +1578,12 @@ std::vector<HfFile> pick_gguf(const std::vector<HfFile> & files, const std::stri
     }
     if (cand.empty()) {
         cand = builds;
+        const bool untagged = std::all_of(builds.begin(), builds.end(), [](const HfFile & f) { return quant_tag(f.name).empty(); });
+        if (untagged && builds.size() > 1) {
+            // nothing says which is which, so the middle one by size stands in for the medium build
+            std::sort(cand.begin(), cand.end(), [](const HfFile & a, const HfFile & b) { return a.size < b.size; });
+            return {cand[cand.size() / 2]};
+        }
     }
     std::vector<HfFile> shards;
     for (const auto & f : cand) {
@@ -1556,6 +1651,7 @@ double bits_of_quant(const std::string & quant) {
 
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files) {
     std::vector<QuantInfo> out; // insertion order, then a stable sort by size
+    std::vector<HfFile>    tagless;
     for (const auto & f : files) {
         const std::string low = lower(f.name);
         if (!ends_with(low, ".gguf") || contains(low, "mmproj") || is_imatrix_file(f) || kind_of(f.name) != nullptr) {
@@ -1563,6 +1659,7 @@ std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files) {
         }
         const std::string q = quant_tag(f.name);
         if (q.empty()) {
+            tagless.push_back(f);
             continue;
         }
         auto it = std::find_if(out.begin(), out.end(), [&](const QuantInfo & qi) { return qi.name == q; });
@@ -1572,6 +1669,33 @@ std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files) {
         }
         it->size += f.size;
         it->files++;
+    }
+    // Balanced, Compact, Mini: what a build is called once the name every build shares is taken off
+    if (!tagless.empty()) {
+        std::vector<std::string> stems;
+        for (const HfFile & f : tagless) {
+            const std::string base = f.name.substr(f.name.find_last_of("/\\") + 1);
+            stems.push_back(base.substr(0, base.size() - 5));
+        }
+        size_t common = tagless.size() > 1 ? stems[0].size() : 0;
+        for (const std::string & s : stems) {
+            size_t i = 0;
+            while (i < common && i < s.size() && std::tolower(static_cast<unsigned char>(s[i])) ==
+                                                     std::tolower(static_cast<unsigned char>(stems[0][i]))) {
+                i++;
+            }
+            common = i;
+        }
+        for (size_t k = 0; k < tagless.size(); k++) {
+            std::string name = stems[k].substr(common);
+            while (!name.empty() && (name[0] == '-' || name[0] == '_' || name[0] == '.')) {
+                name.erase(0, 1);
+            }
+            if (name.empty()) {
+                name = stems[k];
+            }
+            out.push_back(QuantInfo{name, tagless[k].size, 1});
+        }
     }
     std::stable_sort(out.begin(), out.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size < b.size; });
     return out;
