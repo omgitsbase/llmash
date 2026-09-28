@@ -614,8 +614,9 @@ bool consider_repo(const HubModel & hit, const std::string & want, const std::st
 
     HubFile best;
     for (const auto & f : hub_files(hit.id)) {
-        if (f.type != "file" || !ends_with(lower(f.path), ".gguf")) {
-            continue;
+        const std::string fl = lower(f.path);
+        if (f.type != "file" || !ends_with(fl, ".gguf") || contains(fl, "mmproj") || contains(fl, "imatrix")) {
+            continue;  // a projector or an importance file beside the build is not the drafter
         }
         if (best.path.empty() || prefer_quant(f.path, best.path)) {
             best = f;
@@ -987,6 +988,9 @@ std::string fits_target(const Model & m, DraftCand & c) {
     }
     if (assistant_named(c.repo) && !contains(lower(draft.arch), "assistant")) {
         return "it is a whole " + draft.arch + " model, not an assistant drafter";
+    }
+    if (starts_with(lower(draft.arch), "clip") || contains(lower(c.file), "mmproj") || (draft.vocab == 0 && !draft.partial)) {
+        return "it is a projector, not a drafter";
     }
     if (c.embedded && draft.nextn_layer < 0) {
         return "it carries no MTP head after all";
