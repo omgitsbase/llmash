@@ -85,7 +85,7 @@ std::string           hf_pipeline_tag(const std::string & repo);
 // Every file a repository holds, GGUF or not.
 std::vector<std::string> hf_repo_files(const std::string & repo);
 // The model a repository says it was made from (its card's base_model), or "".
-std::string              hf_base_model(const std::string & repo);
+std::string              hf_base_model(const std::string & repo, std::string * relation = nullptr);
 // The repository that publishes a file of this name and size, found by searching the hub, or "".
 std::string              hf_find_repo_by_file(const std::string & filename, int64_t size);
 

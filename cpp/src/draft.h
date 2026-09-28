@@ -102,7 +102,8 @@ std::string spec_of_url(const std::string & url, GGUFSpec & out, bool & unreadab
 std::string pairs(const GGUFSpec & target, const GGUFSpec & draft);
 
 // pairs() for a candidate not yet downloaded: its header is range-fetched.
-std::string fits_target(const Model & m, const DraftCand & c);
+// Reads the candidate's header; a file that turns out to hold an MTP head on its own is re-labelled as one.
+std::string fits_target(const Model & m, DraftCand & c);
 
 // ------------------------------------------------------------- installing
 

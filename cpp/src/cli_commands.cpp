@@ -847,7 +847,7 @@ void offer_draft(ApiClient & api, const std::string & name, bool yes) {
         return;
     }
     std::vector<DraftCand> fit;
-    for (const DraftCand & c : cands) {
+    for (DraftCand c : cands) {
         if (fits_target(*m, c).empty()) {
             fit.push_back(c);
         }
@@ -2412,7 +2412,7 @@ int pulldraft(const std::string & name, bool yes, bool force, const std::string 
 
         std::printf("%zu published; checking which fit these weights\n", cands.size());
         std::vector<DraftCand> fit;
-        for (const DraftCand & c : cands) {
+        for (DraftCand c : cands) {
             if (const std::string why = fits_target(*m, c); !why.empty()) {
                 if (verbose) {
                     say_line("    " + c.repo + ": " + why);
