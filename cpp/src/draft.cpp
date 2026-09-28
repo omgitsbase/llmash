@@ -336,7 +336,8 @@ ModelIdent identify(const Model & m) {
     const std::string tail  = colon == std::string::npos ? std::string() : name.substr(colon + 1);
     name                    = colon == std::string::npos ? name : name.substr(0, colon);
     if (!meta.basename.empty() && !meta.size_label.empty()) {
-        name = meta.basename + "-" + meta.size_label;
+        // a converter that wrote the whole name as the basename (Qwen3.5-4B) does not get its size twice
+        name = names_size(meta.basename) ? meta.basename : meta.basename + "-" + meta.size_label;
     } else if (!meta.name.empty() && names_size(meta.name)) {
         name = meta.name;
     } else if (colon != std::string::npos && tail != "latest" && tail != "gguf") {

@@ -93,6 +93,10 @@ ConfirmStep confirm_feed(int ch) {
 }
 
 bool confirm(const std::string & question) {
+    if (!is_console_stdin()) {
+        std::printf("%s [Y/n] no (nothing to answer from)\n", question.c_str());
+        return false;
+    }
     std::printf("%s [Y/n] ", question.c_str());
     for (;;) {
         const ConfirmStep step = confirm_feed(raw_getch());
@@ -143,6 +147,10 @@ void drafter_offer_answered(nlohmann::json & local, const std::string & model, i
 }
 
 int ask_number(const std::string & prompt, int def, int max) {
+    if (!is_console_stdin()) {
+        std::printf("%s [%d] 0 (nothing to answer from)\n", prompt.c_str(), def);
+        return 0;
+    }
     std::printf("%s [%d] ", prompt.c_str(), def);
     std::string buf;
     for (;;) {

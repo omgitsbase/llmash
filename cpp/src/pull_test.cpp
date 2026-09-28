@@ -849,6 +849,10 @@ void test_identify() {
     check_eq(id.name, std::string("Qwen3.5-4B"), "the converter's basename and size name the model");
     check_eq(id.tuned_from, std::string(""), "its own pretraining base is not another model");
 
+    id = build("Qwen3.5-4B-Q4_K_M.gguf", "Qwen3.5 4B", "Qwen3.5-4B", "4B", "https://huggingface.co/Qwen/Qwen3.5-4B");
+    check_eq(id.name, std::string("Qwen3.5-4B"), "a basename that already carries the size is not given it twice");
+    check_eq(id.tuned_from, std::string(""), "and the model it names as its base is itself");
+
     id = build("mimo-v2.6-distill-qwen-9b-q4_k_m.gguf", "MiMo V2.6 Distill Qwen 9B", "MiMo-V2.6-Distill-Qwen", "9B",
                "https://huggingface.co/Qwen/Qwen3.5-9B");
     check_eq(id.name, std::string("MiMo-V2.6-Distill-Qwen-9B"), "a distill is named as itself");
