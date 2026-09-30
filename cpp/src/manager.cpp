@@ -375,9 +375,32 @@ std::string runtime_dir(const Config & cfg) {
     return fs::path(cfg.llama_bin).parent_path().string();
 }
 
+} // namespace
+
+std::string kv_type_problem(const std::string & s) {
+    static const char * types[] = {"f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "f32"};
+    const std::string   l       = lower(s);
+    for (const char * t : types) {
+        if (l == t) {
+            return "";
+        }
+    }
+    std::string list;
+    for (const char * t : types) {
+        list += (list.empty() ? "" : ", ") + std::string(t);
+    }
+    return s + " is not a cache type; the types are " + list;
+}
+
 std::string explain_load_failure(const std::string & raw, const Config & cfg) {
     const std::string low = lower(raw);
     const auto        has = [&](const char * s) { return low.find(s) != std::string::npos; };
+
+    // the runtime refused an argument: its own line says which and why
+    if (const size_t at = low.find("error while handling argument"); at != std::string::npos) {
+        const size_t end = raw.find_first_of("\r\n", at);
+        return "llama-server refused an argument: " + trim(raw.substr(at, end == std::string::npos ? std::string::npos : end - at));
+    }
 
     if (has("unknown model architecture")) {
         std::string arch;
@@ -428,6 +451,8 @@ std::string explain_load_failure(const std::string & raw, const Config & cfg) {
     }
     return "llama-server failed to start.";
 }
+
+namespace {
 
 void drain_to_file(subprocess_s proc, std::string logfile) {
     ScopedSubprocess sp;
@@ -1460,6 +1485,10 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         }
     }
     const std::string kv = p.kv_type.empty() ? cfg_.kv_type : lower(p.kv_type);
+    if (const std::string why = kv_type_problem(kv); !why.empty()) {
+        err = why + (p.kv_type.empty() ? " (the server's kv_type)" : " (this model's kv_type in local.json, set with `ctx --kv`)");
+        return nullptr;
+    }
     // only the server's default is lowered to fit; a chosen ctx is left to llama.cpp's fit
     bool chosen = ctx > 0;
     if (ctx <= 0) {

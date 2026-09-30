@@ -17,6 +17,7 @@
 #include "cli_process.h"
 #include "cli_win.h"
 #include "draft.h"
+#include "manager.h"
 #include "gguf.h"
 #include "rco.h"
 
@@ -1884,7 +1885,7 @@ std::string ctx_text(int n) {
 int cmd_ctx(const std::vector<std::string> & args, ApiClient & api, const Config & cfg) {
     const ParsedArgs o = parse_simple(args, {"--keep", "--release"}, {"--kv"});
     if (o.pos.empty()) {
-        std::fprintf(stderr, "Usage: %s ctx MODEL [SIZE|off] [--kv f16|q8_0|q4_0] [--keep|--release]\n", prog().c_str());
+        std::fprintf(stderr, "Usage: %s ctx MODEL [SIZE|off] [--kv f16|bf16|q8_0|q5_1|q5_0|q4_1|q4_0|iq4_nl|f32] [--keep|--release]\n", prog().c_str());
         return 1;
     }
     const std::string model = o.pos[0];
@@ -1929,7 +1930,10 @@ int cmd_ctx(const std::vector<std::string> & args, ApiClient & api, const Config
         }
     }
     if (o.has_val("--kv")) {
-        local["fit"][model]["kv_type"] = o.val("--kv");
+        if (const std::string why = kv_type_problem(o.val("--kv")); !why.empty()) {
+            die("Error: " + why);
+        }
+        local["fit"][model]["kv_type"] = lower(o.val("--kv"));
     }
     if (o.has_flag("--keep") || o.has_flag("--release")) {
         json pins = json::array();
@@ -1956,7 +1960,8 @@ int cmd_ctx(const std::vector<std::string> & args, ApiClient & api, const Config
             const double need = j_num(f, "weights_gb") * 1.05 + j_num(f, "state_gb") + j_num(f, "scratch_gb") + j_num(f, q8 ? "cache_gb_q8" : "cache_gb");
             std::printf("; %.0f GB on the card at %s, %.0f free", need, q8 ? "q8_0" : "f16", j_num(f, "free_gb"));
             if (j_num(f, "ram_gb") >= 1) {
-                std::printf(", %.0f GB in RAM", j_num(f, "ram_gb"));
+                // the input layer: token tables llama.cpp reads from system RAM whatever the card holds
+                std::printf(", and its %.0f GB token table stays in RAM (the input layer always does)", j_num(f, "ram_gb"));
             }
             if (need > j_num(f, "room_gb")) {
                 const double budget = j_num(f, "budget_gb");
