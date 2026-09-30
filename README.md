@@ -7,7 +7,7 @@
 [![C++](https://img.shields.io/badge/C%2B%2B-17-00599C.svg?logo=cplusplus)](https://isocpp.org)
 [![CUDA](https://img.shields.io/badge/CUDA-13-76B900.svg?logo=nvidia)](https://developer.nvidia.com/cuda-toolkit)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/omgitsbase/llmash)
-[![Discord](https://img.shields.io/badge/Discord-contact-5865F2.svg?logo=discord&logoColor=white)](https://discord.com/users/1278248728574038041)
+[![Discord](https://img.shields.io/badge/Discord-contact-5865F2.svg?logo=discord&logoColor=white)](https://discord.com/users/1274629090346926121)
 
 An Ollama-compatible server and command line for Windows and Linux, built on a
 fork of llama.cpp. It keeps Ollama's commands, API and model store, so anything
