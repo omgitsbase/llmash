@@ -908,6 +908,23 @@ void TrayApp::show_menu(POINT pt) {
             const bool         pinned = j_str(m, "expires_at").rfind("9999", 0) == 0;
             const HMENU         subm  = CreatePopupMenu();
 
+            // the window itself, in seconds: -1 or pinned means it is kept loaded, and a
+            // value absent (an older server that did not send it) leaves the window unknown
+            const bool has_ka = m.contains("keep_alive") && m["keep_alive"].is_number();
+            const long ka_secs = has_ka ? static_cast<long>(m["keep_alive"].get<double>()) : 0;
+            const bool kept    = pinned || (has_ka && ka_secs < 0);
+            const auto window_text = [](long secs) {
+                char buf[32];
+                if (secs % 3600 == 0) {
+                    std::snprintf(buf, sizeof(buf), "%ldh", secs / 3600);
+                } else if (secs % 60 == 0) {
+                    std::snprintf(buf, sizeof(buf), "%ldm", secs / 60);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "%lds", secs);
+                }
+                return std::string(buf);
+            };
+
             std::vector<std::string> parts;
             const std::string         sz = size_text(m);
             const std::string         ex = expires_text(m);
@@ -916,6 +933,12 @@ void TrayApp::show_menu(POINT pt) {
             }
             if (!ex.empty()) {
                 parts.push_back(ex);
+            }
+            // say what the window is, not only when it next closes, so 5m is never mistaken for 15m
+            if (kept) {
+                parts.push_back("kept loaded");
+            } else if (has_ka && ka_secs > 0) {
+                parts.push_back("unloads after " + window_text(ka_secs));
             }
             const std::string head = parts.empty() ? "loaded" : join(parts, " · ");
             add_item(subm, MF_STRING, to_wide(head), nullptr);
@@ -928,10 +951,13 @@ void TrayApp::show_menu(POINT pt) {
                 const wchar_t * label;
                 int             secs;
             };
+            // the window in effect gets the check, so the menu shows the current setting rather
+            // than implying a default; a non-listed value (e.g. 7m) leaves the three timed rows
+            // unchecked and is named in the header above
             for (const Choice & c : {Choice{L"Unload in 5 minutes", 300}, Choice{L"Unload in 15 minutes", 900},
                                      Choice{L"Unload in 1 hour", 3600}, Choice{L"Keep loaded", -1}}) {
                 UINT flags = MF_STRING;
-                if (c.secs == -1 && pinned) {
+                if (c.secs == -1 ? kept : (has_ka && !kept && ka_secs == c.secs)) {
                     flags |= MF_CHECKED;
                 }
                 const int        secs = c.secs;
