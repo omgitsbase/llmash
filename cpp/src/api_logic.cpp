@@ -403,6 +403,10 @@ json ps_entry_json(const InstanceView & v, const Config & cfg) {
     } else {
         e["expires_at"] = iso(v.expires_at);
     }
+    // the window itself, not just when it next closes: a frontend can show what the
+    // model's keep_alive actually is (Ollama's env default is 5m, not llmash's 15m),
+    // rather than leaving the user to infer it. -1 means it is pinned loaded.
+    e["keep_alive"]     = keep_alive_out(v.keep_alive);
     e["context_length"] = v.ctx;
     return e;
 }
