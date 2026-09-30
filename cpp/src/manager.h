@@ -13,6 +13,11 @@
 namespace llmash {
 
 // How a client wants the cache: its type, and whether it sits on the card.
+// The KV cache types llama.cpp takes; "" when `s` is one, else what to say about it.
+std::string kv_type_problem(const std::string & s);
+// What a failed launch's log means, in a sentence.
+std::string explain_load_failure(const std::string & raw, const Config & cfg);
+
 struct LoadPrefs {
     std::string kv_type;         // empty: the server's default
     bool        kv_on_gpu = true;
