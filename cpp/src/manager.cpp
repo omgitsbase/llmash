@@ -1617,19 +1617,25 @@ bool Manager::unload(const std::string & name) {
     if (const std::optional<Model> m = reg_->find(name)) {
         key = m->name;
     }
-    Instance * inst = nullptr;
+    // Move the instance out of live_ rather than erasing the pointer: erase_ptr would run the
+    // unique_ptr's destructor, and the inst->stop() below would then read a freed pid_ and lock a
+    // freed mutex. On the reaper thread that use-after-free could wedge, leaving the next model
+    // stuck showing "unloading". Held here, it stays alive through stop() and is freed after.
+    std::unique_ptr<Instance> owned;
     {
         std::lock_guard<std::mutex> lock(mu_);
-        inst = find_by_name(live_, key);
-        if (inst != nullptr) {
-            erase_ptr(live_, inst);
+        const auto it = std::find_if(live_.begin(), live_.end(),
+                                     [&](const std::unique_ptr<Instance> & p) { return p->model.name == key; });
+        if (it != live_.end()) {
+            owned = std::move(*it);
+            live_.erase(it);
         }
     }
-    if (inst == nullptr) {
+    if (!owned) {
         return false;
     }
     log_line("unloading " + key);
-    inst->stop();
+    owned->stop();
     return true;
 }
 
