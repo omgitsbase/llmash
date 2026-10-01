@@ -948,7 +948,7 @@ std::vector<std::string> Instance::args() {
                 a.insert(a.end(), {"--control-vector", ablation});
             } else {
                 log_line(model.name + ": its ablation vector is not applied; " + a[0] +
-                         " is not llmash's runtime and would apply it wrongly");
+                         " cannot apply one (no llama-ablate beside it) and would add it instead of removing it");
             }
         }
     }

@@ -286,6 +286,17 @@ int cmd_serve(const std::vector<std::string> & args) {
         register_routes(pub_srv, cfg, mgr, reg);
     }
 
+    // httplib binds with SO_REUSEADDR (Windows) or SO_REUSEPORT (Linux), which lets a second server listen on a port
+    // another already holds and take part of its traffic; so a port something answers on is refused outright
+    {
+        httplib::Client probe(host == "0.0.0.0" ? std::string("127.0.0.1") : host, port);
+        probe.set_connection_timeout(0, 300000);
+        probe.set_read_timeout(1, 0);
+        if (probe.Get("/api/version")) {
+            logf("!! %s:%d: another server already answers there; not starting a second one", host.c_str(), port);
+            return 1;
+        }
+    }
     if (!main_srv.bind_to_port(host, port)) {
         logf("!! %s:%d: could not listen (is another server on that port?)", host.c_str(), port);
         return 1;
