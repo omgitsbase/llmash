@@ -55,6 +55,7 @@ Available Commands:
   cp           Copy a model
   rm           Remove a model
   rco convert  Assemble a custom build from a model already here
+  ablate       Remove a model's refusal behaviour (uncensor it); also abliterate
   ctx          Set the context a model runs at, up to 4x its trained length under YaRN
   launch       Launch the Ollama menu or an integration
   link         Expose the server publicly over Tailscale Funnel
@@ -246,6 +247,7 @@ Usage:
   ollama run MODEL [PROMPT] [flags]
 
 Flags:
+      --ctx size                Context for this run, as a count or with k/M (32k)
       --dimensions int          Truncate output embeddings to specified dimension (embedding models only)
       --format string           Response format (e.g. json)
   -h, --help                    help for run
@@ -253,8 +255,9 @@ Flags:
       --insecure                Use an insecure registry
       --keepalive string        Duration to keep a model loaded (e.g. 5m)
       --nowordwrap              Don't wrap words to the next line automatically
+      --temperature float       Sampling temperature for this run
       --think string[="true"]   Enable thinking mode: true/false or high/medium/low for supported models
-      --truncate                For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead
+      --truncate               For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead
       --verbose                 Show timings for response
 
 A classifier (a model the hub tags text-classification: Laya, Jev-Style,
@@ -291,6 +294,8 @@ Flags:
   -h, --help       help for pull
   -q, --quant Q    which build of a Hugging Face repository to take (Q4_K_M, IQ4_XS, Q8_0 ...)
   -y, --yes        ask nothing: take the default build and the best drafter
+      --ablate     remove the model's refusal behaviour right after the pull (see `ablate`)
+      --draft      offer a draft model afterwards (the default)
       --insecure   Use an insecure registry
       --no-draft   do not offer to fetch a draft model afterwards
 

@@ -2157,7 +2157,15 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
         }
         const std::string bin = (fs::path(cfg.llama_bin).parent_path() / ablate_bin).string();
         if (!file_exists(bin)) {
-            die("Error: this runtime has no " + ablate_bin + "; run `llmash update`");
+            // llmash's own runtime carries a RUNTIME.txt stamp; upstream llama.cpp builds do not, and cannot apply
+            // the vector even with the tool, so an update is only the answer when the runtime is llmash's
+            if (file_exists((fs::path(cfg.llama_bin).parent_path() / "RUNTIME.txt").string())) {
+                die("Error: this runtime predates abliteration; run `llmash update`");
+            }
+            die("Error: abliteration needs llmash's own runtime, and this machine runs another llama.cpp build:\n"
+                "  " + cfg.llama_bin + "\n"
+                "llmash's runtime is built for NVIDIA cards from Turing on, with driver 580 or newer; on such a card\n"
+                "`llmash update --force` installs it. Other GPUs run upstream llama.cpp, which cannot apply the vector.");
         }
 
         const bool yes = o.has_flag("--yes") || o.has_flag("-y");
