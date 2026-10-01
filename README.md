@@ -11,9 +11,9 @@
 
 An Ollama-compatible server and command line for Windows and Linux, built on a
 fork of llama.cpp. It keeps Ollama's commands, API and model store, so anything
-already pointed at Ollama keeps working. What it changes is how each model runs:
-the runtime, the launch settings, the drafter, and, when a repository has no
-build at the size you want, the build itself.
+already pointed at Ollama keeps working. It changes the runtime, the launch
+settings, the drafter, and, when a repository has no build at the size you want,
+the build itself.
 
 ## Contents
 
@@ -51,7 +51,7 @@ The installer puts `llmash` on your PATH, fetches the runtime for your hardware
 and starts the server: in the tray on Windows, as a systemd service on Linux.
 An NVIDIA card from Turing (RTX 20) on, with driver 580 or newer, gets llmash's
 own CUDA 13 runtime on both systems. Anything else gets upstream llama.cpp's
-Vulkan or CPU build, and models load into system RAM, which works but is slower.
+Vulkan or CPU build, and models load into system RAM.
 
 | | Windows | Linux |
 |---|---|---|
@@ -149,8 +149,7 @@ thinking usually read higher than conversation.
 Forty math questions (ten each from GSM8K, MATH level 3, MATH level 5 and AIME
 2025), thinking on, each family's recommended sampling with a fixed seed per
 question, graded by the final `\boxed{}` answer. Each bar's end says how many
-tokens the build generated over the forty: a build that thinks longer to get
-there spends part of its speed advantage.
+tokens the build generated over the forty.
 
 <!-- MATH -->
 
@@ -187,8 +186,7 @@ On Qwen3.8-27B the RCO-3 build answered as many as Q8_0, 38 of 40, at a third
 of the size. On Gemma 4 E4B it answered 27 to Q8_0's 29 at 38% of the size,
 where a 2-bit build of about the same size answered 20. Both RCO-3 builds wrote
 more to get there: 21% more tokens than Q8_0 on Qwen3.8-27B and 25% more on
-Gemma 4 E4B, which spends part of a 3-bit build's speed on longer reasoning.
-Forty questions is a sample, not a benchmark.
+Gemma 4 E4B.
 
 ## Weight formats
 
@@ -201,19 +199,17 @@ Forty questions is a sample, not a benchmark.
 | `medium` | NVFP4 when every card is sm_120 (0.5.0 and up), from another repository of the same model when this one has none (0.5.1 and up); otherwise Q4_K_M or the nearest 4-bit build | always |
 | `large` | Q8_0, or the nearest 6-8 bit build | always |
 
-NVFP4 stores weights as 4-bit floats with an FP8 scale per 16 values, which
-keeps close to FP8 quality at the size of a 4-bit build. Cards of compute capability 12.0
-(sm_120: the RTX 50 series and the Blackwell RTX PRO cards) run it on their FP4
-tensor cores; a B200 is sm_100, which this runtime's FP4 kernels are not built
-for. On a dense model it is the
-better 4-bit format there: Qwen3.8-27B NVFP4 generates 2-14% faster than the
-UD-Q4_K_XL build of the same size and reads a long prompt 31% faster. On a
-mixture-of-experts model it reads prompts at the same rate as Q4 and, depending
-on what the file keeps at higher precision, can generate slower. So on a machine
-where every card is sm_120, the medium row is an NVFP4 build when the
-repository has one. Older cards decode it in software, and a Q4_K_M runs faster
-there. `LLMASH_FP4=1` or `0` overrides the detection. On such a
-machine, a repository holding an NVFP4 build next to the others reads like this:
+NVFP4 stores weights as 4-bit floats with an FP8 scale per 16 values. Cards of
+compute capability 12.0 (sm_120: the RTX 50 series and the Blackwell RTX PRO cards)
+run it on their FP4 tensor cores; a B200 is sm_100, which this runtime's FP4 kernels
+are not built for. On a dense model, Qwen3.8-27B NVFP4 generates 2-14% faster than
+the UD-Q4_K_XL build of the same size and reads a long prompt 31% faster. On a
+mixture-of-experts model it reads prompts at the same rate as Q4 and, depending on
+what the file keeps at higher precision, can generate slower. On a machine where
+every card is sm_120, the medium row is an NVFP4 build when the repository has one.
+Older cards decode it in software, and a Q4_K_M runs faster there. `LLMASH_FP4=1`
+or `0` overrides the detection. On such a machine, a repository holding an NVFP4
+build next to the others reads like this:
 
 ```
 qwen3.8-27b, which build?
@@ -255,8 +251,8 @@ builds, with MTP and n-gram drafting, and on 1, 2 and 3 GPUs under layer split.
 
 ## Models and pulling
 
-Ollama's store is found and used as it is. A folder of GGUFs from llama.cpp or
-LM Studio is one command away:
+Ollama's store is found and used as it is. To read a folder of GGUFs from
+llama.cpp or LM Studio:
 
 ```powershell
 llmash models set D:\models
@@ -377,7 +373,7 @@ llmash ablate MODEL          # or: abliterate, or  pull MODEL --ablate
 Removes a model's refusals without touching its weights. llmash finds the direction each
 layer uses for "refuse" and writes a small control vector that projects it out at
 inference, kept beside the model as a `.ablation.gguf` sidecar (a few hundred KB, 1.2 MB
-on a 27B). It loads with the model automatically; delete it and the original is back.
+on a 27B). It loads with the model automatically; delete it to undo.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/abliterate-dark.svg">
@@ -386,10 +382,9 @@ on a 27B). It loads with the model automatically; delete it and the original is 
 
 Refusals are counted on 100 held-out prompts from `mlabonne/harmful_behaviors` by an
 uncensored model reading each whole answer. KL is how far the first answer token moves
-from the original model on 100 harmless prompts; a 16-pass search keeps it low while the
-refusals fall away. Each layer gets its own direction, which is what makes it work on
-Gemma. A model that cannot lose its refusals without breaking is left alone, and the
-command says so.
+from the original model on 100 harmless prompts; a 16-pass search minimises it. Each
+layer gets its own direction, which Gemma needs. When a model's best vector still lands
+at a high KL, nothing is written and the command says so.
 
 Against [AEON Ultimate](https://huggingface.co/AEON-7/Qwen3.8-27B-AEON-ULTIMATE-UNCENSORED-BF16),
 the other Qwen3.8-27B abliteration graded by a model:
@@ -400,9 +395,8 @@ the other Qwen3.8-27B abliteration graded by a model:
 | AEON Ultimate | 36/100 | the bf16 weights | 50 trials on an H200 |
 | **llmash ablate** | **2/100** | **a 1.2 MB sidecar** | **16 passes, 70 s on one RTX PRO 6000** |
 
-It needs no setup from you: the prompt sets are fetched and cached on first use.
-Running it over a pipe, from an agent, or over ssh without a terminal requires
-`--yes`, so it never blocks waiting for input and never uncensors a model silently.
+The prompt sets are fetched and cached on first use. Over a pipe, from an agent, or
+over ssh without a terminal, it requires `--yes` instead of waiting for input.
 
 ## Speculation
 
@@ -417,7 +411,7 @@ when several fit:
 - the MTP head out of a full build that carries one (an `-MTP` GGUF): only the
   head is fetched, as a sidecar, so a build without its head gets one back;
 - for a fine-tune with nothing under its own name, the drafters of the model it
-  was tuned from, said so, which share its vocabulary and draft somewhat less well.
+  was tuned from, marked as such; they share its vocabulary but accept fewer tokens.
 
 Each is checked against the weights before anything downloads, one sidecar serves
 every build of its model, and `pulldraft MODEL hf.co/ORG/REPO` names one instead
