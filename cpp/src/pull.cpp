@@ -3109,7 +3109,7 @@ std::string rco_convert(const std::string & path, double bpw, const std::string 
     if (have > 0 && have < 6.0) {
         emit(json{{"status", "warning: " + quant_tag(base_name(path)) +
                                  " is under a Q6, so this reads a build that has already lost some of the "
-                                 "model — expect a high loss against the original"}});
+                                 "model; expect a high loss against the original"}});
     }
 
     std::string head, herr;
@@ -3167,7 +3167,7 @@ std::string rco_pull(const std::string & repo, double bpw, const std::string & a
     // the result is a requantization of a small build, not of the model.
     if (const double src_bits = bits_of_quant(quant_tag(want.front().name)); src_bits > 0 && src_bits < 6.0) {
         emit(json{{"status", "warning: quantizing from " + quant_tag(want.front().name) +
-                                 ", under a Q6 — expect a high loss against the original"}});
+                                 ", under a Q6; expect a high loss against the original"}});
     }
 
     RcoSource src;
