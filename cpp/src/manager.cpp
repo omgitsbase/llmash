@@ -937,7 +937,19 @@ std::vector<std::string> Instance::args() {
     if (env_int("LLMASH_NO_ABLATE", 0) == 0) {
         const std::string ablation = ablation_path(model.path, *cfg_);
         if (file_exists(ablation)) {
-            a.insert(a.end(), {"--control-vector", ablation});
+            // only a runtime that projects applies it: llmash's carries llama-ablate beside its server since the
+            // release that brought abliteration, and an upstream build would add the vector to the stream instead
+            // of removing it, which damages every answer
+            std::string ablate_exe = fs::path(a[0]).filename().string();
+            if (const size_t p = ablate_exe.find("server"); p != std::string::npos) {
+                ablate_exe.replace(p, 6, "ablate");
+            }
+            if (file_exists((fs::path(a[0]).parent_path() / ablate_exe).string())) {
+                a.insert(a.end(), {"--control-vector", ablation});
+            } else {
+                log_line(model.name + ": its ablation vector is not applied; " + a[0] +
+                         " is not llmash's runtime and would apply it wrongly");
+            }
         }
     }
 

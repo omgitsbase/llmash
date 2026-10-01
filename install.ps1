@@ -459,11 +459,28 @@ if ($Runtime -eq 'auto' -and (Test-Path $RtExe) -and (Test-Path $stampHere)) {
         } catch { }
     }
 }
+# a llama-server that is only on PATH (someone's own llama.cpp) does not stand in for llmash's runtime on a card
+# that runs it: abliteration and the fork's kernels need llmash's build, and llmash prefers its own runtime folder
+$pathOnly = (-not (Test-Path $RtExe)) -and (-not $env:LLAMA_BIN) -and (Get-Command llama-server -ErrorAction SilentlyContinue)
+$ownFits = $false
+if ($pathOnly -and ($release.assets | Where-Object { $_.name -eq 'llmash-runtime-win-cuda-13-x64.zip' })) {
+    $smi0 = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if ($smi0) {
+        $r0 = Native $smi0.Source @('--query-gpu=driver_version,compute_cap', '--format=csv,noheader')
+        if ($r0.code -eq 0 -and $r0.out.Count) {
+            $parts = $r0.out[0] -split ','
+            try {
+                $ownFits = ([version]($parts[0].Trim() -replace '[^0-9.].*$', '')).Major -ge 580 -and [double]$parts[1].Trim() -ge 7.5
+            } catch { }
+        }
+    }
+}
 if ($Runtime -eq 'none') {
     if ($have) { Good 'found' } else { Warn ('skipped; set LLAMA_BIN or drop llama-server.exe into ' + $RtDir) }
-} elseif ($have -and $Runtime -eq 'auto' -and -not $stale) {
+} elseif ($have -and $Runtime -eq 'auto' -and -not $stale -and -not $ownFits) {
     Good 'found'
 } else {
+    if ($ownFits) { Say 'a llama-server is on PATH, but this card runs llmash''s own runtime; fetching it' }
     $kind = $Runtime
     $driver = $null
     $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
