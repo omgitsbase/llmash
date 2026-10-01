@@ -231,6 +231,19 @@ std::string find_dspark(const std::string & gguf) {
 
 std::string sidecar_path(const std::string & gguf, const char * suffix) { return sidecar_named(gguf, suffix); }
 
+std::string sidecar_target(const std::string & gguf, const char * suffix) {
+    return (fs::path(gguf).parent_path() / (strip_shard(stem_of(gguf)) + suffix)).string();
+}
+
+std::string ablation_path(const std::string & gguf, const Config & cfg) {
+    // an Ollama store's blobs are content-addressed and shared with Ollama, so nothing of llmash's goes among
+    // them: the vector for a model stored there lives in llmash's own folder, under the blob's name
+    if (fs::path(gguf).parent_path().filename() == "blobs") {
+        return (fs::path(cfg.root) / "ablations" / (stem_of(gguf) + ".ablation.gguf")).string();
+    }
+    return sidecar_target(gguf, ".ablation.gguf");
+}
+
 std::string dspark_path(const std::string & gguf) { return find_dspark(gguf); }
 
 // An MTP drafter is trained against the model, not one quantisation of it: <stem>.mtp.gguf first, else one beside

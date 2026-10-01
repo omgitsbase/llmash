@@ -117,6 +117,11 @@ bool        writable(const std::string & dir);
 
 // The sidecar `<stem><suffix>` beside the weights, or "".
 std::string sidecar_path(const std::string & gguf, const char * suffix);
+// Where that sidecar goes, whether or not it exists yet: the path sidecar_path looks for.
+std::string sidecar_target(const std::string & gguf, const char * suffix);
+// Where a model's ablation vector is written and looked for: beside the weights, or in llmash's own folder
+// for a model kept in an Ollama store's content-addressed blobs.
+std::string ablation_path(const std::string & gguf, const Config & cfg);
 // A DSpark drafter beside the weights, matched by name with the
 // quantisation ignored, or "".
 std::string dspark_path(const std::string & gguf);

@@ -935,8 +935,8 @@ std::vector<std::string> Instance::args() {
     // removes the refusal direction from the residual stream. It is weightless at inference and does not change
     // speculation. LLMASH_NO_ABLATE=1 turns it off for a session.
     if (env_int("LLMASH_NO_ABLATE", 0) == 0) {
-        const std::string ablation = sidecar_path(model.path, ".ablation.gguf");
-        if (!ablation.empty() && file_exists(ablation)) {
+        const std::string ablation = ablation_path(model.path, *cfg_);
+        if (file_exists(ablation)) {
             a.insert(a.end(), {"--control-vector", ablation});
         }
     }

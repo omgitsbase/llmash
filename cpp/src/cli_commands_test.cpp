@@ -5,6 +5,10 @@
 
 #include "cli_commands.h"
 #include "cli_format.h"
+#include "config.h"
+#include "draft.h"
+
+#include <filesystem>
 
 #include <cstdio>
 #include <string>
@@ -184,6 +188,24 @@ void test_tiers_of() {
         eq_str(qs[t.medium].name, "Q4_K_M", "medium is the 4-bit one");
         eq_str(qs[t.large].name, "Q8_0", "large is the 8-bit one");
     }
+}
+
+// The ablation vector is written where launch looks for it: beside the weights with any shard marker dropped,
+// and never among an Ollama store's content-addressed blobs.
+void test_ablation_path() {
+    namespace fs = std::filesystem;
+    Config c;
+    c.root = "C:/ProgramData/llmash";
+    eq_str(ablation_path("D:/m/Qwen-27B-Q8_0.gguf", c), (fs::path("D:/m") / "Qwen-27B-Q8_0.ablation.gguf").string(),
+           "ablation beside a plain gguf");
+    eq_str(ablation_path("D:/m/Big-Q4_K_M-00001-of-00002.gguf", c),
+           (fs::path("D:/m") / "Big-Q4_K_M.ablation.gguf").string(), "ablation of a sharded gguf drops the shard");
+    eq_str(ablation_path("B:/store/blobs/sha256-abc123", c),
+           (fs::path("C:/ProgramData/llmash") / "ablations" / "sha256-abc123.ablation.gguf").string(),
+           "ablation of an Ollama blob goes to llmash's folder, not the store");
+    eq_str(ablation_path("D:/m/Big-Q4_K_M-00001-of-00002.gguf", c),
+           sidecar_target("D:/m/Big-Q4_K_M-00002-of-00002.gguf", ".ablation.gguf"),
+           "every shard of a model names the same ablation");
 }
 
 void test_quant_tag() {
@@ -489,6 +511,7 @@ int main() {
     test_bits_of();
     test_tiers_of();
     test_quant_tag();
+    test_ablation_path();
     test_is_hf_ref();
     test_url_query_escape();
     test_base64_url_encode();
