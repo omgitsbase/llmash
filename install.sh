@@ -318,7 +318,10 @@ runtime_asset() {
 
 # The runtime is replaced only by a whole one, staged in runtime.new.
 swap_runtime() {
-    $SUDO chmod +x "$LIB/runtime.new/llama-server"
+    # every tool the runtime ships is run directly, so each needs the bit, not just the server
+    for b in llama-server llama-quantize llama-ablate; do
+        [ -f "$LIB/runtime.new/$b" ] && $SUDO chmod +x "$LIB/runtime.new/$b"
+    done
     runtime_notice "$LIB/runtime.new"
     $SUDO rm -rf "$LIB/runtime"
     $SUDO mv "$LIB/runtime.new" "$LIB/runtime"
