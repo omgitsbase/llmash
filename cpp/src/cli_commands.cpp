@@ -2119,9 +2119,9 @@ std::string ablate_field(const std::string & s, const char * key) {
     return s.substr(a, b - a);
 }
 
-// llmash ablate MODEL: fit an uncensoring control vector beside the model. The sidecar is applied automatically at
-// load (see Instance::args), so this is the whole setup. Non-interactive callers (an LLM, ssh without a tty, a
-// pipe) must pass --yes -- it never blocks on a prompt and never uncensors silently.
+// llmash ablate MODEL: fit an uncensoring control vector where ablation_path puts it. The sidecar is applied
+// automatically at load (see Instance::args), so this is the whole setup. Non-interactive callers (an LLM, ssh
+// without a tty, a pipe) must pass --yes: it never blocks on a prompt and never uncensors silently.
 int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Config & cfg) {
     try {
         const ParsedArgs o = parse_simple(args, {"--yes", "-y"}, {});
@@ -2129,9 +2129,9 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
             std::fprintf(stderr,
                          "Usage: %s ablate MODEL [--yes]\n\n"
                          "Removes a model's refusal behaviour (uncensors it) by fitting a tiny projection control\n"
-                         "vector, written as a sidecar beside the model and applied automatically on load. Not\n"
-                         "every model can be ablated; one whose refusal is entangled with its competence is\n"
-                         "refused and nothing is written.\n",
+                         "vector, written as a sidecar (beside the model, or in llmash's folder for an Ollama\n"
+                         "store) and applied automatically on load. Not every model can be ablated; one whose\n"
+                         "refusal is entangled with its competence is refused and nothing is written.\n",
                          prog().c_str());
             return 1;
         }

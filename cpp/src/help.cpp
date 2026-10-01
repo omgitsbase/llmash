@@ -491,10 +491,11 @@ Flags:
 const std::string k_ablate_help = R"HELP(Remove a model's refusal behaviour (uncensor it)
 
 Fits a small projection control vector from the model's own activations and writes it
-as a sidecar beside the model. llmash applies it automatically every time the model
-loads, so there is nothing else to configure. The model file itself is never changed,
-and the vector costs nothing at inference. Some models cannot be ablated -- when the
-refusal is entangled with the model's competence the command refuses and writes nothing.
+as a sidecar beside the model (in llmash's own folder for a model in an Ollama store).
+llmash applies it automatically every time the model loads, so there is nothing else to
+configure. The model file itself is never changed, and the vector costs nothing at
+inference. Some models cannot be ablated: when the refusal is entangled with the model's
+competence the command refuses and writes nothing.
 
 Usage:
   ollama ablate MODEL [flags]
