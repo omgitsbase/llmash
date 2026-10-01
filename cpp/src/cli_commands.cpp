@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -2042,7 +2043,15 @@ bool fetch_ablate_dataset(const std::string & dataset, const std::string & split
         const std::string url = "https://datasets-server.huggingface.co/rows?dataset=" + url_query_escape(dataset) +
                                 "&config=default&split=" + split + "&offset=" + std::to_string(off) + "&length=" +
                                 std::to_string(len);
-        const HttpReply r = http_get(url, {"User-Agent: llmash"}, 30);
+        // the datasets server rate-limits a burst of pages with 429; wait and ask again rather than fail a first run
+        HttpReply r;
+        for (int attempt = 0; attempt < 6; attempt++) {
+            r = http_get(url, {"User-Agent: llmash"}, 30);
+            if (r.status != 429 && r.status < 500) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(2 << attempt));
+        }
         if (r.status != 200) {
             err = "could not fetch " + dataset + " (" + (r.error.empty() ? std::to_string(r.status) : r.error) + ")";
             return false;
@@ -2077,12 +2086,22 @@ bool fetch_ablate_dataset(const std::string & dataset, const std::string & split
         }
         off += static_cast<int>(rows.size());
     }
-    std::ofstream f(dest, std::ios::binary);
-    if (!f) {
-        err = "cannot write " + dest;
+    // written aside and renamed into place: a run that dies mid-write must not leave a short set that every
+    // later run takes as complete
+    const std::string part = dest + ".part";
+    {
+        std::ofstream f(part, std::ios::binary);
+        if (!f || !(f << body)) {
+            err = "cannot write " + dest;
+            return false;
+        }
+    }
+    std::error_code ec;
+    fs::rename(part, dest, ec);
+    if (ec) {
+        err = "cannot write " + dest + " (" + ec.message() + ")";
         return false;
     }
-    f << body;
     return true;
 }
 
@@ -2124,24 +2143,12 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
             die("Error: '" + name + "' is not a local GGUF model that can be ablated");
         }
         const std::string gguf = m->path;
-        // the write path, built the same way the launch-time pickup reads it (a trailing -NNNNN-of-NNNNN shard
-        // marker stripped) so the auto-applied sidecar is exactly this file
-        std::string stem = fs::path(gguf).stem().string();
-        if (const size_t of = stem.rfind("-of-"); of != std::string::npos && of + 4 < stem.size() && of > 0) {
-            bool tail = true;
-            for (size_t i = of + 4; i < stem.size(); i++) {
-                tail = tail && std::isdigit(static_cast<unsigned char>(stem[i]));
-            }
-            const size_t dash = stem.rfind('-', of - 1);
-            bool         mid  = dash != std::string::npos && dash + 1 < of;
-            for (size_t i = dash + 1; mid && i < of; i++) {
-                mid = std::isdigit(static_cast<unsigned char>(stem[i])) != 0;
-            }
-            if (tail && mid) {
-                stem = stem.substr(0, dash);
-            }
+        // the very path the launch-time pickup looks for, so the auto-applied sidecar is exactly this file
+        const std::string out   = ablation_path(gguf, cfg);
+        {
+            std::error_code mk;
+            fs::create_directories(fs::path(out).parent_path(), mk);
         }
-        const std::string out   = (fs::path(gguf).parent_path() / (stem + ".ablation.gguf")).string();
         const std::string level = "balanced";  // one mode: the 16-pass search (measured as the sweet spot)
 
         std::string ablate_bin = llama_server_exe();
@@ -2215,7 +2222,7 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
             "--level", level, "-o", out,
         };
         // Turn the tool's machine output into a couple of friendly, in-place status lines.
-        std::string before, after, of, kl;
+        std::string kl;
         const int   rc = run_streaming(argv, [&](const std::string & line) {
             if (line.rfind("ablate: ", 0) != 0) {
                 return;
@@ -2225,19 +2232,13 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
                 std::printf("\r  reading the refusal direction   %s/%s   ", ablate_field(s, "done=").c_str(),
                             ablate_field(s, "total=").c_str());
                 std::fflush(stdout);
-            } else if (s.rfind("baseline ", 0) == 0) {
-                std::printf("\r  it refuses %s of %s test prompts                 \n", ablate_field(s, "refusals=").c_str(),
-                            ablate_field(s, "of=").c_str());
-                std::fflush(stdout);
             } else if (s.rfind("trial ", 0) == 0) {
                 std::printf("\r  searching for the gentlest vector   pass %s/%s   ", ablate_field(s, "i=").c_str(),
                             ablate_field(s, "n=").c_str());
                 std::fflush(stdout);
             } else if (s.rfind("done ", 0) == 0) {
-                before = ablate_field(s, "before=");
-                after  = ablate_field(s, "refusals=");
-                of     = ablate_field(s, "of=");
-                kl     = ablate_field(s, "kl=");
+                // the tool's refusal count only checks how an answer opens, so it is not shown as a result
+                kl = ablate_field(s, "kl=");
                 std::printf("\r                                                      \r");  // clear the status line
             }
         });
@@ -2251,9 +2252,8 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
         if (rc != 0 || !file_exists(out)) {
             die("Error: ablation did not complete");
         }
-        if (!before.empty()) {
-            std::printf("  refusals %s/%s -> %s/%s   (KL %s, lower is less capability lost)\n", before.c_str(),
-                        of.c_str(), after.c_str(), of.c_str(), kl.c_str());
+        if (!kl.empty()) {
+            std::printf("  KL %s: how far its answers to ordinary prompts moved (lower is less changed)\n", kl.c_str());
         }
         std::printf("Done. '%s' is abliterated and will load that way automatically from now on.\n", name.c_str());
         return 0;
