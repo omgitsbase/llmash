@@ -930,6 +930,17 @@ std::vector<std::string> Instance::args() {
     }
     a.insert(a.end(), extra.begin(), extra.end());
 
+    // An ablation (uncensoring) control vector sitting beside the model is applied automatically, so an ablated
+    // model just works with no config: <stem>.ablation.gguf carries controlvector.mode=project and the runtime
+    // removes the refusal direction from the residual stream. It is weightless at inference and does not change
+    // speculation. LLMASH_NO_ABLATE=1 turns it off for a session.
+    if (env_int("LLMASH_NO_ABLATE", 0) == 0) {
+        const std::string ablation = sidecar_path(model.path, ".ablation.gguf");
+        if (!ablation.empty() && file_exists(ablation)) {
+            a.insert(a.end(), {"--control-vector", ablation});
+        }
+    }
+
     // The projector is loaded up front only when this turn needs it, or when
     // nothing has asked for it to be held back.
     const bool on_demand = env_str("LLMASH_MMPROJ_ON_DEMAND", "1") == "1";

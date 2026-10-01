@@ -17,11 +17,17 @@
 #include "cli_process.h"
 #include "cli_win.h"
 #include "draft.h"
+#include "http.h"
 #include "manager.h"
 #include "gguf.h"
 #include "rco.h"
 
 #include <subprocess.h>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -1860,13 +1866,18 @@ void pull_model(const std::string & name) {
 
 int cmd_pull(const std::vector<std::string> & args, ApiClient & api) {
     try {
-        const ParsedArgs o =
-            parse_simple(args, {"--insecure", "--draft", "--no-draft", "--yes", "-y"}, {"--quant", "-q"});
+        const ParsedArgs o = parse_simple(args, { "--insecure", "--draft", "--no-draft", "--yes", "-y", "--ablate" },
+                                           { "--quant", "-q" });
         if (o.pos.empty()) {
             die("Error: requires at least 1 arg(s), only received 0");
         }
-        do_pull(api, o.pos[0], first_of({o.val("--quant"), o.val("-q")}), !o.has_flag("--no-draft"),
+        do_pull(api, o.pos[0], first_of({ o.val("--quant"), o.val("-q") }), !o.has_flag("--no-draft"),
                 o.has_flag("--yes") || o.has_flag("-y"));
+        // --ablate uncensors the model right after it is pulled, in one step
+        if (o.has_flag("--ablate")) {
+            const Config cfg = load_config();
+            return cmd_ablate({ o.pos[0], "--yes" }, api, cfg);
+        }
         return 0;
     } catch (const CliExit & e) {
         return e.code;
@@ -2011,6 +2022,240 @@ int cmd_rco(const std::vector<std::string> & args, ApiClient & api) {
         if (made.empty()) {
             return 1;
         }
+        return 0;
+    } catch (const CliExit & e) {
+        return e.code;
+    }
+}
+
+// Fetch a HuggingFace dataset split's "text" column into a local file, once, so `llmash ablate` never needs the
+// user to supply prompt lists. Cached under the install root; re-used on later runs.
+bool fetch_ablate_dataset(const std::string & dataset, const std::string & split, int limit, const std::string & dest,
+                          std::string & err) {
+    if (file_exists(dest)) {
+        return true;
+    }
+    std::string body;
+    int         off = 0;
+    while (off < limit) {
+        const int         len = std::min(100, limit - off);
+        const std::string url = "https://datasets-server.huggingface.co/rows?dataset=" + url_query_escape(dataset) +
+                                "&config=default&split=" + split + "&offset=" + std::to_string(off) + "&length=" +
+                                std::to_string(len);
+        const HttpReply r = http_get(url, {"User-Agent: llmash"}, 30);
+        if (r.status != 200) {
+            err = "could not fetch " + dataset + " (" + (r.error.empty() ? std::to_string(r.status) : r.error) + ")";
+            return false;
+        }
+        const json d = json::parse(r.body, nullptr, false);
+        if (d.is_discarded()) {
+            err = "bad response from the dataset server";
+            return false;
+        }
+        const json rows = d.value("rows", json::array());
+        if (!rows.is_array() || rows.empty()) {
+            break;
+        }
+        for (const auto & row : rows) {
+            const std::string t = row.value("row", json::object()).value("text", std::string());
+            std::string       one;  // collapse to one line
+            bool              sp = false;
+            for (char c : t) {
+                if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+                    sp = true;
+                    continue;
+                }
+                if (sp && !one.empty()) {
+                    one += ' ';
+                }
+                sp = false;
+                one += c;
+            }
+            if (!one.empty()) {
+                body += one + "\n";
+            }
+        }
+        off += static_cast<int>(rows.size());
+    }
+    std::ofstream f(dest, std::ios::binary);
+    if (!f) {
+        err = "cannot write " + dest;
+        return false;
+    }
+    f << body;
+    return true;
+}
+
+// The value right after "key=" on one of llama-ablate's progress lines (space-delimited), for turning its machine
+// output into friendly status.
+std::string ablate_field(const std::string & s, const char * key) {
+    const size_t p = s.find(key);
+    if (p == std::string::npos) {
+        return "";
+    }
+    size_t a = p + std::strlen(key), b = a;
+    while (b < s.size() && s[b] != ' ') {
+        b++;
+    }
+    return s.substr(a, b - a);
+}
+
+// llmash ablate MODEL: fit an uncensoring control vector beside the model. The sidecar is applied automatically at
+// load (see Instance::args), so this is the whole setup. Non-interactive callers (an LLM, ssh without a tty, a
+// pipe) must pass --yes -- it never blocks on a prompt and never uncensors silently.
+int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Config & cfg) {
+    try {
+        const ParsedArgs o = parse_simple(args, {"--yes", "-y"}, {});
+        if (o.pos.empty()) {
+            std::fprintf(stderr,
+                         "Usage: %s ablate MODEL [--yes]\n\n"
+                         "Removes a model's refusal behaviour (uncensors it) by fitting a tiny projection control\n"
+                         "vector, written as a sidecar beside the model and applied automatically on load. Not\n"
+                         "every model can be ablated; one whose refusal is entangled with its competence is\n"
+                         "refused and nothing is written.\n",
+                         prog().c_str());
+            return 1;
+        }
+        const std::string name = o.pos[0];
+        need_server(api);
+        bool                 missing = false;
+        std::optional<Model> m       = model_for(api, name, &missing);
+        if (!m) {
+            die("Error: '" + name + "' is not a local GGUF model that can be ablated");
+        }
+        const std::string gguf = m->path;
+        // the write path, built the same way the launch-time pickup reads it (a trailing -NNNNN-of-NNNNN shard
+        // marker stripped) so the auto-applied sidecar is exactly this file
+        std::string stem = fs::path(gguf).stem().string();
+        if (const size_t of = stem.rfind("-of-"); of != std::string::npos && of + 4 < stem.size() && of > 0) {
+            bool tail = true;
+            for (size_t i = of + 4; i < stem.size(); i++) {
+                tail = tail && std::isdigit(static_cast<unsigned char>(stem[i]));
+            }
+            const size_t dash = stem.rfind('-', of - 1);
+            bool         mid  = dash != std::string::npos && dash + 1 < of;
+            for (size_t i = dash + 1; mid && i < of; i++) {
+                mid = std::isdigit(static_cast<unsigned char>(stem[i])) != 0;
+            }
+            if (tail && mid) {
+                stem = stem.substr(0, dash);
+            }
+        }
+        const std::string out   = (fs::path(gguf).parent_path() / (stem + ".ablation.gguf")).string();
+        const std::string level = "balanced";  // one mode: the 16-pass search (measured as the sweet spot)
+
+        std::string ablate_bin = llama_server_exe();
+        if (const size_t p = ablate_bin.find("server"); p != std::string::npos) {
+            ablate_bin.replace(p, 6, "ablate");
+        }
+        const std::string bin = (fs::path(cfg.llama_bin).parent_path() / ablate_bin).string();
+        if (!file_exists(bin)) {
+            die("Error: this runtime has no " + ablate_bin + "; run `llmash update`");
+        }
+
+        const bool yes = o.has_flag("--yes") || o.has_flag("-y");
+        if (!yes) {
+#ifdef _WIN32
+            const bool tty = _isatty(_fileno(stdin)) != 0;
+#else
+            const bool tty = isatty(fileno(stdin)) != 0;
+#endif
+            if (!tty) {
+                die("Refusing to ablate '" + name + "' without confirmation. Re-run with --yes.");
+            }
+            std::printf("Ablate '%s'? This removes its refusal behaviour (uncensors it). [y/N] ", name.c_str());
+            std::fflush(stdout);
+            const int k = read_pick([]() { return raw_getch(); });
+            if (!(k == 'y' || k == 'Y')) {
+                std::printf("no\n");
+                return 1;
+            }
+            std::printf("yes\n");
+        }
+
+        const std::string dd = (fs::path(cfg.root) / "ablate-data").string();
+        std::error_code   ec;
+        fs::create_directories(dd, ec);
+        struct DS {
+            const char * ds;
+            const char * split;
+            int          n;
+            const char * file;
+        };
+        const DS sets[] = {
+            { "mlabonne/harmful_behaviors", "train", 416, "harmful.txt" },
+            { "mlabonne/harmless_alpaca", "train", 416, "harmless.txt" },
+            { "mlabonne/harmful_behaviors", "test", 104, "harmful_eval.txt" },
+            { "mlabonne/harmless_alpaca", "test", 104, "harmless_eval.txt" },
+        };
+        for (const DS & s : sets) {
+            std::string err;
+            if (!fetch_ablate_dataset(s.ds, s.split, s.n, (fs::path(dd) / s.file).string(), err)) {
+                die("Error: " + err);
+            }
+        }
+
+        // free the card if this model is resident, so the ablation run has room
+        {
+            const json b = { { "model", name }, { "keep_alive", 0 }, { "prompt", "" } };
+            ApiResult  r;
+            api.call_json("POST", "/api/generate", &b, 60, r);
+        }
+
+        std::printf("Abliterating %s: reading its refusal direction and fitting a vector to remove it.\n",
+                    name.c_str());
+        std::fflush(stdout);
+        const std::vector<std::string> argv = {
+            bin,
+            "-m", gguf, "-ngl", "999",
+            "--harmful",       (fs::path(dd) / "harmful.txt").string(),
+            "--harmless",      (fs::path(dd) / "harmless.txt").string(),
+            "--harmful-eval",  (fs::path(dd) / "harmful_eval.txt").string(),
+            "--harmless-eval", (fs::path(dd) / "harmless_eval.txt").string(),
+            "--level", level, "-o", out,
+        };
+        // Turn the tool's machine output into a couple of friendly, in-place status lines.
+        std::string before, after, of, kl;
+        const int   rc = run_streaming(argv, [&](const std::string & line) {
+            if (line.rfind("ablate: ", 0) != 0) {
+                return;
+            }
+            const std::string s = line.substr(8);
+            if (s.rfind("capture ", 0) == 0) {
+                std::printf("\r  reading the refusal direction   %s/%s   ", ablate_field(s, "done=").c_str(),
+                            ablate_field(s, "total=").c_str());
+                std::fflush(stdout);
+            } else if (s.rfind("baseline ", 0) == 0) {
+                std::printf("\r  it refuses %s of %s test prompts                 \n", ablate_field(s, "refusals=").c_str(),
+                            ablate_field(s, "of=").c_str());
+                std::fflush(stdout);
+            } else if (s.rfind("trial ", 0) == 0) {
+                std::printf("\r  searching for the gentlest vector   pass %s/%s   ", ablate_field(s, "i=").c_str(),
+                            ablate_field(s, "n=").c_str());
+                std::fflush(stdout);
+            } else if (s.rfind("done ", 0) == 0) {
+                before = ablate_field(s, "before=");
+                after  = ablate_field(s, "refusals=");
+                of     = ablate_field(s, "of=");
+                kl     = ablate_field(s, "kl=");
+                std::printf("\r                                                      \r");  // clear the status line
+            }
+        });
+        if (rc == 2) {
+            std::fprintf(stderr,
+                         "\n'%s' can't be abliterated: its refusal is woven into its competence, so removing it would\n"
+                         "break the model. Nothing was written.\n",
+                         name.c_str());
+            return 2;
+        }
+        if (rc != 0 || !file_exists(out)) {
+            die("Error: ablation did not complete");
+        }
+        if (!before.empty()) {
+            std::printf("  refusals %s/%s -> %s/%s   (KL %s, lower is less capability lost)\n", before.c_str(),
+                        of.c_str(), after.c_str(), of.c_str(), kl.c_str());
+        }
+        std::printf("Done. '%s' is abliterated and will load that way automatically from now on.\n", name.c_str());
         return 0;
     } catch (const CliExit & e) {
         return e.code;
@@ -2513,6 +2758,10 @@ bool dispatch(const std::string & cmd, const std::vector<std::string> & args, Co
     }
     if (name == "rco") {
         exit_code = cmd_rco(args, api);
+        return true;
+    }
+    if (name == "ablate") {
+        exit_code = cmd_ablate(args, api, cfg);
         return true;
     }
     if (name == "show") {

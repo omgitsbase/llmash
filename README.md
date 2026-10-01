@@ -25,6 +25,7 @@ build at the size you want, the build itself.
 - [Classifiers](#classifiers)
 - [Context](#context)
 - [Custom builds](#custom-builds)
+- [Abliteration](#abliteration)
 - [Speculation](#speculation)
 - [Commands](#commands)
 - [Configuration](#configuration)
@@ -367,6 +368,36 @@ target, read a block at a time and quantized on the GPU, so only the result
 touches disk. Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes, 10 of them
 the download. `rco convert` does the same from a model already on disk.
 
+## Abliteration
+
+```
+llmash ablate MODEL          # or: abliterate, or  pull MODEL --ablate
+```
+
+Removes a model's refusal behaviour. llmash reads the model's own activations to
+find the single direction its residual stream uses for "refuse", then fits a tiny
+projection control vector that removes that direction at inference. The model file
+is never changed, the vector is ~300 KB and costs nothing to run, and it is written
+as a `.ablation.gguf` sidecar that llmash applies automatically every time the model
+loads, so an abliterated model just works, with no other setup.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/abliterate-dark.svg">
+  <img alt="Refusals on 100 harmful prompts, base model vs abliterated, across four models" src="docs/abliterate-light.svg">
+</picture>
+
+A 16-pass search shapes how hard each layer is ablated, keeping the capability loss
+(first-token KL on harmless prompts) low while the refusals fall away. Each layer is
+ablated along its *own* direction, which is what lets it work on the Gemma family:
+models whose refusal direction rotates through the stack and which a single shared
+direction collapses. Not every model can be abliterated: when the refusal is woven
+into the model's competence (its best vector still lands at a high KL) the command
+says so and writes nothing, rather than shipping a broken model.
+
+It needs no setup from you: the prompt sets are fetched and cached on first use.
+Running it over a pipe, from an agent, or over ssh without a terminal requires
+`--yes`, so it never blocks waiting for input and never uncensors a model silently.
+
 ## Speculation
 
 A model carrying an MTP head drafts for itself, with nothing to fetch. For a model
@@ -399,6 +430,7 @@ conversation already holds.
 | `ctx` | the context a model runs at, up to 4x its trained length under YaRN; `--kv`, `--keep`, `--release` |
 | `pulldraft` | find and install a draft model for a model you have; `pulldraft MODEL REPO` takes one you name |
 | `rco convert` | assemble a custom build from a model already on disk |
+| `ablate`, `abliterate` | remove a model's refusal behaviour (uncensor it); `pull MODEL --ablate` does it on pull |
 | `models` | show where models are read from, or point llmash at a folder of them |
 | `doctor` | check the install, runtime, GPU, models and routes |
 | `update` | install the latest push to main (the `edge` build), or with `--stable` the latest release; `--force` to reinstall |

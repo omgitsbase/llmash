@@ -488,6 +488,24 @@ Flags:
   -h, --help   help for help
 )HELP";
 
+const std::string k_ablate_help = R"HELP(Remove a model's refusal behaviour (uncensor it)
+
+Fits a small projection control vector from the model's own activations and writes it
+as a sidecar beside the model. llmash applies it automatically every time the model
+loads, so there is nothing else to configure. The model file itself is never changed,
+and the vector costs nothing at inference. Some models cannot be ablated -- when the
+refusal is entangled with the model's competence the command refuses and writes nothing.
+
+Usage:
+  ollama ablate MODEL [flags]
+
+Aliases:
+  ablate, abliterate
+
+Flags:
+      --yes   proceed without the confirmation prompt (required when not a terminal)
+)HELP";
+
 const std::unordered_map<std::string, std::string> & command_help_map() {
     static const std::unordered_map<std::string, std::string> m = {
         {"install", k_install_help},
@@ -505,6 +523,7 @@ const std::unordered_map<std::string, std::string> & command_help_map() {
         {"stop", k_stop_help + k_host_env},
         {"pull", k_pull_help + k_host_env},
         {"rco", k_rco_help + k_host_env},
+        {"ablate", k_ablate_help + k_host_env},
         {"ctx", k_ctx_help + k_host_env},
         {"context", k_ctx_help + k_host_env},
         {"push", k_push_help + k_host_env},

@@ -127,6 +127,9 @@ std::string alias_of(const std::string & cmd) {
     if (cmd == "set") {
         return "models";
     }
+    if (cmd == "abliterate") {
+        return "ablate";
+    }
     return cmd;
 }
 
@@ -187,6 +190,7 @@ int dispatch(const std::string & prog, const std::string & cmd, const std::vecto
     if (cmd == "stop")                     { return cmd_stop(args, api); }
     if (cmd == "pull" || cmd == "install") { return cmd_pull(args, api); }
     if (cmd == "rco")                      { return cmd_rco(args, api); }
+    if (cmd == "ablate")                   { return cmd_ablate(args, api, cfg); }
     if (cmd == "ctx" || cmd == "context")  { return cmd_ctx(args, api, cfg); }
     if (cmd == "create")                   { return cmd_create(args, api); }
     if (cmd == "cp")                       { return cmd_cp(args, api); }
