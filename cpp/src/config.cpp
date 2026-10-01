@@ -205,7 +205,15 @@ Config load_config() {
 
     const json local = read_local(c.root);
 
-    c.models_root = env_str("OLLAMA_MODELS", saved_env("OLLAMA_MODELS"));
+    // OLLAMA_MODELS, or LLMASH_MODELS (the same setting under llmash's name, which the installers, the help and
+    // `llmash models` all honour), from this process before what is saved
+    c.models_root = env_str("OLLAMA_MODELS", env_str("LLMASH_MODELS"));
+    if (c.models_root.empty()) {
+        c.models_root = saved_env("OLLAMA_MODELS");
+    }
+    if (c.models_root.empty()) {
+        c.models_root = saved_env("LLMASH_MODELS");
+    }
     if (c.models_root.empty()) {
         c.models_root = j_str(local, "models_root");
     }
