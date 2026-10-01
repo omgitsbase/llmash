@@ -170,7 +170,7 @@ bool is_sidecar(const std::string & stem) {
             return true;
         }
     }
-    for (const char * tag : {".mtp", ".draft", ".classifier"}) {
+    for (const char * tag : {".mtp", ".draft", ".classifier", ".ablation"}) {
         if (ends_with(s, tag)) {
             return true;
         }

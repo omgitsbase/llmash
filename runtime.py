@@ -9,7 +9,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE / "dist" / "llmash-runtime-win-cuda-13-x64.zip"
 
 NEEDED = ("llama-server.exe", "llama-server-impl.dll",
-          "llama-quantize.exe", "llama-quantize-impl.dll", "llama.dll", "llama-common.dll", "mtmd.dll",
+          "llama-quantize.exe", "llama-quantize-impl.dll", "llama-ablate.exe", "llama.dll", "llama-common.dll", "mtmd.dll",
           "ggml.dll", "ggml-base.dll", "ggml-cuda.dll",
           "cudart64_13.dll", "cublas64_13.dll", "cublasLt64_13.dll")
 

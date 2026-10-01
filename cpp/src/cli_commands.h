@@ -110,6 +110,7 @@ int cmd_stop(const std::vector<std::string> & args, ApiClient & api);
 int cmd_pull(const std::vector<std::string> & args, ApiClient & api);
 int cmd_create(const std::vector<std::string> & args, ApiClient & api);
 int cmd_rco(const std::vector<std::string> & args, ApiClient & api);
+int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Config & cfg);
 int cmd_ctx(const std::vector<std::string> & args, ApiClient & api, const Config & cfg);
 int cmd_cp(const std::vector<std::string> & args, ApiClient & api);
 int cmd_push();
