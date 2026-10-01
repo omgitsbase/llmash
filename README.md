@@ -374,25 +374,31 @@ the download. `rco convert` does the same from a model already on disk.
 llmash ablate MODEL          # or: abliterate, or  pull MODEL --ablate
 ```
 
-Removes a model's refusal behaviour. llmash reads the model's own activations to
-find the single direction its residual stream uses for "refuse", then fits a tiny
-projection control vector that removes that direction at inference. The model file
-is never changed, the vector is ~300 KB and costs nothing to run, and it is written
-as a `.ablation.gguf` sidecar that llmash applies automatically every time the model
-loads, so an abliterated model just works, with no other setup.
+Removes a model's refusals without touching its weights. llmash finds the direction each
+layer uses for "refuse" and writes a small control vector that projects it out at
+inference, kept beside the model as a `.ablation.gguf` sidecar (a few hundred KB, 1.2 MB
+on a 27B). It loads with the model automatically; delete it and the original is back.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/abliterate-dark.svg">
-  <img alt="Refusals on 100 harmful prompts, base model vs abliterated, across four models" src="docs/abliterate-light.svg">
+  <img alt="Refusals out of 100 harmful prompts before and after llmash ablate, with the KL cost, across four models" src="docs/abliterate-light.svg">
 </picture>
 
-A 16-pass search shapes how hard each layer is ablated, keeping the capability loss
-(first-token KL on harmless prompts) low while the refusals fall away. Each layer is
-ablated along its *own* direction, which is what lets it work on the Gemma family:
-models whose refusal direction rotates through the stack and which a single shared
-direction collapses. Not every model can be abliterated: when the refusal is woven
-into the model's competence (its best vector still lands at a high KL) the command
-says so and writes nothing, rather than shipping a broken model.
+Refusals are counted on 100 held-out prompts from `mlabonne/harmful_behaviors` by an
+uncensored model reading each whole answer. KL is how far the first answer token moves
+from the original model on 100 harmless prompts; a 16-pass search keeps it low while the
+refusals fall away. Each layer gets its own direction, which is what makes it work on
+Gemma. A model that cannot lose its refusals without breaking is left alone, and the
+command says so.
+
+Against [AEON Ultimate](https://huggingface.co/AEON-7/Qwen3.8-27B-AEON-ULTIMATE-UNCENSORED-BF16),
+the other Qwen3.8-27B abliteration graded by a model:
+
+| build | refusals | what it changes | search |
+|---|--:|---|---|
+| Qwen3.8-27B, as released | 94/100 | nothing | none |
+| AEON Ultimate | 36/100 | the bf16 weights | 50 trials on an H200 |
+| **llmash ablate** | **2/100** | **a 1.2 MB sidecar** | **16 passes, 70 s on one RTX PRO 6000** |
 
 It needs no setup from you: the prompt sets are fetched and cached on first use.
 Running it over a pipe, from an agent, or over ssh without a terminal requires
