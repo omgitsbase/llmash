@@ -45,6 +45,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -2155,15 +2156,23 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
         if (const size_t p = ablate_bin.find("server"); p != std::string::npos) {
             ablate_bin.replace(p, 6, "ablate");
         }
-        const std::string bin = (fs::path(cfg.llama_bin).parent_path() / ablate_bin).string();
+        // the runtime this model runs on: its own when local.json names one for it, else the main one
+        const std::string named  = runtime_for(cfg, m->name);
+        const std::string server = named.empty() ? cfg.llama_bin : named;
+        const std::string bin    = (fs::path(server).parent_path() / ablate_bin).string();
         if (!file_exists(bin)) {
+            if (!named.empty()) {
+                die("Error: '" + m->name + "' runs on its own runtime, which has no " + ablate_bin + ":\n  " + server +
+                    "\nAbliteration needs llmash's runtime; drop that model's \"runtime\" entry from local.json once "
+                    "llmash's runtime loads it.");
+            }
             // llmash's own runtime carries a RUNTIME.txt stamp; upstream llama.cpp builds do not, and cannot apply
             // the vector even with the tool, so an update is only the answer when the runtime is llmash's
-            if (file_exists((fs::path(cfg.llama_bin).parent_path() / "RUNTIME.txt").string())) {
+            if (file_exists((fs::path(server).parent_path() / "RUNTIME.txt").string())) {
                 die("Error: this runtime predates abliteration; run `llmash update`");
             }
             die("Error: abliteration needs llmash's own runtime, and this machine runs another llama.cpp build:\n"
-                "  " + cfg.llama_bin + "\n"
+                "  " + server + "\n"
                 "llmash's runtime is built for NVIDIA cards from Turing on, with driver 580 or newer; on such a card\n"
                 "`llmash update --force` installs it. Other GPUs run upstream llama.cpp, which cannot apply the vector.");
         }
@@ -2231,8 +2240,15 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
         };
         // Turn the tool's machine output into a couple of friendly, in-place status lines.
         std::string kl;
+        std::deque<std::string> said;   // the tool's last lines that were not progress, for an error worth reading
         const int   rc = run_streaming(argv, [&](const std::string & line) {
             if (line.rfind("ablate: ", 0) != 0) {
+                if (!line.empty()) {
+                    said.push_back(line);
+                    if (said.size() > 8) {
+                        said.pop_front();
+                    }
+                }
                 return;
             }
             const std::string s = line.substr(8);
@@ -2258,7 +2274,23 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
             return 2;
         }
         if (rc != 0 || !file_exists(out)) {
-            die("Error: ablation did not complete");
+            std::printf("\n");
+            std::string all;
+            for (const std::string & l : said) {
+                all += l + "\n";
+            }
+            if (const size_t at = all.find("unknown model architecture: '"); at != std::string::npos) {
+                const size_t s = at + 29;
+                const size_t e = all.find('\'', s);
+                die("Error: this runtime cannot load '" + all.substr(s, e == std::string::npos ? 0 : e - s) +
+                    "' models, so it cannot ablate '" + name + "'; `llmash update` brings a newer runtime when there is one");
+            }
+            if (all.find("out of memory") != std::string::npos || all.find("failed to allocate") != std::string::npos ||
+                all.find("no context for the") != std::string::npos) {
+                die("Error: not enough GPU memory to ablate '" + name + "'; stop the other models (`llmash ps`, "
+                    "`llmash stop MODEL`) and try again");
+            }
+            die("Error: ablation did not complete" + (all.empty() ? std::string() : ":\n" + all));
         }
         if (!kl.empty()) {
             std::printf("  KL %s: how far its answers to ordinary prompts moved (lower is less changed)\n", kl.c_str());
