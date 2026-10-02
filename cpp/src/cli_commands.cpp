@@ -2242,9 +2242,11 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
         std::printf("Abliterating %s: reading its refusal direction and fitting a vector to remove it.\n",
                     name.c_str());
         std::fflush(stdout);
+        // weights reach the card the way the server loads them (dio by default): a memory-mapped model bigger than
+        // the machine's RAM, such as Flash Next's 75 GB on a 64 GB box, would otherwise fill RAM and stall it
         const std::vector<std::string> argv = {
             bin,
-            "-m", gguf, "-ngl", "999",
+            "-m", gguf, "-ngl", "999", "--load-mode", cfg.load_mode,
             "--harmful",       (fs::path(dd) / "harmful.txt").string(),
             "--harmless",      (fs::path(dd) / "harmless.txt").string(),
             "--harmful-eval",  (fs::path(dd) / "harmful_eval.txt").string(),
