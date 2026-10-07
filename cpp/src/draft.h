@@ -117,6 +117,9 @@ bool        writable(const std::string & dir);
 
 // The sidecar `<stem><suffix>` beside the weights, or "".
 std::string sidecar_path(const std::string & gguf, const char * suffix);
+// A drafter where draft_path saves it: beside the weights, or in the loose-GGUF folder when the weights' folder
+// can't be written to (an Ollama store owned by another account). "" when neither has it.
+std::string saved_drafter(const std::string & gguf, const char * suffix, const Config & cfg);
 // Where that sidecar goes, whether or not it exists yet: the path sidecar_path looks for.
 std::string sidecar_target(const std::string & gguf, const char * suffix);
 // Where a model's ablation vector is written and looked for: beside the weights, or in llmash's own folder
@@ -133,11 +136,11 @@ std::string mtp_path(const std::string & gguf);
 
 // "an MTP head" / "a DSpark drafter" / "a draft model" / "an EAGLE-3
 // drafter", or "" when none is installed.
-std::string installed_drafter(const Model & m);
+std::string installed_drafter(const Model & m, const Config & cfg);
 
 // installed_drafter, plus "an MTP head of its own" for weights that carry
 // multi-token-prediction heads already.
-std::string has_own_drafter(const Model & m);
+std::string has_own_drafter(const Model & m, const Config & cfg);
 
 // The self-speculation a model keeps when no drafter fits (LLMASH_SPEC_FALLBACK).
 std::string spec_fallback();

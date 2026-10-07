@@ -235,6 +235,15 @@ std::string sidecar_target(const std::string & gguf, const char * suffix) {
     return (fs::path(gguf).parent_path() / (strip_shard(stem_of(gguf)) + suffix)).string();
 }
 
+std::string saved_drafter(const std::string & gguf, const char * suffix, const Config & cfg) {
+    if (const std::string beside = sidecar_named(gguf, suffix); !beside.empty()) {
+        return beside;
+    }
+    const fs::path  elsewhere = fs::path(loose_dir(cfg)) / (strip_shard(stem_of(gguf)) + suffix);
+    std::error_code ec;
+    return fs::is_regular_file(elsewhere, ec) ? elsewhere.string() : std::string();
+}
+
 std::string ablation_path(const std::string & gguf, const Config & cfg) {
     // an Ollama store's blobs are content-addressed and shared with Ollama, so nothing of llmash's goes among
     // them: the vector for a model stored there lives in llmash's own folder, under the blob's name
@@ -1120,28 +1129,28 @@ std::string draft_path(const Model & m, const DraftKind & kind, const Config & c
     return (fs::path(dir) / (stem + "." + kind.name + ".gguf")).string();
 }
 
-std::string installed_drafter(const Model & m) {
+std::string installed_drafter(const Model & m, const Config & cfg) {
     std::error_code ec;
     if (!m.mtp_path.empty() && fs::is_regular_file(m.mtp_path, ec)) {
         return "an MTP head";
     }
-    if (!mtp_path(m.path).empty()) {
+    if (!mtp_path(m.path).empty() || !saved_drafter(m.path, ".mtp.gguf", cfg).empty()) {
         return "an MTP head";
     }
-    if (!find_dspark(m.path).empty()) {
+    if (!find_dspark(m.path).empty() || !saved_drafter(m.path, ".dspark.gguf", cfg).empty()) {
         return "a DSpark drafter";
     }
-    if (!sidecar_named(m.path, ".draft.gguf").empty()) {
+    if (!saved_drafter(m.path, ".draft.gguf", cfg).empty()) {
         return "a draft model";
     }
-    if (!sidecar_named(m.path, ".eagle3.gguf").empty()) {
+    if (!saved_drafter(m.path, ".eagle3.gguf", cfg).empty()) {
         return "an EAGLE-3 drafter";
     }
     return "";
 }
 
-std::string has_own_drafter(const Model & m) {
-    if (const std::string d = installed_drafter(m); !d.empty()) {
+std::string has_own_drafter(const Model & m, const Config & cfg) {
+    if (const std::string d = installed_drafter(m, cfg); !d.empty()) {
         return d;
     }
     if (!m.classifier.empty() || is_embedding(read_gguf(m.path))) {

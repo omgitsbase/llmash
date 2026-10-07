@@ -844,7 +844,7 @@ void offer_draft(ApiClient & api, const std::string & name, bool yes) {
     }
     const Config               cfg = load_config();
     const std::optional<Model> m   = model_for(api, name);
-    if (!m || !has_own_drafter(*m).empty()) {
+    if (!m || !has_own_drafter(*m, cfg).empty()) {
         return;
     }
     std::printf("\n%slooking for a draft model...%s ", kDim, kReset);
@@ -2650,7 +2650,7 @@ int pulldraft(const std::string & name, bool yes, bool force, const std::string 
             std::printf("There is nothing to look for.\n");
             return 0;
         }
-        if (const std::string installed = installed_drafter(*m); !installed.empty() && !force) {
+        if (const std::string installed = installed_drafter(*m, cfg); !installed.empty() && !force) {
             std::printf("%s already has %s installed.\n", name.c_str(), installed.c_str());
             std::printf("`%s pulldraft %s --force` fetches it again.\n", prog().c_str(), name.c_str());
             return 0;

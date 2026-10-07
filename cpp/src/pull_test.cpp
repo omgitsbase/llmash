@@ -794,16 +794,29 @@ void test_draft_naming() {
     check_eq(draft_path(m, draft_kinds()[1], cfg), (dir / "Qwen3-8B-Q4_K_M.eagle3.gguf").string(),
              "the shard suffix is dropped and the kind becomes the extension");
 
-    check_eq(installed_drafter(m), std::string(""), "no sidecar yet");
+    check_eq(installed_drafter(m, cfg), std::string(""), "no sidecar yet");
     write_file(dir / "Qwen3-8B-Q4_K_M.eagle3.gguf", "x");
-    check_eq(installed_drafter(m), std::string("an EAGLE-3 drafter"), "and one is found once it is there");
+    check_eq(installed_drafter(m, cfg), std::string("an EAGLE-3 drafter"), "and one is found once it is there");
     write_file(dir / "Qwen3-8B-Q4_K_M.mtp.gguf", "x");
-    check_eq(installed_drafter(m), std::string("an MTP head"), "an MTP head outranks it");
+    check_eq(installed_drafter(m, cfg), std::string("an MTP head"), "an MTP head outranks it");
 
     Model unwritable;
     unwritable.path = "Z:\\nowhere\\model.gguf";
     check_eq(draft_path(unwritable, draft_kinds()[0], cfg), (fs::path(cfg.gguf_dir) / "model.mtp.gguf").string(),
              "a folder that cannot be written to sends the sidecar to the loose folder");
+
+    // and it is found there again: an Ollama store's blob, read-only to this user, with its head in the loose folder
+    const fs::path blobs = scratch() / "store" / "blobs";
+    fs::create_directories(blobs, ec);
+    fs::create_directories(cfg.gguf_dir, ec);
+    write_file(blobs / "sha256-0123abcd", "x");
+    Model stored;
+    stored.path = (blobs / "sha256-0123abcd").string();
+    check_eq(installed_drafter(stored, cfg), std::string(""), "a blob with no drafter anywhere has none");
+    write_file(fs::path(cfg.gguf_dir) / "sha256-0123abcd.mtp.gguf", "x");
+    check_eq(saved_drafter(stored.path, ".mtp.gguf", cfg), (fs::path(cfg.gguf_dir) / "sha256-0123abcd.mtp.gguf").string(),
+             "a head saved in the loose folder for a blob is found");
+    check_eq(installed_drafter(stored, cfg), std::string("an MTP head"), "and counts as installed");
 }
 
 void test_mtp_path() {
