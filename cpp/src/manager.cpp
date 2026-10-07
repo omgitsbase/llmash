@@ -983,14 +983,18 @@ std::vector<std::string> Instance::args() {
     const int         mtp_draft  = env_int("LLMASH_MTP_DRAFT", 3);
     const int         dspark_max = env_int("LLMASH_DSPARK_DRAFT", 6);
     const int         dspark_min = env_int("LLMASH_DSPARK_DRAFT_MIN", 6);
-    const std::string mtp        = !model.mtp_path.empty() ? model.mtp_path : mtp_path(model.path);
-    const std::string eagle3     = sidecar_path(model.path, ".eagle3.gguf");
-    const std::string dspark     = dspark_path(model.path);
-    const std::string dflash     = dflash_path(model.path);
+    // pulldraft saves into the loose-GGUF folder when the model's own folder is read-only (an Ollama store)
+    const auto        or_saved   = [&](const std::string & found, const char * suffix) {
+        return !found.empty() ? found : saved_drafter(model.path, suffix, *cfg_);
+    };
+    const std::string mtp        = or_saved(!model.mtp_path.empty() ? model.mtp_path : mtp_path(model.path), ".mtp.gguf");
+    const std::string eagle3     = saved_drafter(model.path, ".eagle3.gguf", *cfg_);
+    const std::string dspark     = or_saved(dspark_path(model.path), ".dspark.gguf");
+    const std::string dflash     = or_saved(dflash_path(model.path), ".dflash.gguf");
     // DFlash drafts a block of 7 and pays off most on code and structured output; a model's own
     // MTP head wins on prose, so it is the default and LLMASH_PREFER_DFLASH=1 switches
     const bool        use_dflash = !dflash.empty() && file_exists(dflash) && (!model.has_mtp || env_int("LLMASH_PREFER_DFLASH", 0) != 0);
-    const std::string draft      = sidecar_path(model.path, ".draft.gguf");
+    const std::string draft      = saved_drafter(model.path, ".draft.gguf", *cfg_);
     const std::string fallback   = env_str("LLMASH_SPEC_FALLBACK", "ngram-mod");
     // LLMASH_SPEC_STACK=1 offers the lookup drafter beside the model's own
     // head. Off: the fork gives lookup the first refusal, and on prompts seen

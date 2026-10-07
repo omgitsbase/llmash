@@ -899,10 +899,10 @@ static void offer_drafter(const json & info, const std::string & name) {
     Model             m;
     m.path    = from.rfind("FROM ", 0) == 0 ? from.substr(5) : "";
     m.has_mtp = info.value("mtp", false);
-    if (m.path.empty() || !clidoc::file_exists(m.path) || !has_own_drafter(m).empty()) return;
+    const Config cfg = load_config();
+    if (m.path.empty() || !clidoc::file_exists(m.path) || !has_own_drafter(m, cfg).empty()) return;
     if (!is_console(stdin) || !is_console(stdout)) return;
-    const Config cfg   = load_config();
-    json         local = clidoc::read_local_json(cfg.root);
+    json local = clidoc::read_local_json(cfg.root);
     if (!drafter_offer_due(local, name)) return;
     const std::string instead = spec_fallback().rfind("ngram", 0) == 0
                                     ? ", so it drafts by n-gram lookup, which only speeds up text the chat already holds"
