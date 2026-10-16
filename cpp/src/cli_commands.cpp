@@ -494,6 +494,12 @@ bool is_rco(const std::string & name) {
 
 const char kRcoPitch[] = "3 bits, one type per tensor";
 
+// NVFP4 or MXFP4, MXFP4_MOE included
+bool is_fp4(const std::string & name) {
+    const std::string u = upper(name);
+    return u.find("NVFP4") != std::string::npos || u.find("MXFP4") != std::string::npos;
+}
+
 // The one choice that costs bandwidth and minutes, so it is confirmed.
 bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & plain, const std::string & source) {
     const QuantInfo * ref = nearest_by_size(plain, custom.size);
@@ -586,7 +592,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             qi.fetch = static_cast<int64_t>(j_num(q, "fetch"));
             qi.repo  = j_str(q, "repo");
             quants.push_back(qi);
-            if (!qi.repo.empty() && !equal_fold(qi.name, "NVFP4")) {
+            if (!qi.repo.empty() && !is_fp4(qi.name)) {
                 published.push_back(qi);  // a GSQ-RCO build from elsewhere
             } else {
                 (is_rco(qi.name) ? custom : plain).push_back(qi);
@@ -639,6 +645,13 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             const bool        nvfp = equal_fold(q.name, "NVFP4");
             basic.push_back(Row{build_row(label, q, nvfp ? "NVFP4, FP8 quality" : ""), q.name, q.size, false, q.repo});
         }
+        // other cards get the MXFP4 build beside the medium one, where sm_120 cards get NVFP4 in its place
+        for (const QuantInfo & q : plain) {
+            if (!fp4 && upper(q.name).find("MXFP4") != std::string::npos) {
+                basic.push_back(Row{build_row("fp4", q, ""), q.name, q.size, false, q.repo});
+                break;
+            }
+        }
     } else {
         for (const auto & q : plain) {
             basic.push_back(Row{build_row("", q, ""), q.name, q.size, false});
@@ -646,7 +659,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     std::stable_sort(basic.begin(), basic.end(), [](const Row & a, const Row & b) { return a.size < b.size; });
     for (const auto & q : quants) {
-        const bool gsq  = !q.repo.empty() && !equal_fold(q.name, "NVFP4");
+        const bool gsq  = !q.repo.empty() && !is_fp4(q.name);
         const bool nvfp = equal_fold(q.name, "NVFP4");
         full.push_back(Row{build_row(gsq ? "rco" : "", q, gsq ? "GSQ-RCO " + q.name : nvfp ? "NVFP4, FP8 quality" : ""),
                            q.name, q.size, false, q.repo});
