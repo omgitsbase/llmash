@@ -214,6 +214,24 @@ void test_quant_tag() {
     check_eq(quant_tag("model-IQ4_XS.gguf"), std::string("IQ4_XS"), "IQ4_XS");
     check_eq(quant_tag("mmproj-model-f16.gguf"), std::string("F16"), "F16, upper-cased");
     check_eq(quant_tag("Qwen3-8B.gguf"), std::string(""), "no quantisation in the name");
+    check_eq(quant_tag("Qwen3.8-Flash-Next-NVFP4-Q8_0.gguf"), std::string("NVFP4"), "NVFP4 experts with the rest at Q8_0");
+}
+
+void test_fp4_borrow() {
+    section("fp4 borrow");
+    check_eq(without_org("qwen_qwen3.6-35b-a3b"), std::string("qwen3.6-35b-a3b"), "bartowski's org prefix comes off");
+    check_eq(without_org("qwen3.8-flash-next"), std::string("qwen3.8-flash-next"), "a plain name is left alone");
+    HubModel m;
+    m.id   = "CompiledThoughts/Qwen3.8-Flash-Next-NVFP4-Q8_0";
+    m.tags = {"gguf", "base_model:nvidia/Qwen3.8-Flash-Next-NVFP4", "base_model:quantized:nvidia/Qwen3.8-Flash-Next-NVFP4"};
+    check(quantized_from(m, "Qwen/Qwen3.8-Flash-Next"), "a GGUF of NVIDIA's NVFP4 checkpoint is one of the model");
+    check(quantized_from(m, "bartowski/Qwen3.8-Flash-Next-GGUF"), "asked for by another GGUF repo's name");
+    m.tags = {"gguf", "base_model:quantized:orcarouter/Qwen3.8-Flash-Next-Uncensored"};
+    check(!quantized_from(m, "Qwen/Qwen3.8-Flash-Next"), "a GGUF of a fine-tune is not");
+    m.tags = {"gguf", "base_model:finetune:Qwen/Qwen3.8-Flash-Next"};
+    check(!quantized_from(m, "Qwen/Qwen3.8-Flash-Next"), "a fine-tune that ships GGUFs is not");
+    m.tags = {"base_model:quantized:Qwen/Qwen3.8-Flash-Next"};
+    check(!quantized_from(m, "Qwen/Qwen3.8-Flash-Next"), "a quantization that is not a GGUF is not");
 }
 
 void test_kind_of() {
@@ -978,6 +996,7 @@ int main() {
     std::cout << "scratch: " << scratch().string() << "\n";
 
     test_quant_tag();
+    test_fp4_borrow();
     test_all_blackwell();
     test_other_formats();
     test_kind_of();

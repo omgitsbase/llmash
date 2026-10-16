@@ -1469,25 +1469,69 @@ std::vector<QuantInfo> gsq_rco_quants(const std::string & repo) {
     return out;
 }
 
-// An NVFP4 build of the same model from another repository, for a machine whose cards run FP4 when the repo asked
-// for holds none: the same exact-model check as a GSQ-RCO build, the most downloaded repository first.
-std::vector<QuantInfo> nvfp4_quants(const std::string & repo) {
+// bartowski names a repo "<org>_<model>": Qwen_Qwen3.6-35B-A3B
+std::string without_org(const std::string & name) {
+    const size_t u = name.find('_');
+    return u != std::string::npos && u < name.find('.') && u < name.find('-') ? name.substr(u + 1) : name;
+}
+
+// Whether a GGUF repo's card says it was quantized from `repo`'s model, or from a quantization of it such as
+// NVIDIA's own NVFP4 checkpoint. A fine-tune is quantized from the fine-tune, so it never counts.
+bool quantized_from(const HubModel & m, const std::string & repo) {
+    if (std::find(m.tags.begin(), m.tags.end(), "gguf") == m.tags.end()) {
+        return false;
+    }
+    const std::string want = without_org(model_name_of(repo));
+    for (const std::string & t : m.tags) {
+        static const std::string pre = "base_model:quantized:";
+        if (!starts_with(t, pre)) {
+            continue;
+        }
+        std::string b = lower(t.substr(pre.size()));
+        for (const char * fp4 : {"-nvfp4", "-mxfp4"}) {
+            if (ends_with(b, fp4)) {
+                b.resize(b.size() - std::strlen(fp4));
+            }
+        }
+        if (equal_fold(b, repo) || without_org(model_name_of(b)) == want) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A build in `fmt` (NVFP4 or MXFP4) of the same model from another repository, for when the repo asked for holds
+// none: the same exact-model check as a GSQ-RCO build, or a card that says it was quantized from the model with
+// files named after it, the most downloaded repository first.
+std::vector<QuantInfo> fp4_quants(const std::string & repo, const std::string & fmt) {
     std::vector<QuantInfo> out;
-    std::string            base = repo.substr(repo.find('/') + 1);
+    std::string            base = without_org(repo.substr(repo.find('/') + 1));
     for (const char * drop : {"-i1-GGUF", "-GGUF", "-gguf"}) {
         if (const size_t at = base.find(drop); at != std::string::npos) {
             base.erase(at, std::strlen(drop));
         }
     }
-    for (const HubModel & m : hub_search(base + " NVFP4", 10)) {
+    const std::string f = lower(fmt);
+    for (const HubModel & m : hub_search(base + " " + fmt, 30)) {
         const std::string low = lower(m.id);
-        if (low.find("nvfp4") == std::string::npos || low.find("gguf") == std::string::npos ||
-            equal_fold(m.id, repo) || !converts(m, repo)) {
+        if (low.find(f) == std::string::npos || equal_fold(m.id, repo)) {
             continue;
         }
-        std::string err;
-        for (QuantInfo q : quants_of(hf_files(m.id, &err))) {
-            if (err.empty() && contains(lower(q.name), "nvfp4")) {
+        const bool named = low.find("gguf") != std::string::npos && converts(m, repo);
+        if (!named && !quantized_from(m, repo)) {
+            continue;
+        }
+        std::string         err;
+        std::vector<HfFile> files = hf_files(m.id, &err);
+        if (!named) {
+            // a set of files named for their parts rather than the model is a layout llama.cpp doesn't load
+            const std::string want = without_org(model_name_of(repo));
+            files.erase(std::remove_if(files.begin(), files.end(),
+                                       [&](const HfFile & h) { return !contains(lower(h.name), want); }),
+                        files.end());
+        }
+        for (QuantInfo q : quants_of(files)) {
+            if (err.empty() && contains(lower(q.name), f)) {
                 q.repo = m.id;
                 out.push_back(q);
             }
@@ -4161,20 +4205,41 @@ void handle_quants(const httplib::Request & req, httplib::Response & res, Config
     (void) reg;
     json out = api_quants(req.get_param_value("repo"));
     // the picker offers an NVFP4 build as the medium one when every card here runs FP4 natively, on a runtime
-    // whose mixture-of-experts verify takes NVFP4 (build 143 on); a repo holding none borrows one of the same model
+    // whose mixture-of-experts verify takes NVFP4 (build 143 on), and MXFP4 on any other machine; a repo holding
+    // none borrows one of the same model, and that format takes the other's place in the list
     if (!out.contains("error")) {
         const bool fp4 = gpus_all_blackwell() && runtime_build(cfg) >= 143;
         out["fp4"]     = fp4;
-        bool has_fp4   = false;
-        for (const auto & q : out["quants"]) {
-            has_fp4 = has_fp4 || contains(lower(q.value("name", "")), "nvfp4");
-        }
-        if (fp4 && !has_fp4) {
+        const std::string want  = fp4 ? "nvfp4" : "mxfp4";
+        const std::string other = fp4 ? "mxfp4" : "nvfp4";
+        const auto        has   = [&out](const std::string & f) {
+            for (const auto & q : out["quants"]) {
+                if (contains(lower(q.value("name", "")), f)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!has(want)) {
             const std::string model = out.value("from", "").empty() ? out.value("repo", "") : out.value("from", "");
-            for (const QuantInfo & q : nvfp4_quants(model)) {
+            for (const QuantInfo & q : fp4_quants(model, upper(want))) {
                 out["quants"].push_back(
                     json{{"name", q.name}, {"size", q.size}, {"files", q.files}, {"fetch", q.fetch}, {"repo", q.repo}});
             }
+        }
+        // a repo whose own builds are all FP4 keeps them: a pull with nothing to choose takes one of its own
+        bool own_other = false;
+        for (const auto & q : out["quants"]) {
+            own_other = own_other || (q.value("repo", "").empty() && !contains(lower(q.value("name", "")), "fp4"));
+        }
+        if (has(want) && own_other) {
+            json kept = json::array();
+            for (const auto & q : out["quants"]) {
+                if (!contains(lower(q.value("name", "")), other)) {
+                    kept.push_back(q);
+                }
+            }
+            out["quants"] = kept;
         }
     }
     res.status     = out.contains("error") ? 502 : 200;

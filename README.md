@@ -206,8 +206,11 @@ are not built for. On a dense model, Qwen3.8-27B NVFP4 generates 2-14% faster th
 the UD-Q4_K_XL build of the same size and reads a long prompt 31% faster. On a
 mixture-of-experts model it reads prompts at the same rate as Q4 and, depending on
 what the file keeps at higher precision, can generate slower. On a machine where
-every card is sm_120, the medium row is an NVFP4 build when the repository has one.
-Older cards decode it in software, and a Q4_K_M runs faster there. `LLMASH_FP4=1`
+every card is sm_120, the medium row is an NVFP4 build when the repository, or
+another repository's GGUF of the same model, has one, and it takes the place of an
+MXFP4 build. Other machines get an MXFP4 build, found the same way, in a row of its
+own in place of NVFP4. Older cards decode NVFP4 in software, and a Q4_K_M runs
+faster there. `LLMASH_FP4=1`
 or `0` overrides the detection. On such a machine, a repository holding an NVFP4
 build next to the others reads like this:
 
