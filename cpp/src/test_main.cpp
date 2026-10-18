@@ -129,13 +129,14 @@ int main() {
 
     {
         const auto env = claude_launch_env({"PATH=C:\\bin", "anthropic_api_key=sk-real", "ANTHROPIC_MODEL=claude-x"},
-                                           "http://127.0.0.1:11434", "qwen3.8-27b:rco-3");
+                                           "http://127.0.0.1:11434", "qwen3.8-27b:rco-3", 262144);
         const auto has = [&](const std::string & e) { return std::find(env.begin(), env.end(), e) != env.end(); };
         check(has("PATH=C:\\bin"), "claude: the rest of the environment is kept");
         check(!has("anthropic_api_key=sk-real") && !has("ANTHROPIC_MODEL=claude-x"), "claude: no Anthropic key or model leaks through");
         check(has("ANTHROPIC_BASE_URL=http://127.0.0.1:11434") && has("ANTHROPIC_AUTH_TOKEN=llmash"), "claude: pointed at this server");
         check(has("ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen3.8-27b:rco-3") && has("CLAUDE_CODE_SUBAGENT_MODEL=qwen3.8-27b:rco-3"),
               "claude: the background and subagent models are the picked one");
+        check(has("CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144"), "claude: told the window the model runs at");
     }
 
     {
