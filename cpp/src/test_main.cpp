@@ -4,7 +4,9 @@
 #include "registry.h"
 #include "cli_console.h"
 #include "manager.h"
+#include "launch.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -124,6 +126,17 @@ int main() {
     check(qwen && qwen->name == "qwen3-8b:q8_0", "and it is listed under its quantisation");
     check(qwen && !qwen->has_mtp, "a model without an mtp head is not claimed to have one");
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");
+
+    {
+        const auto env = claude_launch_env({"PATH=C:\\bin", "anthropic_api_key=sk-real", "ANTHROPIC_MODEL=claude-x"},
+                                           "http://127.0.0.1:11434", "qwen3.8-27b:rco-3");
+        const auto has = [&](const std::string & e) { return std::find(env.begin(), env.end(), e) != env.end(); };
+        check(has("PATH=C:\\bin"), "claude: the rest of the environment is kept");
+        check(!has("anthropic_api_key=sk-real") && !has("ANTHROPIC_MODEL=claude-x"), "claude: no Anthropic key or model leaks through");
+        check(has("ANTHROPIC_BASE_URL=http://127.0.0.1:11434") && has("ANTHROPIC_AUTH_TOKEN=llmash"), "claude: pointed at this server");
+        check(has("ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen3.8-27b:rco-3") && has("CLAUDE_CODE_SUBAGENT_MODEL=qwen3.8-27b:rco-3"),
+              "claude: the background and subagent models are the picked one");
+    }
 
     {
         const fs::path sdir = fs::temp_directory_path() / "llmash_cpp_test_split";

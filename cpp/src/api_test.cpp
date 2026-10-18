@@ -116,6 +116,8 @@ void handle_embed(const httplib::Request &, httplib::Response &, Config &, Manag
 void handle_v1_chat_completions(const httplib::Request &, httplib::Response &, Config &, Manager &,     // STUB
                                  Registry &) {}
 void handle_v1_completions(const httplib::Request &, httplib::Response &, Config &, Manager &, Registry &) {} // STUB
+void handle_v1_messages(const std::string &, const httplib::Request &, httplib::Response &, Config &, Manager &,  // STUB
+                        Registry &) {}
 
 
 } // namespace llmash

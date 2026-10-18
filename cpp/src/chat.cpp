@@ -841,4 +841,9 @@ void handle_v1_completions(const httplib::Request & req, httplib::Response & res
     v1_proxy("/v1/completions", req, res, cfg, mgr, reg);
 }
 
+void handle_v1_messages(const std::string & path, const httplib::Request & req, httplib::Response & res, Config & cfg,
+                        Manager & mgr, Registry & reg) {
+    v1_proxy(path, req, res, cfg, mgr, reg);
+}
+
 } // namespace llmash
