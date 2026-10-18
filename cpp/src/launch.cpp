@@ -266,25 +266,49 @@ std::vector<std::string> installed_models() {
     return out;
 }
 
-// The context an API request runs the model at, from /v1/models; 0 when the server does not say.
-int model_api_ctx(const std::string & model) {
+// Each model and the context an API request runs it at, from /v1/models, in the server's order.
+std::vector<std::pair<std::string, int>> api_models() {
+    std::vector<std::pair<std::string, int>> out;
     httplib::Client cli(ollama_host());
     cli.set_connection_timeout(4, 0);
     cli.set_read_timeout(10, 0);
     const auto res = cli.Get("/v1/models");
     if (!res || res->status != 200) {
-        return 0;
+        return out;
     }
     const json d = json::parse(res->body, nullptr, false);
     if (d.is_discarded() || !d.is_object()) {
-        return 0;
+        return out;
     }
     for (const auto & m : d.value("data", json::array())) {
-        if (m.is_object() && m.value("id", std::string()) == model) {
-            return m.value("max_context_length", 0);
+        if (m.is_object() && !m.value("id", std::string()).empty()) {
+            out.emplace_back(m.value("id", std::string()), m.value("max_context_length", 0));
+        }
+    }
+    return out;
+}
+
+// Claude Code opens with about 30k tokens of system prompt and tool definitions
+constexpr int kClaudeMinCtx = 65536;
+
+// 0 when the server does not say
+int model_api_ctx(const std::string & model) {
+    for (const auto & [id, ctx] : api_models()) {
+        if (id == model) {
+            return ctx;
         }
     }
     return 0;
+}
+
+// with no model picked, the first one whose context holds Claude Code's opening prompt
+std::string claude_default_model() {
+    for (const auto & [id, ctx] : api_models()) {
+        if (ctx >= kClaudeMinCtx) {
+            return id;
+        }
+    }
+    return "";
 }
 
 bool is_console() { return stdout_is_terminal() && stdin_is_terminal(); }
@@ -334,8 +358,9 @@ std::string model_of(const nlohmann::json & prof, const std::string & key, const
     if (!m.empty()) {
         return m;
     }
-    if (key == "claude" && !installed.empty()) {
-        return installed.front();
+    if (key == "claude") {
+        const std::string fit = claude_default_model();
+        return !fit.empty() ? fit : (installed.empty() ? "" : installed.front());
     }
     return "";
 }
@@ -559,21 +584,21 @@ std::vector<std::string> claude_launch_env(std::vector<std::string> env, const s
 
 // Claude Code speaks Anthropic's Messages API, which the runtime serves at /v1/messages and llmash forwards to the
 // model as it does the OpenAI routes.
-void launch_claude(const Config &, const std::string & model, const std::vector<std::string> & extra) {
+void launch_claude(const Config &, const std::string & picked, const std::vector<std::string> & extra) {
     const std::string path = which("claude");
     if (path.empty()) {
         std::fprintf(stderr, "Error: Claude Code is not installed (no 'claude' on PATH)\n");
         std::exit(1);
     }
+    const std::string model = !picked.empty() ? picked : claude_default_model();
     if (model.empty()) {
-        std::fprintf(stderr, "Error: no model for Claude Code: pick one with the right arrow in `llmash launch`, "
-                             "or run `llmash launch claude --model <name>`\n");
+        std::fprintf(stderr, "Error: no model runs at the 64k context Claude Code needs: give one more with "
+                             "`llmash ctx <model> 64k`, or pick one with the right arrow in `llmash launch`\n");
         std::exit(1);
     }
     const std::string host = ollama_host();
-    // Claude Code opens with about 30k tokens of system prompt and tool definitions
     const int ctx = model_api_ctx(model);
-    if (ctx > 0 && ctx < 65536) {
+    if (ctx > 0 && ctx < kClaudeMinCtx) {
         std::fprintf(stderr, "Error: %s runs at %d tokens of context and Claude Code opens with about 30k; "
                              "give it more with `llmash ctx %s 64k`\n", model.c_str(), ctx, model.c_str());
         std::exit(1);
