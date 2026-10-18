@@ -125,6 +125,24 @@ int main() {
     check(qwen && !qwen->has_mtp, "a model without an mtp head is not claimed to have one");
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");
 
+    {
+        const fs::path sdir = fs::temp_directory_path() / "llmash_cpp_test_split";
+        fs::remove_all(sdir);
+        fs::create_directories(sdir);
+        write_gguf(sdir / "Splitty-IQ3_XXS-00001-of-00002.gguf", "qwen4exp", "blk.0.attn_norm.weight");
+        write_gguf(sdir / "Splitty-IQ3_XXS-00002-of-00002.gguf", "qwen4exp", "blk.1.attn_norm.weight");
+        write_gguf(sdir / "Splitty-IQ3_XXS.mmproj.gguf", "clip", "v.blk.0.attn_q.weight");
+        Config scfg;
+        scfg.root        = sdir.string();
+        scfg.models_root = sdir.string();
+        Registry sreg(scfg);
+        const std::optional<Model> split = sreg.find("splitty");
+        check(split.has_value(), "a split model is found");
+        eq(split ? split->projector : std::string(), (sdir / "Splitty-IQ3_XXS.mmproj.gguf").string(),
+           "a split model's projector is the one named for the model, not its first shard");
+        fs::remove_all(sdir);
+    }
+
     const auto found_as = [&](const std::string & asked, bool loose = true) {
         const std::optional<Model> m = reg.find(asked, loose);
         return m ? m->name : std::string("(none)");

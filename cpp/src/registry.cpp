@@ -209,7 +209,8 @@ std::string family_of(const GGUFInfo & g) {
 
 std::string find_projector_for(const std::string & path) {
     const fs::path dir = fs::path(path).parent_path();
-    const std::string stem = fs::path(path).stem().string();
+    // a split model's projector is named for the model, not for its first shard
+    const std::string stem = std::regex_replace(fs::path(path).stem().string(), shard_re(), "");
     std::error_code ec;
     for (const auto & cand : { dir / (stem + ".mmproj.gguf"), dir / ("mmproj-" + stem + ".gguf") }) {
         if (fs::exists(cand, ec)) return cand.string();

@@ -421,6 +421,11 @@ void test_request_shaping() {
        "\"type\":\"function\"}]},"
        "{\"content\":\"18C\",\"role\":\"tool\",\"tool_call_id\":\"get_weather\"}]");
 
+    eq("an assistant turn keeps its reasoning",
+       to_openai_messages(json::parse("[{\"content\":\"4\",\"role\":\"assistant\",\"thinking\":\"2+2\"},"
+                                      "{\"content\":\"hi\",\"role\":\"user\",\"thinking\":\"x\"}]")).dump(),
+       "[{\"content\":\"4\",\"reasoning_content\":\"2+2\",\"role\":\"assistant\"},{\"content\":\"hi\",\"role\":\"user\"}]");
+
     ok("plain turn has no media", !turn_has_media(json::parse(
                                       "{\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}]}")));
 
