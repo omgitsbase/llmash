@@ -418,12 +418,18 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     mount(srv, "/v1/systemone", [&cfg, &mgr, &reg](const Request & req, Response & res) {
         handle_classify(req, res, cfg, mgr, reg);
     });
-    mount(srv, "/v1/chat/completions", [&cfg, &mgr, &reg](const Request & req, Response & res) {
-        handle_v1_chat_completions(req, res, cfg, mgr, reg);
-    });
-    mount(srv, "/v1/completions", [&cfg, &mgr, &reg](const Request & req, Response & res) {
-        handle_v1_completions(req, res, cfg, mgr, reg);
-    });
+    // llama-server also answers these without /v1, as llmash does /models: a client given a base URL without /v1
+    // listed the models and then got a 404 for every chat
+    for (const char * path : {"/v1/chat/completions", "/chat/completions"}) {
+        mount(srv, path, [&cfg, &mgr, &reg](const Request & req, Response & res) {
+            handle_v1_chat_completions(req, res, cfg, mgr, reg);
+        });
+    }
+    for (const char * path : {"/v1/completions", "/completions"}) {
+        mount(srv, path, [&cfg, &mgr, &reg](const Request & req, Response & res) {
+            handle_v1_completions(req, res, cfg, mgr, reg);
+        });
+    }
     for (const char * path : {"/v1/messages", "/v1/messages/count_tokens"}) {
         mount(srv, path, [&cfg, &mgr, &reg, path](const Request & req, Response & res) {
             handle_v1_messages(path, req, res, cfg, mgr, reg);
