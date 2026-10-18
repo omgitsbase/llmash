@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <deque>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -166,10 +167,11 @@ json openai_error(const std::string & msg, const std::string & type, const std::
 
 // Manager::get() reports the two sentinel failures manager.go returns as
 // errModelNotFound / errModelMissing by their text.
-void load_error(httplib::Response & res, const std::string & name, const std::string & err, bool openai) {
-    int         code = 503;
-    std::string msg  = "Could not load '" + name + "'. " + err;
-    bool        not_found = false;
+// what a Manager::get failure means to the caller, and the status it gets
+std::string load_error_text(const std::string & name, const std::string & err, int & code, bool & not_found) {
+    code      = 503;
+    not_found = false;
+    std::string msg = "Could not load '" + name + "'. " + err;
     if (err == "model not found") {
         code      = 404;
         msg       = "model '" + name + "' not found";
@@ -181,6 +183,13 @@ void load_error(httplib::Response & res, const std::string & name, const std::st
         code = 400;  // a 5xx is retried, and this turn fails the same way every time
         msg  = err.substr(kNoProjector.size()) + ".";
     }
+    return msg;
+}
+
+void load_error(httplib::Response & res, const std::string & name, const std::string & err, bool openai) {
+    int               code;
+    bool              not_found;
+    const std::string msg = load_error_text(name, err, code, not_found);
     if (openai) {
         write_json(res, code, openai_error(msg, code < 500 ? "invalid_request_error" : "server_error",
                                            not_found ? "model_not_found" : ""));
@@ -280,12 +289,12 @@ std::string transport_error(httplib::Error e) {
 
 // A reply that ran to its token limit is kept beside the model's log with the request that made it: a tool call
 // the grammar never let end, or a drafter guessing nothing for ten minutes, shows in what the model wrote.
-void save_runaway(Instance * inst, const json & payload, const std::string & reply) {
+void save_runaway(Instance * inst, const json & payload, const std::string & reply, const char * kind = "runaway") {
     if (inst == nullptr || inst->logfile.size() < 5) {
         return;
     }
     std::string base = inst->logfile.substr(0, inst->logfile.size() - 4);
-    const std::string path = base + "-runaway-" + std::to_string(static_cast<long long>(now_seconds())) + ".json";
+    const std::string path = base + "-" + kind + "-" + std::to_string(static_cast<long long>(now_seconds())) + ".json";
     json rec       = json::object();
     rec["model"]   = inst->model.name;
     rec["request"] = payload;
@@ -293,7 +302,8 @@ void save_runaway(Instance * inst, const json & payload, const std::string & rep
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (out) {
         out << rec.dump(1);
-        log_line(inst->model.name + ": a reply ran to its token limit; the request and reply are in " + path);
+        log_line(inst->model.name + (std::string(kind) == "dropped" ? ": the client dropped a reply; the request and what was written are in "
+                                                                     : ": a reply ran to its token limit; the request and reply are in ") + path);
     }
 }
 
@@ -744,56 +754,121 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
 
     std::string err;
     const json  ka   = body.contains("keep_alive") ? body["keep_alive"] : json();
-    const std::optional<Model> m   = reg.find(name);
-    const int                  ctx = m ? mgr.v1_ctx(*m) : k.v1_ctx;
-    Instance *  inst = mgr.get(name, ctx, parse_keep_alive(ka, cfg.keep_alive), turn_has_media(body), err,
-                               m ? mgr.v1_prefs(*m) : LoadPrefs{});
-    if (inst == nullptr) {
-        load_error(res, name, err, true);
-        return;
-    }
-
-    // llama-server answers with the GGUF path as the model id; the caller
-    // asked by name and expects its own name back.
-    const std::string real = json(inst->model.path).dump();
-    const std::string want = json(name).dump();
-    const int         port = inst->port;
+    const std::optional<Model> m     = reg.find(name);
+    const int                  ctx   = m ? mgr.v1_ctx(*m) : k.v1_ctx;
+    const double               keep  = parse_keep_alive(ka, cfg.keep_alive);
+    const bool                 media = turn_has_media(body);
+    const LoadPrefs            prefs = m ? mgr.v1_prefs(*m) : LoadPrefs{};
+    const bool anthropic = path.rfind("/v1/messages", 0) == 0;
 
     const bool stream = body.contains("stream") && body["stream"].is_boolean() && body["stream"].get<bool>();
     // the content provider runs after this function returns, so it takes a copy of the connection check
     const ClientGone gone = req.is_connection_closed;
     if (stream) {
+        // The stream opens at once and carries a ping every few seconds while the model loads and reads the prompt.
+        // A client that hears nothing for a minute gives up on streaming: Claude Code then retried without it, and
+        // in that mode dropped any reply that took over a few minutes.
         res.status = 200;
-        res.set_chunked_content_provider("text/event-stream", [body, path, port, inst, real, want,
-                                                               gone](size_t, httplib::DataSink & sink) {
-            bool        ok   = true;
-            std::string reply;  // the last 2 MB of the stream, for the record of a reply that ran to its limit
-            const auto  fail = [&](const std::string & msg) {
-                const std::string frame = sse_frame(openai_error(msg, "server_error", ""));
+        res.set_chunked_content_provider("text/event-stream", [body, path, name, ctx, keep, media, prefs, anthropic,
+                                                               gone, &mgr](size_t, httplib::DataSink & sink) {
+            const std::string ping = anthropic ? "event: ping\ndata: {\"type\": \"ping\"}\n\n" : ": keepalive\n\n";
+            const auto        fail = [&](const std::string & msg) {
+                std::string frame;
+                if (anthropic) {
+                    json e = json::object();
+                    e["type"]  = "error";
+                    e["error"] = json{{"type", "api_error"}, {"message", msg}};
+                    frame = "event: error\ndata: " + e.dump() + "\n\n";
+                } else {
+                    frame = sse_frame(openai_error(msg, "server_error", ""));
+                }
                 sink.write(frame.data(), frame.size());
             };
-            const Upstream up = post_raw(port, path, body, [&](const char * data, size_t n) {
-                inst->touch();
-                const std::string chunk = rewrite_model(std::string(data, n), real, want);
-                reply.append(chunk);
-                if (reply.size() > (size_t{4} << 20)) {
-                    reply.erase(0, reply.size() - (size_t{2} << 20));
+
+            // one thread talks to the runtime and queues what it sends; this one feeds the client and pings it
+            std::mutex              mu;
+            std::condition_variable cv;
+            std::deque<std::string> queue;
+            bool                    done        = false;
+            bool                    client_gone = false;
+            std::string             err;
+            Instance *              inst = nullptr;
+            Upstream                up;
+            std::string             reply;  // the last 2 MB of the stream, for the record of a reply that ran away
+            std::thread worker([&] {
+                inst = mgr.get(name, ctx, keep, media, err, prefs);
+                bool skip;
+                {
+                    std::lock_guard<std::mutex> lk(mu);
+                    skip = client_gone;
                 }
+                if (inst != nullptr && !skip) {
+                    // llama-server answers with the GGUF path as the model id; the caller asked by name
+                    const std::string real = json(inst->model.path).dump();
+                    const std::string want = json(name).dump();
+                    up = post_raw(inst->port, path, body, [&](const char * data, size_t n) {
+                        inst->touch();
+                        std::string chunk = rewrite_model(std::string(data, n), real, want);
+                        reply.append(chunk);
+                        if (reply.size() > (size_t{4} << 20)) {
+                            reply.erase(0, reply.size() - (size_t{2} << 20));
+                        }
+                        std::lock_guard<std::mutex> lk(mu);
+                        if (client_gone) {
+                            return false;
+                        }
+                        queue.push_back(std::move(chunk));
+                        cv.notify_all();
+                        return true;
+                    }, gone);
+                }
+                std::lock_guard<std::mutex> lk(mu);
+                done = true;
+                cv.notify_all();
+            });
+            for (;;) {
+                std::unique_lock<std::mutex> lk(mu);
+                if (!cv.wait_for(lk, std::chrono::seconds(5), [&] { return done || !queue.empty(); })) {
+                    lk.unlock();
+                    if (!sink.write(ping.data(), ping.size())) {
+                        std::lock_guard<std::mutex> g(mu);
+                        client_gone = true;
+                    }
+                    continue;
+                }
+                if (queue.empty()) {
+                    break;  // done
+                }
+                std::string chunk = std::move(queue.front());
+                queue.pop_front();
+                lk.unlock();
                 if (!sink.write(chunk.data(), chunk.size())) {
-                    ok = false;
-                    return false;
+                    std::lock_guard<std::mutex> g(mu);
+                    client_gone = true;
                 }
+            }
+            worker.join();
+
+            if (inst == nullptr) {
+                int  code;
+                bool not_found;
+                fail(load_error_text(name, err, code, not_found));
+                sink.done();
                 return true;
-            }, gone);
-            if (up.client_left) {
+            }
+            if (up.client_left || client_gone) {
+                // a reply the client gave up on is kept too: what it was writing is the question
+                if (reply.size() > (size_t{64} << 10)) {
+                    save_runaway(inst, body, reply, "dropped");
+                }
                 return false;
             }
             if (up.sent && up.status == 200 && hit_token_limit(reply)) {
                 save_runaway(inst, body, reply);
             }
-            if (!up.sent && ok) {
+            if (!up.sent) {
                 fail(upstream_failure(inst, up.error, body));
-            } else if (up.sent && up.status != 200) {
+            } else if (up.status != 200) {
                 fail("llama-server " + std::to_string(up.status) + ": " + up.detail);
             }
             sink.done();
@@ -802,8 +877,19 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
         return;
     }
 
+    Instance * inst = mgr.get(name, ctx, keep, media, err, prefs);
+    if (inst == nullptr) {
+        load_error(res, name, err, true);
+        return;
+    }
+    const int port = inst->port;
+
     std::string    raw;
     const Upstream up = post_json(port, path, body, raw, gone);
+    if (up.client_left) {
+        // nothing of the reply reached this side, so the request alone is kept, for a replay
+        save_runaway(inst, body, "", "dropped");
+    }
     if (!up.sent) {
         write_json(res, 502, openai_error(up.error, "server_error", ""));
         return;

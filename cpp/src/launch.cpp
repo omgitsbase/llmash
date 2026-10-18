@@ -579,6 +579,19 @@ std::vector<std::string> claude_launch_env(std::vector<std::string> env, const s
     if (ctx > 0) {
         env.push_back("CLAUDE_CODE_MAX_CONTEXT_TOKENS=" + std::to_string(ctx));
     }
+    // a local model loads and reads a long conversation before its first token, and writes a long reply slowly;
+    // Claude Code's timeouts are sized for Anthropic's servers, and past them it gives up or retries without
+    // streaming, where it drops any reply over a few minutes. Set by the user, these stay as they are
+    const auto has = [&](const char * name) {
+        return std::any_of(env.begin(), env.end(), [&](const std::string & e) { return e.rfind(std::string(name) + "=", 0) == 0; });
+    };
+    for (const char * e : {"API_TIMEOUT_MS=3600000", "CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS=600000",
+                           "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS=600000"}) {
+        const std::string s(e);
+        if (!has(s.substr(0, s.find('=')).c_str())) {
+            env.push_back(s);
+        }
+    }
     return env;
 }
 
