@@ -424,6 +424,11 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
     mount(srv, "/v1/completions", [&cfg, &mgr, &reg](const Request & req, Response & res) {
         handle_v1_completions(req, res, cfg, mgr, reg);
     });
+    for (const char * path : {"/v1/messages", "/v1/messages/count_tokens"}) {
+        mount(srv, path, [&cfg, &mgr, &reg, path](const Request & req, Response & res) {
+            handle_v1_messages(path, req, res, cfg, mgr, reg);
+        });
+    }
 }
 
 std::string cli_table(const std::string & kind, Config & cfg, Manager & mgr, Registry & reg) {

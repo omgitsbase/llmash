@@ -15,5 +15,8 @@ void handle_generate(const httplib::Request & req, httplib::Response & res, Conf
 void handle_embed(const httplib::Request & req, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg);
 void handle_v1_chat_completions(const httplib::Request & req, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg);
 void handle_v1_completions(const httplib::Request & req, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg);
+// Anthropic's Messages API, forwarded to the runtime that serves it (Claude Code talks it)
+void handle_v1_messages(const std::string & path, const httplib::Request & req, httplib::Response & res, Config & cfg,
+                        Manager & mgr, Registry & reg);
 
 } // namespace llmash

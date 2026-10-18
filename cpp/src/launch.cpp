@@ -511,21 +511,46 @@ std::vector<std::string> generic_launch_env(const std::string & host, const std:
     return env;
 }
 
-void launch_claude(const Config & cfg, const std::string & model, const std::vector<std::string> & extra) {
-    const std::string ps1 = (fs::path(cfg.root) / "Claude-on-Local.ps1").string();
-    if (!file_exists(ps1)) {
-        std::fprintf(stderr, "Error: launcher missing: %s\n", ps1.c_str());
+std::vector<std::string> claude_launch_env(std::vector<std::string> env, const std::string & host, const std::string & model) {
+    // a key from the environment would go to this server, not to Anthropic
+    static const std::vector<std::string> slots{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                                                "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                                                "CLAUDE_CODE_SUBAGENT_MODEL"};
+    env.erase(std::remove_if(env.begin(), env.end(), [&](const std::string & e) {
+        std::string name = e.substr(0, e.find('='));
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return (char) std::toupper(c); });
+        return name == "ANTHROPIC_API_KEY" || name == "ANTHROPIC_AUTH_TOKEN" || name == "ANTHROPIC_BASE_URL" ||
+               std::find(slots.begin(), slots.end(), name) != slots.end();
+    }), env.end());
+    env.push_back("ANTHROPIC_BASE_URL=" + host);
+    env.push_back("ANTHROPIC_AUTH_TOKEN=llmash");
+    // Claude Code asks for a small model for background work and others for subagents: all of them are this one
+    for (const auto & slot : slots) {
+        env.push_back(slot + "=" + model);
+    }
+    return env;
+}
+
+// Claude Code speaks Anthropic's Messages API, which the runtime serves at /v1/messages and llmash forwards to the
+// model as it does the OpenAI routes.
+void launch_claude(const Config &, const std::string & model, const std::vector<std::string> & extra) {
+    const std::string path = which("claude");
+    if (path.empty()) {
+        std::fprintf(stderr, "Error: Claude Code is not installed (no 'claude' on PATH)\n");
         std::exit(1);
     }
-    std::vector<std::string> args{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1};
-    if (!model.empty()) {
-        args.push_back("-Model");
-        args.push_back(model);
+    if (model.empty()) {
+        std::fprintf(stderr, "Error: no model for Claude Code: pick one with the right arrow in `llmash launch`, "
+                             "or run `llmash launch claude --model <name>`\n");
+        std::exit(1);
     }
-    for (const auto & e : extra) {
-        args.push_back(e);
-    }
-    run_inherit("powershell", args, nullptr);
+    const std::string host = ollama_host();
+    std::printf("%slaunching Claude Code against %s with %s%s\n", kDim, host.c_str(), model.c_str(), kReset);
+
+    std::vector<std::string> args{"--model", model};
+    args.insert(args.end(), extra.begin(), extra.end());
+    const std::vector<std::string> env = claude_launch_env(current_environment(), host, model);
+    run_inherit(path, args, &env);
 }
 
 void launch_generic(const std::string & key, const std::string & model, const std::vector<std::string> & extra) {

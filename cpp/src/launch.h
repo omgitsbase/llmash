@@ -51,6 +51,9 @@ std::string ollama_host();
 // entry is "NAME=value", ready to hand to a child process.
 std::vector<std::string> generic_launch_env(const std::string & host, const std::string & model);
 
+// env with Claude Code pointed at this server: no Anthropic key, every model slot set to model.
+std::vector<std::string> claude_launch_env(std::vector<std::string> env, const std::string & host, const std::string & model);
+
 [[noreturn]] void launch_claude(const Config & cfg, const std::string & model, const std::vector<std::string> & extra);
 [[noreturn]] void launch_generic(const std::string & key, const std::string & model,
                                   const std::vector<std::string> & extra);
