@@ -2,13 +2,18 @@
 
 #include "chat_stream.h"
 #include "classify.h"
+#include "log.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace llmash {
@@ -211,6 +216,7 @@ struct Upstream {
     int         status = 0;
     std::string detail;         // the first 400 bytes of a non-200 body
     std::string error;          // transport failure
+    bool        client_left = false; // the caller hung up, so the runtime's request was cut
 };
 
 httplib::Client backend_client(int port) {
@@ -220,6 +226,53 @@ httplib::Client backend_client(int port) {
     cli.set_read_timeout(3600, 0); // a long generation is not a dead socket
     return cli;
 }
+
+// Whether the client that asked has hung up (httplib's Request::is_connection_closed).
+using ClientGone = std::function<bool()>;
+
+// A client that times out and retries leaves its first request behind, and nothing on this side notices while that
+// request waits in the runtime's queue or a whole answer is still being made: the runtime kept generating for
+// nobody, and the retry waited behind it. The watch shuts the runtime's socket as soon as the client is gone, which
+// makes the runtime cancel the task.
+struct ClientWatch {
+    ClientWatch(httplib::Client & cli, const ClientGone & gone) {
+        if (!gone) {
+            return;
+        }
+        t = std::thread([&cli, gone, this] {
+            std::unique_lock<std::mutex> lk(mu);
+            while (!done) {
+                if (cv.wait_for(lk, std::chrono::milliseconds(250), [this] { return done; })) {
+                    return;
+                }
+                lk.unlock();
+                if (gone()) {
+                    left = true;
+                    cli.stop();
+                    return;
+                }
+                lk.lock();
+            }
+        });
+    }
+    ~ClientWatch() {
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            done = true;
+        }
+        cv.notify_all();
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+    std::atomic<bool>       left{false};
+
+private:
+    std::mutex              mu;
+    std::condition_variable cv;
+    bool                    done = false;
+    std::thread             t;
+};
 
 std::string transport_error(httplib::Error e) {
     return "httplib::Error: " + httplib::to_string(e);
@@ -260,7 +313,7 @@ std::string upstream_failure(Instance * inst, const std::string & err, const jso
 // POST json and hand every decoded SSE event to on_event, which returns false
 // to stop reading. sseLines()'s job, plus the status check around it.
 Upstream post_sse(int port, const std::string & path, const json & payload,
-                  const std::function<bool(const json &)> & on_event) {
+                  const std::function<bool(const json &)> & on_event, const ClientGone & gone) {
     Upstream    up;
     std::string buf;
     bool        ok_status = true;
@@ -311,8 +364,20 @@ Upstream post_sse(int port, const std::string & path, const json & payload,
     httplib::Client   cli = backend_client(port);
     httplib::Response resp;
     httplib::Error    err = httplib::Error::Success;
-    const bool        ok  = cli.send(req, resp, err);
-    up.sent               = ok || stopped;
+    bool              ok;
+    bool              left;
+    {
+        ClientWatch watch(cli, gone);
+        ok   = cli.send(req, resp, err);
+        left = watch.left;
+    }
+    if (left) {
+        up.sent        = true;
+        up.client_left = true;
+        log_line("request dropped: the client left while the runtime was answering");
+        return up;
+    }
+    up.sent = ok || stopped;
     if (!up.sent) {
         up.error = transport_error(err);
     }
@@ -321,7 +386,7 @@ Upstream post_sse(int port, const std::string & path, const json & payload,
 
 // The same call without the SSE parsing, for the /v1 byte relay.
 Upstream post_raw(int port, const std::string & path, const json & payload,
-                  const std::function<bool(const char *, size_t)> & on_data) {
+                  const std::function<bool(const char *, size_t)> & on_data, const ClientGone & gone) {
     Upstream up;
     bool     ok_status = true;
     bool     stopped   = false;
@@ -353,8 +418,20 @@ Upstream post_raw(int port, const std::string & path, const json & payload,
     httplib::Client   cli = backend_client(port);
     httplib::Response resp;
     httplib::Error    err = httplib::Error::Success;
-    const bool        ok  = cli.send(req, resp, err);
-    up.sent               = ok || stopped;
+    bool              ok;
+    bool              left;
+    {
+        ClientWatch watch(cli, gone);
+        ok   = cli.send(req, resp, err);
+        left = watch.left;
+    }
+    if (left) {
+        up.sent        = true;
+        up.client_left = true;
+        log_line("request dropped: the client left while the runtime was answering");
+        return up;
+    }
+    up.sent = ok || stopped;
     if (!up.sent) {
         up.error = transport_error(err);
     }
@@ -362,11 +439,23 @@ Upstream post_raw(int port, const std::string & path, const json & payload,
 }
 
 // Whole-body POST, for the two non-streaming calls.
-Upstream post_json(int port, const std::string & path, const json & payload, std::string & body_out) {
+Upstream post_json(int port, const std::string & path, const json & payload, std::string & body_out,
+                   const ClientGone & gone) {
     Upstream        up;
     httplib::Client cli = backend_client(port);
-    cli.set_read_timeout(600, 0);
-    auto r = cli.Post(path, payload.dump(), "application/json");
+    httplib::Result r;
+    bool            left;
+    {
+        ClientWatch watch(cli, gone);
+        r    = cli.Post(path, payload.dump(), "application/json");
+        left = watch.left;
+    }
+    if (left) {
+        up.client_left = true;
+        up.error       = "the client left while the runtime was answering";
+        log_line("request dropped: " + up.error);
+        return up;
+    }
     if (!r) {
         up.error = transport_error(r.error());
         return up;
@@ -384,7 +473,7 @@ using Events = std::function<void(const Emit &)>;
 
 // chatBody() up to the point where it would start streaming.
 bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mgr, Registry & reg, Events & events,
-                  bool & stream) {
+                  bool & stream, const ClientGone & gone) {
     (void) reg;
     const Knobs &     k    = knobs(cfg);
     const std::string name = jstr(body, "model");
@@ -507,7 +596,7 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
     const int    think_budget  = k.think_budget;
 
     const bool   verbose       = k.verbose;
-    events = [payload, name, hoff, port, inst, nudge_after_s, think_budget, verbose](const Emit & emit) {
+    events = [payload, name, hoff, port, inst, nudge_after_s, think_budget, verbose, gone](const Emit & emit) {
         ChatStream st;
         st.model         = name;
         st.hoff          = hoff;
@@ -550,7 +639,10 @@ bool prepare_chat(json body, httplib::Response & res, Config & cfg, Manager & mg
                     return false;
                 }
                 return !s.stop;
-            });
+            }, gone);
+            if (up.client_left) {
+                return;
+            }
             if (!up.sent) {
                 emit(error_obj(upstream_failure(inst, up.error, pay)));
                 return;
@@ -644,10 +736,12 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
     const int         port = inst->port;
 
     const bool stream = body.contains("stream") && body["stream"].is_boolean() && body["stream"].get<bool>();
+    // the content provider runs after this function returns, so it takes a copy of the connection check
+    const ClientGone gone = req.is_connection_closed;
     if (stream) {
         res.status = 200;
-        res.set_chunked_content_provider("text/event-stream", [body, path, port, inst, real,
-                                                               want](size_t, httplib::DataSink & sink) {
+        res.set_chunked_content_provider("text/event-stream", [body, path, port, inst, real, want,
+                                                               gone](size_t, httplib::DataSink & sink) {
             bool       ok   = true;
             const auto fail = [&](const std::string & msg) {
                 const std::string frame = sse_frame(openai_error(msg, "server_error", ""));
@@ -661,7 +755,10 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
                     return false;
                 }
                 return true;
-            });
+            }, gone);
+            if (up.client_left) {
+                return false;
+            }
             if (!up.sent && ok) {
                 fail(upstream_failure(inst, up.error, body));
             } else if (up.sent && up.status != 200) {
@@ -674,7 +771,7 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
     }
 
     std::string    raw;
-    const Upstream up = post_json(port, path, body, raw);
+    const Upstream up = post_json(port, path, body, raw, gone);
     if (!up.sent) {
         write_json(res, 502, openai_error(up.error, "server_error", ""));
         return;
@@ -704,7 +801,7 @@ void handle_chat(const httplib::Request & req, httplib::Response & res, Config &
     }
     Events events;
     bool   stream = true;
-    if (!prepare_chat(std::move(body), res, cfg, mgr, reg, events, stream)) {
+    if (!prepare_chat(std::move(body), res, cfg, mgr, reg, events, stream, req.is_connection_closed)) {
         return;
     }
     deliver(res, stream, events, 500, nullptr);
@@ -774,7 +871,7 @@ void handle_generate(const httplib::Request & req, httplib::Response & res, Conf
 
     Events events;
     bool   stream = true;
-    if (!prepare_chat(std::move(sub), res, cfg, mgr, reg, events, stream)) {
+    if (!prepare_chat(std::move(sub), res, cfg, mgr, reg, events, stream, req.is_connection_closed)) {
         return;
     }
     deliver(res, stream, events, 500, [](json ev) { return chat_event_to_generate(std::move(ev)); });
@@ -808,7 +905,7 @@ void handle_embed(const httplib::Request & req, httplib::Response & res, Config 
     payload["input"] = inputs;
 
     std::string    raw;
-    const Upstream up = post_json(inst->port, "/v1/embeddings", payload, raw);
+    const Upstream up = post_json(inst->port, "/v1/embeddings", payload, raw, req.is_connection_closed);
     if (!up.sent) {
         write_json(res, 502, error_obj(up.error));
         return;
