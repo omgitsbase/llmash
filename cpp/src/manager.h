@@ -23,6 +23,9 @@ struct LoadPrefs {
     bool        kv_on_gpu = true;
 };
 
+// starts a Manager::get error when the turn carried media the model has no projector for
+inline const std::string kNoProjector = "no projector: ";
+
 class Instance {
 public:
     Instance(Model m, int ctx, bool vision, Config * cfg);

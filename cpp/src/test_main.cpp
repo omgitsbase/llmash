@@ -126,6 +126,13 @@ int main() {
     check(qwen && qwen->name == "qwen3-8b:q8_0", "and it is listed under its quantisation");
     check(qwen && !qwen->has_mtp, "a model without an mtp head is not claimed to have one");
     check(qwen && !qwen->mtp_path.empty(), "a sidecar drafter beside it is picked up");
+    {
+        Manager     mgr(cfg, &reg);
+        std::string err;
+        check(mgr.get("qwen3-8b:q8_0", 0, 0, true, err) == nullptr && err.rfind(kNoProjector, 0) == 0,
+              "an image turn for a model with no projector is refused before anything loads");
+        check(err.find("Qwen3-8B-Q8_0.mmproj.gguf") != std::string::npos, "and names the file it would take");
+    }
 
     {
         const auto env = claude_launch_env({"PATH=C:\\bin", "anthropic_api_key=sk-real", "ANTHROPIC_MODEL=claude-x"},
