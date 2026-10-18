@@ -867,6 +867,17 @@ inline json to_openai_messages(const json & messages) {
         json msg       = json::object();
         msg["role"]    = role;
         msg["content"] = content;
+        // the model's earlier reasoning goes back as it wrote it: a template that keeps it renders the turn the model
+        // produced, and the server's cache still matches the history
+        if (role == "assistant") {
+            std::string thinking = jstr(m, "thinking");
+            if (thinking.empty()) {
+                thinking = jstr(m, "reasoning_content");
+            }
+            if (!thinking.empty()) {
+                msg["reasoning_content"] = thinking;
+            }
+        }
         const json tcs = jlist(m, "tool_calls");
         if (!tcs.empty()) {
             std::string trimmed = content_str;
