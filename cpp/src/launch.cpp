@@ -266,6 +266,27 @@ std::vector<std::string> installed_models() {
     return out;
 }
 
+// The context an API request runs the model at, from /v1/models; 0 when the server does not say.
+int model_api_ctx(const std::string & model) {
+    httplib::Client cli(ollama_host());
+    cli.set_connection_timeout(4, 0);
+    cli.set_read_timeout(10, 0);
+    const auto res = cli.Get("/v1/models");
+    if (!res || res->status != 200) {
+        return 0;
+    }
+    const json d = json::parse(res->body, nullptr, false);
+    if (d.is_discarded() || !d.is_object()) {
+        return 0;
+    }
+    for (const auto & m : d.value("data", json::array())) {
+        if (m.is_object() && m.value("id", std::string()) == model) {
+            return m.value("max_context_length", 0);
+        }
+    }
+    return 0;
+}
+
 bool is_console() { return stdout_is_terminal() && stdin_is_terminal(); }
 
 // One raw key, matching the Go menu's arrow/enter/escape vocabulary: 'U'/'D'
@@ -511,7 +532,8 @@ std::vector<std::string> generic_launch_env(const std::string & host, const std:
     return env;
 }
 
-std::vector<std::string> claude_launch_env(std::vector<std::string> env, const std::string & host, const std::string & model) {
+std::vector<std::string> claude_launch_env(std::vector<std::string> env, const std::string & host, const std::string & model,
+                                           int ctx) {
     // a key from the environment would go to this server, not to Anthropic
     static const std::vector<std::string> slots{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
                                                 "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -520,13 +542,17 @@ std::vector<std::string> claude_launch_env(std::vector<std::string> env, const s
         std::string name = e.substr(0, e.find('='));
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return (char) std::toupper(c); });
         return name == "ANTHROPIC_API_KEY" || name == "ANTHROPIC_AUTH_TOKEN" || name == "ANTHROPIC_BASE_URL" ||
-               std::find(slots.begin(), slots.end(), name) != slots.end();
+               name == "CLAUDE_CODE_MAX_CONTEXT_TOKENS" || std::find(slots.begin(), slots.end(), name) != slots.end();
     }), env.end());
     env.push_back("ANTHROPIC_BASE_URL=" + host);
     env.push_back("ANTHROPIC_AUTH_TOKEN=llmash");
     // Claude Code asks for a small model for background work and others for subagents: all of them are this one
     for (const auto & slot : slots) {
         env.push_back(slot + "=" + model);
+    }
+    // it does not know a local model's window and assumes 200k, so it would compact too late
+    if (ctx > 0) {
+        env.push_back("CLAUDE_CODE_MAX_CONTEXT_TOKENS=" + std::to_string(ctx));
     }
     return env;
 }
@@ -545,11 +571,18 @@ void launch_claude(const Config &, const std::string & model, const std::vector<
         std::exit(1);
     }
     const std::string host = ollama_host();
+    // Claude Code opens with about 30k tokens of system prompt and tool definitions
+    const int ctx = model_api_ctx(model);
+    if (ctx > 0 && ctx < 65536) {
+        std::fprintf(stderr, "Error: %s runs at %d tokens of context and Claude Code opens with about 30k; "
+                             "give it more with `llmash ctx %s 64k`\n", model.c_str(), ctx, model.c_str());
+        std::exit(1);
+    }
     std::printf("%slaunching Claude Code against %s with %s%s\n", kDim, host.c_str(), model.c_str(), kReset);
 
     std::vector<std::string> args{"--model", model};
     args.insert(args.end(), extra.begin(), extra.end());
-    const std::vector<std::string> env = claude_launch_env(current_environment(), host, model);
+    const std::vector<std::string> env = claude_launch_env(current_environment(), host, model, ctx);
     run_inherit(path, args, &env);
 }
 

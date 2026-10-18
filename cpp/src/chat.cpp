@@ -612,6 +612,9 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
     if (path == "/v1/chat/completions" && classify_chat(body, res, cfg, mgr, reg, "openai")) {
         return;
     }
+    if (path.rfind("/v1/messages", 0) == 0) {
+        anthropic_fold_system_messages(body);
+    }
     const Knobs &     k    = knobs(cfg);
     const std::string name = jstr(body, "model");
     if (!body.contains("chat_template_kwargs") && name_matches_any(name, k.think_off)) {

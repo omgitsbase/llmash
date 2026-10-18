@@ -790,6 +790,67 @@ inline bool turn_has_media(const json & body) {
     return false;
 }
 
+// Claude Code puts system messages inside an Anthropic request's messages (its environment, after the first user
+// turn), and chat templates like Qwen's refuse a system message that is not first. One before any turn joins the
+// top-level system prompt; a later one goes into the user turn it sits beside as a <system-reminder>, Claude Code's
+// own form for those, so nothing before it moves and the server's cache still matches.
+inline void anthropic_fold_system_messages(json & body) {
+    if (!body.is_object() || !body.contains("messages") || !body["messages"].is_array()) {
+        return;
+    }
+    const auto text_of = [](const json & content) {
+        if (content.is_string()) {
+            return content.get<std::string>();
+        }
+        std::string out;
+        if (content.is_array()) {
+            for (const auto & b : content) {
+                if (b.is_object() && jstr(b, "type") == "text") {
+                    out += (out.empty() ? "" : "\n") + jstr(b, "text");
+                }
+            }
+        }
+        return out;
+    };
+    const auto as_blocks = [](const json & content) {
+        if (content.is_array()) {
+            return content;
+        }
+        json blocks = json::array();
+        if (content.is_string() && !content.get<std::string>().empty()) {
+            blocks.push_back(json{{"type", "text"}, {"text", content}});
+        }
+        return blocks;
+    };
+    json out = json::array();
+    for (const auto & m : body["messages"]) {
+        if (!m.is_object() || jstr(m, "role") != "system") {
+            out.push_back(m);
+            continue;
+        }
+        const std::string text = text_of(m.contains("content") ? m["content"] : json());
+        if (text.empty()) {
+            continue;
+        }
+        if (out.empty()) {
+            json sys = as_blocks(body.contains("system") ? body["system"] : json());
+            sys.push_back(json{{"type", "text"}, {"text", text}});
+            body["system"] = sys;
+            continue;
+        }
+        const json block = json{{"type", "text"}, {"text", "<system-reminder>\n" + text + "\n</system-reminder>"}};
+        if (jstr(out.back(), "role") == "user") {
+            json & prev        = out.back();
+            json   blocks      = as_blocks(prev.contains("content") ? prev["content"] : json());
+            blocks.push_back(block);
+            prev["content"] = blocks;
+        } else {
+            out.push_back(json{{"role", "user"}, {"content", json::array({block})}});
+        }
+    }
+    body["messages"] = out;
+}
+
 inline json to_openai_messages(const json & messages) {
     json out = json::array();
     for (const auto & m : messages) {

@@ -421,6 +421,23 @@ void test_request_shaping() {
        "\"type\":\"function\"}]},"
        "{\"content\":\"18C\",\"role\":\"tool\",\"tool_call_id\":\"get_weather\"}]");
 
+    {
+        // Claude Code 2.1: its environment arrives as a system message after the first user turn
+        json b = json::parse("{\"system\":[{\"type\":\"text\",\"text\":\"S\"}],\"messages\":["
+                             "{\"role\":\"system\",\"content\":\"lead\"},"
+                             "{\"role\":\"user\",\"content\":\"hi\"},"
+                             "{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\"env\"}]},"
+                             "{\"role\":\"assistant\",\"content\":\"yo\"},"
+                             "{\"role\":\"system\",\"content\":\"late\"}]}");
+        anthropic_fold_system_messages(b);
+        eq("a system message before any turn joins the system prompt", b["system"].dump(),
+           "[{\"text\":\"S\",\"type\":\"text\"},{\"text\":\"lead\",\"type\":\"text\"}]");
+        eq("a later one goes into the user turn beside it, or a user turn of its own", b["messages"].dump(),
+           "[{\"content\":[{\"text\":\"hi\",\"type\":\"text\"},{\"text\":\"<system-reminder>\\nenv\\n</system-reminder>\",\"type\":\"text\"}],\"role\":\"user\"},"
+           "{\"content\":\"yo\",\"role\":\"assistant\"},"
+           "{\"content\":[{\"text\":\"<system-reminder>\\nlate\\n</system-reminder>\",\"type\":\"text\"}],\"role\":\"user\"}]");
+    }
+
     eq("an assistant turn keeps its reasoning",
        to_openai_messages(json::parse("[{\"content\":\"4\",\"role\":\"assistant\",\"thinking\":\"2+2\"},"
                                       "{\"content\":\"hi\",\"role\":\"user\",\"thinking\":\"x\"}]")).dump(),
