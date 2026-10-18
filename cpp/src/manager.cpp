@@ -1516,6 +1516,15 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         err = why + (p.kv_type.empty() ? " (the server's kv_type)" : " (this model's kv_type in local.json, set with `ctx --kv`)");
         return nullptr;
     }
+    // the runtime would answer a 500 that clients retry, so say what is missing instead
+    if (vision && (m->projector.empty() || !file_exists(m->projector))) {
+        err = kNoProjector + "'" + m->name + "' has no projector, so it cannot read images or audio";
+        if (m->manifest.empty()) {
+            const std::string stem = fs::path(m->path).stem().string();
+            err += ": put the model's mmproj beside it as " + stem + ".mmproj.gguf";
+        }
+        return nullptr;
+    }
     // only the server's default is lowered to fit; a chosen ctx is left to llama.cpp's fit
     bool chosen = ctx > 0;
     if (ctx <= 0) {

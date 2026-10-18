@@ -172,9 +172,12 @@ void load_error(httplib::Response & res, const std::string & name, const std::st
     } else if (err == "missing from disk") {
         code = 404;
         msg  = "'" + name + "' is missing from disk.";
+    } else if (err.rfind(kNoProjector, 0) == 0) {
+        code = 400;  // a 5xx is retried, and this turn fails the same way every time
+        msg  = err.substr(kNoProjector.size()) + ".";
     }
     if (openai) {
-        write_json(res, code, openai_error(msg, code == 404 ? "invalid_request_error" : "server_error",
+        write_json(res, code, openai_error(msg, code < 500 ? "invalid_request_error" : "server_error",
                                            not_found ? "model_not_found" : ""));
         return;
     }
