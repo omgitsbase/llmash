@@ -443,6 +443,13 @@ void test_request_shaping() {
                                       "{\"content\":\"hi\",\"role\":\"user\",\"thinking\":\"x\"}]")).dump(),
        "[{\"content\":\"4\",\"reasoning_content\":\"2+2\",\"role\":\"assistant\"},{\"content\":\"hi\",\"role\":\"user\"}]");
 
+    ok("an image inside an Anthropic tool result is media", turn_has_media(json::parse(
+        "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":"
+        "[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"QUJD\"}}]}]}]}")));
+    ok("a text tool result is not", !turn_has_media(json::parse(
+        "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":"
+        "[{\"type\":\"text\",\"text\":\"ok\"}]}]}]}")));
+
     ok("plain turn has no media", !turn_has_media(json::parse(
                                       "{\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}]}")));
 

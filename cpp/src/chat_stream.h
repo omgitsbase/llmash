@@ -761,6 +761,28 @@ inline json chat_event_to_generate(json ev) {
 
 // ------------------------------------------------------- request shaping
 
+// a content list holds media directly, or inside a block of its own: an Anthropic tool_result carries the image
+// Claude Code's Read tool returns
+inline bool content_has_media(const json & content) {
+    if (!content.is_array()) {
+        return false;
+    }
+    for (const auto & p : content) {
+        if (!p.is_object()) {
+            continue;
+        }
+        const std::string t = jstr(p, "type");
+        if (t == "image_url" || t == "image" || t == "audio" || t == "audio_url" || t == "input_audio" ||
+            t == "video" || t == "video_url") {
+            return true;
+        }
+        if (const auto inner = p.find("content"); inner != p.end() && content_has_media(*inner)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 inline bool turn_has_media(const json & body) {
     if (!jlist(body, "images").empty()) {
         return true;
@@ -772,19 +794,8 @@ inline bool turn_has_media(const json & body) {
         if (!jlist(m, "images").empty() || !jlist(m, "audio").empty()) {
             return true;
         }
-        const auto c = m.find("content");
-        if (c == m.end() || !c->is_array()) {
-            continue;
-        }
-        for (const auto & p : *c) {
-            if (!p.is_object()) {
-                continue;
-            }
-            const std::string t = jstr(p, "type");
-            if (t == "image_url" || t == "image" || t == "audio" || t == "audio_url" || t == "input_audio" ||
-                t == "video" || t == "video_url") {
-                return true;
-            }
+        if (const auto c = m.find("content"); c != m.end() && content_has_media(*c)) {
+            return true;
         }
     }
     return false;
