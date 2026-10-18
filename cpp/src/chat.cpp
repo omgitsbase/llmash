@@ -278,6 +278,30 @@ std::string transport_error(httplib::Error e) {
     return "httplib::Error: " + httplib::to_string(e);
 }
 
+// A reply that ran to its token limit is kept beside the model's log with the request that made it: a tool call
+// the grammar never let end, or a drafter guessing nothing for ten minutes, shows in what the model wrote.
+void save_runaway(Instance * inst, const json & payload, const std::string & reply) {
+    if (inst == nullptr || inst->logfile.size() < 5) {
+        return;
+    }
+    std::string base = inst->logfile.substr(0, inst->logfile.size() - 4);
+    const std::string path = base + "-runaway-" + std::to_string(static_cast<long long>(now_seconds())) + ".json";
+    json rec       = json::object();
+    rec["model"]   = inst->model.name;
+    rec["request"] = payload;
+    rec["reply"]   = reply;
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (out) {
+        out << rec.dump(1);
+        log_line(inst->model.name + ": a reply ran to its token limit; the request and reply are in " + path);
+    }
+}
+
+bool hit_token_limit(const std::string & reply) {
+    return reply.find("\"stop_reason\":\"max_tokens\"") != std::string::npos ||
+           reply.find("\"finish_reason\":\"length\"") != std::string::npos;
+}
+
 // A child that exited mid-answer arrives here as a transport error. Name it,
 // and save the request that killed it beside the model's log.
 std::string upstream_failure(Instance * inst, const std::string & err, const json & payload) {
@@ -742,14 +766,19 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
         res.status = 200;
         res.set_chunked_content_provider("text/event-stream", [body, path, port, inst, real, want,
                                                                gone](size_t, httplib::DataSink & sink) {
-            bool       ok   = true;
-            const auto fail = [&](const std::string & msg) {
+            bool        ok   = true;
+            std::string reply;  // the last 2 MB of the stream, for the record of a reply that ran to its limit
+            const auto  fail = [&](const std::string & msg) {
                 const std::string frame = sse_frame(openai_error(msg, "server_error", ""));
                 sink.write(frame.data(), frame.size());
             };
             const Upstream up = post_raw(port, path, body, [&](const char * data, size_t n) {
                 inst->touch();
                 const std::string chunk = rewrite_model(std::string(data, n), real, want);
+                reply.append(chunk);
+                if (reply.size() > (size_t{4} << 20)) {
+                    reply.erase(0, reply.size() - (size_t{2} << 20));
+                }
                 if (!sink.write(chunk.data(), chunk.size())) {
                     ok = false;
                     return false;
@@ -758,6 +787,9 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
             }, gone);
             if (up.client_left) {
                 return false;
+            }
+            if (up.sent && up.status == 200 && hit_token_limit(reply)) {
+                save_runaway(inst, body, reply);
             }
             if (!up.sent && ok) {
                 fail(upstream_failure(inst, up.error, body));
@@ -775,6 +807,9 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
     if (!up.sent) {
         write_json(res, 502, openai_error(up.error, "server_error", ""));
         return;
+    }
+    if (up.status == 200 && hit_token_limit(raw)) {
+        save_runaway(inst, body, raw);
     }
     json d = json::parse(raw, nullptr, false);
     if (!d.is_discarded() && d.is_object()) {
