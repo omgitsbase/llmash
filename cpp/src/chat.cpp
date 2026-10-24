@@ -743,6 +743,7 @@ void v1_proxy(const std::string & path, const httplib::Request & req, httplib::R
     }
     if (path.rfind("/v1/messages", 0) == 0) {
         anthropic_fold_system_messages(body);
+        anthropic_default_thinking(body);
     }
     const Knobs &     k    = knobs(cfg);
     const std::string name = jstr(body, "model");
