@@ -3,8 +3,13 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/omgitsbase/llmash/main/install.sh | sh
 #
-#   --dir <path>    install somewhere other than /usr/local
-#   --user          install for this user only, into ~/.local, as a user service
+# Run as yourself it installs for you alone, into ~/.local, as a user service.
+# Run as root (sudo sh) it installs for the machine, into /usr/local, as a
+# system service under its own unprivileged account, llmash.
+#
+#   --dir <path>    install somewhere other than ~/.local or /usr/local
+#   --user          install for this user only, even as root
+#   --system        install for the machine (asks for sudo when not root)
 #   --no-service    skip the systemd unit (--service puts it back)
 #   --no-ollama     do not take over the `ollama` command (--ollama takes it)
 #   --runtime <k>   llama.cpp build to fetch: auto, cuda, vulkan, rocm, cpu, none
@@ -18,9 +23,9 @@
 set -eu
 
 REPO=${LLMASH_REPO:-omgitsbase/llmash}
-PREFIX=/usr/local
+PREFIX=
 SERVICE=
-SYSTEM=1
+SYSTEM=
 SHADOW_OLLAMA=
 RUNTIME=
 UNINSTALL=0
@@ -30,7 +35,8 @@ TAG=
 while [ $# -gt 0 ]; do
     case $1 in
         --dir) PREFIX=$2; shift 2 ;;
-        --user) SYSTEM=0; PREFIX=$HOME/.local; shift ;;
+        --user) SYSTEM=0; shift ;;
+        --system) SYSTEM=1; shift ;;
         --service) SERVICE=1; shift ;;
         --no-service) SERVICE=0; shift ;;
         --ollama) SHADOW_OLLAMA=1; shift ;;
@@ -49,9 +55,23 @@ case ${PREFIX%/} in
     */lib/llmash)
         if [ -f "${PREFIX%/}/llmash" ]; then
             PREFIX=$(dirname "$(dirname "${PREFIX%/}")")
-            [ "$PREFIX" = "$HOME/.local" ] && SYSTEM=0
         fi ;;
 esac
+
+# root installs for the machine and anyone else for themselves; a folder in the home is a user install, and an
+# install already serving the machine is upgraded where it is rather than doubled in the home
+if [ -z "$SYSTEM" ]; then
+    if [ -n "$PREFIX" ]; then
+        case ${PREFIX%/}/ in "$HOME"/*) SYSTEM=0 ;; *) SYSTEM=1 ;; esac
+    elif [ "$(id -u)" -eq 0 ] || [ -x /usr/local/lib/llmash/llmash ]; then
+        SYSTEM=1
+    else
+        SYSTEM=0
+    fi
+fi
+if [ -z "$PREFIX" ]; then
+    if [ "$SYSTEM" = 1 ]; then PREFIX=/usr/local; else PREFIX=$HOME/.local; fi
+fi
 
 say()  { printf '  %s\n' "$1"; }
 step() { printf '\n\033[36m> %s\033[0m\n' "$1"; }
@@ -63,6 +83,8 @@ if [ "$SYSTEM" = 1 ] && [ "$(id -u)" -ne 0 ]; then
     command -v sudo >/dev/null 2>&1 || die "this needs root; install sudo or re-run with --user"
     SUDO=sudo
 fi
+SVC_USER=llmash
+SVC_HOME=/var/lib/llmash
 
 BIN=$PREFIX/bin
 LIB=$PREFIX/lib/llmash
@@ -101,6 +123,10 @@ if [ "$UNINSTALL" = 1 ]; then
     $SUDO rm -f "$BIN/llmash"
     [ -L "$BIN/ollama" ] && $SUDO rm -f "$BIN/ollama"
     $SUDO rm -rf "$LIB"
+    if [ "$SYSTEM" = 1 ] && id -u "$SVC_USER" >/dev/null 2>&1; then
+        $SUDO userdel "$SVC_USER" 2>/dev/null || $SUDO deluser "$SVC_USER" 2>/dev/null || true
+        say "removed the $SVC_USER account; models in $SVC_HOME were left alone"
+    fi
     say 'removed; your models were left alone'
     exit 0
 fi
@@ -207,9 +233,18 @@ MODELS_VAR=${OLLAMA_MODELS:-${LLMASH_MODELS:-}}
 [ -z "$MODELS_VAR" ] && MODELS_VAR=$(unit_models || true)
 [ -n "$MODELS_VAR" ] && say "OLLAMA_MODELS points at $MODELS_VAR"
 
-MODELS_ROOT=$OLLAMA_HOME_STORE
+# what an earlier install settled on stands, and the rest of local.json with it
+SAVED=$(sed -n 's/^[[:space:]]*"models_root":[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/local.json" 2>/dev/null | head -1)
+
+# the machine's service runs as its own account, which has no business in root's home
+OWN_STORE=$OLLAMA_HOME_STORE
+[ "$SYSTEM" = 1 ] && OWN_STORE=$SVC_HOME/models
+
+MODELS_ROOT=$OWN_STORE
 if [ -n "$MODELS_VAR" ]; then
     MODELS_ROOT=$MODELS_VAR
+elif [ -n "$SAVED" ]; then
+    MODELS_ROOT=$SAVED
 elif is_store "$OLLAMA_SVC_STORE"; then
     MODELS_ROOT=$OLLAMA_SVC_STORE
     say "found Ollama's service store"
@@ -218,16 +253,25 @@ fi
 EXTRAS=
 for cand in "$OLLAMA_HOME_STORE" "$OLLAMA_SVC_STORE"; do
     [ "$cand" = "$MODELS_ROOT" ] && continue
+    [ "$SYSTEM" = 1 ] && [ "$cand" = "$OLLAMA_HOME_STORE" ] && continue
     is_store "$cand" && EXTRAS="$EXTRAS\"$cand\","
 done
 EXTRAS=${EXTRAS%,}
 
 $SUDO mkdir -p "$ROOT"
-$SUDO sh -c "cat > $ROOT/local.json" <<JSON
+if [ ! -f "$ROOT/local.json" ]; then
+    $SUDO sh -c "cat > $ROOT/local.json" <<JSON
 {
   "models_root": "$MODELS_ROOT"$([ -n "$EXTRAS" ] && printf ',\n  "extra_roots": [%s]' "$EXTRAS")
 }
 JSON
+elif [ -n "$MODELS_VAR" ] && [ "$MODELS_VAR" != "$SAVED" ]; then
+    $SUDO sed -i 's|^\([[:space:]]*"models_root":[[:space:]]*\)"[^"]*"|\1"'"$MODELS_ROOT"'"|' "$ROOT/local.json"
+fi
+if [ "$SYSTEM" = 1 ] && [ -z "$SAVED$MODELS_VAR" ] && is_store "$OLLAMA_HOME_STORE" && [ "$MODELS_ROOT" != "$OLLAMA_HOME_STORE" ]; then
+    warn "$OLLAMA_HOME_STORE has models the service account cannot read; to serve them, move them:"
+    say  "  sudo mv $OLLAMA_HOME_STORE $SVC_HOME/models && sudo chown -R $SVC_USER: $SVC_HOME/models"
+fi
 
 COUNT=$(find "$MODELS_ROOT/manifests" -type f 2>/dev/null | wc -l | tr -d ' ')
 if [ "${COUNT:-0}" -gt 0 ]; then
@@ -427,6 +471,83 @@ if [ "$DOWNLOAD" = 1 ]; then
         | $SUDO tee "$OPTS" >/dev/null
 fi
 
+# ------------------------------------------------------------ permissions
+as_service() { $SUDO su -s /bin/sh "$SVC_USER" -c "$1" 2>/dev/null; }
+
+ensure_account() {
+    id -u "$SVC_USER" >/dev/null 2>&1 && return 0
+    nologin=$(command -v nologin 2>/dev/null || echo /bin/false)
+    if command -v useradd >/dev/null 2>&1; then
+        $SUDO useradd --system --user-group --home-dir "$SVC_HOME" --shell "$nologin" "$SVC_USER"
+    else
+        $SUDO addgroup -S "$SVC_USER" 2>/dev/null || true
+        $SUDO adduser -S -D -H -h "$SVC_HOME" -s "$nologin" -G "$SVC_USER" "$SVC_USER"
+    fi
+    say "created the $SVC_USER account the service runs as"
+}
+
+# The program stays root's, so the service cannot change what other users run; the sticky, group-writable folder
+# lets the service add its own files there and nothing else. What it writes is private to it.
+lock_system_root() {
+    $SUDO mkdir -p "$SVC_HOME"
+    $SUDO chown "$SVC_USER:$SVC_USER" "$SVC_HOME"
+    $SUDO chmod 750 "$SVC_HOME"
+    $SUDO chown root:"$SVC_USER" "$LIB"
+    $SUDO chmod 1775 "$LIB"
+    for f in "$LIB"/* "$LIB"/.[!.]*; do
+        [ -e "$f" ] || continue
+        case ${f##*/} in
+            llmash|runtime|runtime.new|install.opts)
+                $SUDO chown -R root:root "$f"; $SUDO chmod -R go-w "$f" ;;
+            local.json)
+                $SUDO chown "$SVC_USER:$SVC_USER" "$f"; $SUDO chmod 644 "$f" ;;
+            *)
+                $SUDO chown -R "$SVC_USER:$SVC_USER" "$f"; $SUDO chmod -R o-rwx "$f" ;;
+        esac
+    done
+}
+
+# the service account reads the store and pulls into it
+grant_store() {
+    d=$1
+    case $d in
+        "$SVC_HOME"|"$SVC_HOME"/*)
+            $SUDO mkdir -p "$d"
+            $SUDO chown -R "$SVC_USER:$SVC_USER" "$d"
+            return ;;
+    esac
+    [ -d "$d" ] || $SUDO mkdir -p "$d"
+    if [ "$d" = "$OLLAMA_SVC_STORE" ] && getent group ollama >/dev/null 2>&1; then
+        $SUDO usermod -aG ollama "$SVC_USER" 2>/dev/null || $SUDO addgroup "$SVC_USER" ollama 2>/dev/null || true
+    fi
+    as_service "test -r '$d' && test -w '$d' && test -x '$d'" && return 0
+    if command -v setfacl >/dev/null 2>&1; then
+        p=$(dirname "$d")
+        while [ "$p" != / ]; do
+            $SUDO setfacl -m "u:$SVC_USER:x" "$p"
+            p=$(dirname "$p")
+        done
+        $SUDO setfacl -R -m "u:$SVC_USER:rwX" -m "d:u:$SVC_USER:rwX" "$d"
+        say "gave the $SVC_USER account access to $d"
+    else
+        warn "the $SVC_USER account cannot use $d; run  setfacl -R -m u:$SVC_USER:rwX $d"
+        say  "or move the models to $SVC_HOME/models"
+    fi
+}
+
+if [ "$DOWNLOAD" = 1 ]; then
+    step 'Permissions'
+    if [ "$SYSTEM" = 1 ]; then
+        ensure_account
+        lock_system_root
+        grant_store "$MODELS_ROOT"
+        say "the program is root's; the service runs as $SVC_USER and its files are private to it"
+    else
+        chmod 700 "$LIB"
+        say "$LIB is readable by you alone"
+    fi
+fi
+
 # systemctl is often installed where systemd is not running: a container, or WSL without it
 systemd_up() {
     command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] || return 1
@@ -445,6 +566,11 @@ After=network-online.target
 ExecStart=$BIN/llmash serve
 WorkingDirectory=$ROOT
 Environment="OLLAMA_MODELS=$MODELS_ROOT"
+User=$SVC_USER
+Group=$SVC_USER
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
 Restart=always
 RestartSec=3
 

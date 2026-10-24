@@ -62,6 +62,7 @@ set(LLMASH_PORTABLE
     src/classify.cpp
     src/manager.cpp
     src/api_logic.cpp
+    src/private_file.cpp
     src/api.cpp
     src/chat.cpp
     src/cli_format.cpp

@@ -4,6 +4,8 @@
 #define _CRT_RAND_S
 
 #include "cli_commands.h"
+#include "api_logic.h"
+#include "private_file.h"
 
 #include "progress.h"
 #include "platform.h"
@@ -926,40 +928,7 @@ json read_link(const Config & cfg) {
 }
 
 void write_link(const Config & cfg, const json & d) {
-    std::ofstream out(fs::path(link_file(cfg)), std::ios::binary | std::ios::trunc);
-    if (out) {
-        out << d.dump(2);
-    }
-}
-
-// Same source of truth as the server: env var, else link.json, else mint one.
-std::string link_key(const Config & cfg) {
-    const std::string fromenv = env_str("LLMASH_LINK_KEY");
-    if (!fromenv.empty()) {
-        return fromenv;
-    }
-    json              d = read_link(cfg);
-    const std::string k = j_str(d, "key");
-    if (!k.empty()) {
-        return k;
-    }
-    unsigned char raw[24];
-    for (size_t i = 0; i < sizeof(raw); i += 4) {
-        unsigned int v = 0;
-#ifdef _WIN32
-        if (rand_s(&v) != 0) {
-            v = static_cast<unsigned int>(std::rand());
-        }
-#else
-        v = static_cast<unsigned int>(std::rand());
-#endif
-        std::memcpy(raw + i, &v, 4);
-    }
-    const std::string key = "sk-llmash-" + base64_url_encode(raw, sizeof(raw));
-    d["key"]              = key;
-    d["public_port"]      = cfg.public_port;
-    write_link(cfg, d);
-    return key;
+    write_private_file(fs::path(link_file(cfg)), d.dump(2));
 }
 
 std::string tailnet_name(const std::string & ts) {
