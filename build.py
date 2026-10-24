@@ -13,6 +13,8 @@ ASSETS = HERE / "assets"
 OUT = HERE / "dist" / "llmash"
 ZIP = HERE / "dist" / "llmash-win-x64.zip"
 TGZ = HERE / "dist" / "llmash-linux-x64.tar.gz"
+# the suites that build on both systems; --publish runs them on each before it uploads
+TESTS = ("test_main", "api_logic_test", "api_test", "chat_test", "gguf_io_test", "rco_test", "classify_test")
 
 
 def version() -> str:
@@ -57,14 +59,15 @@ def crt_dlls() -> list:
     return [crt / n for n in names]
 
 
-def build() -> None:
+def build(tests: bool = False) -> None:
     cm = cmake()
     # CMake reads VERSION when it configures, not when it builds, so a bumped
     # VERSION with a warm cache ships a binary reporting the old number.
     cache = BUILD / "CMakeCache.txt"
     if not cache.exists() or (HERE / "VERSION").stat().st_mtime > cache.stat().st_mtime:
         subprocess.run([cm, "-S", str(CPP), "-B", str(BUILD), "-G", generator(), "-A", "x64"], check=True)
-    subprocess.run([cm, "--build", str(BUILD), "--config", "Release", "--target", "llmash", "llmashw"],
+    targets = ["llmash", "llmashw"] + (list(TESTS) if tests else [])
+    subprocess.run([cm, "--build", str(BUILD), "--config", "Release", "--parallel", "--target", *targets],
                    check=True)
     OUT.mkdir(parents=True, exist_ok=True)
     for name in ("llmash.exe", "llmashw.exe"):
@@ -120,35 +123,71 @@ def install_here() -> None:
     warn_if_install_is_older()
 
 
-def build_linux() -> None:
+def run_tests() -> bool:
+    failed = []
+    for t in TESTS:
+        r = subprocess.run([str(BUILD / "Release" / f"{t}.exe")], cwd=BUILD / "Release",
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            failed.append(t)
+            print(f"  {t} FAIL")
+            for line in (r.stdout + r.stderr).strip().splitlines()[-8:]:
+                print("     ", line)
+    print(f"  {len(TESTS) - len(failed)}/{len(TESTS)} suites pass on windows")
+    return not failed
+
+
+def build_linux(tests: bool = False) -> bool:
     """The Linux tarball, built in the container from cpp/Dockerfile.test.
 
     A release that ships only the zip leaves Linux on whatever version last
-    had one; 0.4.11 through 0.4.15 went out Windows-only that way.
+    had one; 0.4.11 through 0.4.15 went out Windows-only that way. The build
+    lives in a docker volume between runs, so only what changed recompiles.
     """
     if shutil.which("docker") is None:
         print("  no docker, skipping the linux build")
-        return
+        return False
     image = "llmash-linux-test:latest"
     have = subprocess.run(["docker", "image", "inspect", image],
                           capture_output=True).returncode == 0
     if not have:
         print(f"  no {image}, skipping the linux build")
-        return
-    r = subprocess.run(["docker", "run", "--rm", "-v", f"{HERE}:/src", image,
-                        "bash", "/src/cpp/build-linux.sh"], capture_output=True, text=True)
-    if r.returncode != 0 or not TGZ.exists():
+        return False
+    before = TGZ.stat().st_mtime if TGZ.exists() else 0
+    r = subprocess.run(["docker", "run", "--rm", "--cpus", "4", "--memory", "4g",
+                        "-v", f"{HERE}:/src", "-v", "llmash-linux-build:/build", image,
+                        "bash", "/src/cpp/build-linux.sh"] + ([] if tests else ["--no-tests"]),
+                       capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip().splitlines()
+    if r.returncode != 0 or not TGZ.exists() or TGZ.stat().st_mtime == before:
         print("  linux build failed:")
-        print("   ", (r.stderr or r.stdout).strip().splitlines()[-1:] or "")
-        return
+        for line in out[-12:]:
+            print("   ", line)
+        return False
+    for line in out:
+        if "suites pass" in line:
+            print("  " + line.strip())
     print(f"  linux {TGZ.stat().st_size / 1e6:.1f} MB -> {TGZ}")
+    return True
+
+
+def publish(tag: str) -> bool:
+    """Replaces the program assets of release `tag` with this build."""
+    r = subprocess.run(["gh", "release", "upload", tag, str(ZIP), str(TGZ), "--clobber"], cwd=HERE)
+    if r.returncode == 0:
+        print(f"  uploaded both programs to {tag}")
+    return r.returncode == 0
 
 
 def main() -> int:
     t0 = time.time()
+    # --publish <tag>: build both programs, run both test suites, and upload only if every step passed
+    tag = sys.argv[sys.argv.index("--publish") + 1] if "--publish" in sys.argv[:-1] else ""
     if OUT.exists():
         shutil.rmtree(OUT)
-    build()
+    build(tests=bool(tag))
+    if tag and not run_tests():
+        return 1
     ZIP.unlink(missing_ok=True)
     with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED) as z:
         for p in sorted(OUT.rglob("*")):
@@ -157,7 +196,11 @@ def main() -> int:
     unpacked = sum(p.stat().st_size for p in OUT.rglob("*") if p.is_file())
     print(f"llmash {version()}: {unpacked / 1e6:.1f} MB unpacked, "
           f"{ZIP.stat().st_size / 1e6:.1f} MB zipped, {time.time() - t0:.0f}s -> {ZIP}")
-    if "--no-linux" not in sys.argv:
+    if tag:
+        if not build_linux(tests=True) or not publish(tag):
+            return 1
+        print(f"published in {time.time() - t0:.0f}s")
+    elif "--no-linux" not in sys.argv:
         build_linux()
     if "--here" in sys.argv:
         install_here()

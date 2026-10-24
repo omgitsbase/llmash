@@ -41,7 +41,7 @@ jobs:
       - name: build
         run: |
           docker build -t llmash-linux-test -f cpp/Dockerfile.test cpp
-          docker run --rm -v "$PWD:/src" llmash-linux-test bash cpp/build-linux.sh
+          docker run --rm -v "$PWD:/src" llmash-linux-test bash cpp/build-linux.sh --no-tests
       - uses: actions/upload-artifact@v4
         with:
           name: linux
