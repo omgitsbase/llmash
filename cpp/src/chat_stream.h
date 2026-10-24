@@ -801,6 +801,19 @@ inline bool turn_has_media(const json & body) {
     return false;
 }
 
+// On the Messages API a model thinks only when the request asks. Claude Code's auto-mode check asks for no thinking
+// and wants its verdict first; a model left thinking by default spent the whole budget and never gave one.
+inline void anthropic_default_thinking(json & body) {
+    if (!body.is_object() || body.contains("chat_template_kwargs")) {
+        return;
+    }
+    const auto        t    = body.find("thinking");
+    const std::string type = t != body.end() && t->is_object() ? jstr(*t, "type") : "";
+    if (type.empty() || type == "disabled") {
+        body["chat_template_kwargs"] = json{{"enable_thinking", false}};
+    }
+}
+
 // Claude Code puts system messages inside an Anthropic request's messages (its environment, after the first user
 // turn), and chat templates like Qwen's refuse a system message that is not first. One before any turn joins the
 // top-level system prompt; a later one goes into the user turn it sits beside as a <system-reminder>, Claude Code's
