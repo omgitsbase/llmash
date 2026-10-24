@@ -1,4 +1,5 @@
 #include "api_logic.h"
+#include "private_file.h"
 
 #include <subprocess.h>
 
@@ -452,6 +453,7 @@ std::string link_key(const Config & cfg) {
     json           d    = read_json_file(file);
     const auto     it   = d.find("key");
     if (it != d.end() && it->is_string() && !it->get<std::string>().empty()) {
+        make_private(file);
         return it->get<std::string>();
     }
 
@@ -460,10 +462,7 @@ std::string link_key(const Config & cfg) {
     const std::string key = "sk-llmash-" + b64url(raw, sizeof(raw));
     d["key"]              = key;
     d["public_port"]      = cfg.public_port;
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    if (out) {
-        out << d.dump(2);
-    }
+    write_private_file(file, d.dump(2));
     return key;
 }
 

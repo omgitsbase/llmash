@@ -2,11 +2,16 @@
 #
 #   irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 | iex
 #
+# A normal window installs for this user, into %LOCALAPPDATA%\llmash. An admin
+# window installs for the machine, into %ProgramData%\llmash, which other users
+# can run but not change.
+#
 #   -Uninstall        remove everything the installer created (models are kept)
 #   -NoOllama         do not shadow the `ollama` command, do not stop Ollama
 #   -NoStartup        do not start llmash at login
 #   -Runtime <kind>   llama.cpp build to fetch: auto (default), cuda, vulkan, cpu, none
-#   -Dir <path>       install somewhere other than %ProgramData%\llmash
+#   -Dir <path>       install somewhere other than %LOCALAPPDATA%\llmash, or
+#                     %ProgramData%\llmash from an admin window
 #   -Tag <tag>        take the program from that release instead of the latest
 #   -Mbps <n>         cap the download at n megabits per second (default 0, no cap)
 #   -Streams <n>      parallel ranged connections per file (default 8)
@@ -47,6 +52,8 @@ function Die  ($m) { Write-Host ''; Write-Host "  $m" -ForegroundColor Red; exit
 
 # With no keyboard to answer on (SSH, a script), it installs only as spelled out.
 $Interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+$Elevated    = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $Interactive -and $PSBoundParameters.Count -eq 0) {
     [Console]::Error.WriteLine(@'
 Nothing here can answer the installer's questions, so it needs its options up front.
@@ -59,7 +66,7 @@ Save it, then run it with the ones you want:
   -Yes              close Ollama and take it off startup, so llmash gets port 11434
   -NoStartup        do not start llmash at login
   -Runtime <kind>   llama.cpp build to fetch: auto (default), cuda, vulkan, cpu, none
-  -Dir <path>       install somewhere other than %ProgramData%\llmash
+  -Dir <path>       install somewhere other than %LOCALAPPDATA%\llmash (%ProgramData% as admin)
   -Tag <tag>        take the program from that release
   -Mbps <n>         cap the download at n megabits per second
   -Streams <n>      parallel connections per file (default 8)
@@ -229,13 +236,36 @@ if ($Dir) {
         Say "installing into $Root, where llmash already is"
     }
 } else {
-    $Root = Join-Path $env:ProgramData 'llmash'
-    try {
-        New-Item -ItemType Directory -Force $Root | Out-Null
-        $probe = Join-Path $Root '.write-test'
-        Set-Content $probe 'ok'; Remove-Item $probe
-    } catch {
-        $Root = Join-Path $env:LOCALAPPDATA 'llmash'
+    # an admin window installs for the machine, any other for this user; an install already in ProgramData that
+    # this user can write is upgraded where it is
+    $machineRoot = Join-Path $env:ProgramData 'llmash'
+    $Root = Join-Path $env:LOCALAPPDATA 'llmash'
+    if ($Elevated) {
+        $Root = $machineRoot
+    } elseif ((Test-Path (Join-Path $machineRoot 'llmashw.exe')) -and -not (Test-Path (Join-Path $Root 'llmashw.exe'))) {
+        try {
+            $probe = Join-Path $machineRoot '.write-test'
+            Set-Content $probe 'ok'; Remove-Item $probe
+            $Root = $machineRoot
+        } catch {}
+    }
+}
+
+# Outside the user's profile a folder inherits rights for every user, which on ProgramData includes adding files.
+# Such a root keeps SYSTEM, Administrators and this user in full and lets other users run what is there and nothing
+# more; the link key stays readable by its owner alone.
+function Lock-Root ($dir) {
+    if (-not (Test-Path $dir)) { return }
+    $profileDir = [Environment]::GetFolderPath('UserProfile')
+    if ($dir.StartsWith($profileDir, [StringComparison]::OrdinalIgnoreCase)) { return }
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $r = Native 'icacls.exe' @($dir, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F',
+                               "*${me}:(OI)(CI)F", '*S-1-5-32-545:(OI)(CI)RX', '/Q')
+    if ($r.code -ne 0) { Warn "could not narrow the rights on ${dir}: $($r.all -join ' ')"; return }
+    Native 'icacls.exe' @((Join-Path $dir '*'), '/reset', '/T', '/C', '/Q') | Out-Null
+    $key = Join-Path $dir 'link.json'
+    if (Test-Path $key) {
+        Native 'icacls.exe' @($key, '/inheritance:r', '/grant:r', '*S-1-5-18:F', '*S-1-5-32-544:F', "*${me}:F", '/Q') | Out-Null
     }
 }
 $BinDir  = Join-Path $Root 'bin'
@@ -318,7 +348,7 @@ function Ask ($question) {
     if ($Yes) { return $true }
     if ($Interactive) {
         # Whatever is already in the keyboard buffer was typed at the shell,
-        # not at this question — the newline that ran `irm ... | iex` among it.
+        # not at this question: the newline that ran `irm ... | iex` among it.
         # Left there, each stray key was eaten as an answer, matched neither
         # branch, and redrew the prompt: five copies on one screen.
         try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
@@ -373,6 +403,7 @@ $upgrade = Test-Path (Join-Path $Root 'llmashw.exe')
 Step $(if ($upgrade) { 'Upgrading llmash' } else { 'Fetching llmash' })
 New-Item -ItemType Directory -Force $Root   | Out-Null
 New-Item -ItemType Directory -Force $BinDir | Out-Null
+Lock-Root $Root
 
 # the running server is stopped and locked files moved aside further down,
 # once the download is in hand: a failed download must leave the install alone
@@ -600,9 +631,11 @@ foreach ($n in $names) {
     Say $n
 }
 
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+# a machine install is on every user's PATH, a user install on this user's
+$pathScope = if ($Elevated -and $Root -eq (Join-Path $env:ProgramData 'llmash')) { 'Machine' } else { 'User' }
+$userPath = [Environment]::GetEnvironmentVariable('Path', $pathScope)
 if ($userPath -notlike "*$BinDir*") {
-    [Environment]::SetEnvironmentVariable('Path', "$BinDir;$userPath", 'User')
+    [Environment]::SetEnvironmentVariable('Path', "$BinDir;$userPath", $pathScope)
     $env:Path = "$BinDir;$env:Path"
     Good 'added to PATH'
 } else {

@@ -9,6 +9,10 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#    include <sys/stat.h>
+#endif
+
 namespace fs = std::filesystem;
 using json   = nlohmann::json;
 using namespace llmash;
@@ -557,6 +561,17 @@ int main() {
         const json saved = json::parse(read_file(fs::path(lcfg.root) / "link.json"));
         eq(saved.value("key", ""), k1, "link key: link.json holds the key");
         check(saved["public_port"] == 11435, "link key: link.json records the public port");
+#ifndef _WIN32
+        {
+            struct stat st {};
+            ::stat((fs::path(lcfg.root) / "link.json").c_str(), &st);
+            check((st.st_mode & 0777) == 0600, "link key: link.json is readable by its owner alone");
+            ::chmod((fs::path(lcfg.root) / "link.json").c_str(), 0644);
+            link_key(lcfg);
+            ::stat((fs::path(lcfg.root) / "link.json").c_str(), &st);
+            check((st.st_mode & 0777) == 0600, "link key: an older world-readable link.json is narrowed");
+        }
+#endif
         set_env("LLMASH_LINK_KEY", "sk-env-override");
         eq(link_key(lcfg), "sk-env-override", "link key: the environment wins");
         set_env("LLMASH_LINK_KEY", "");

@@ -33,7 +33,7 @@ the build itself.
 
 ## Install
 
-Windows, in a user-level PowerShell:
+Windows, in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 | iex
@@ -44,6 +44,9 @@ Linux:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/omgitsbase/llmash/main/install.sh | sh
 ```
+
+Run normally, either installer sets llmash up for you alone. Run from an admin
+PowerShell, or with `sudo sh` on Linux, it installs for the whole machine.
 
 Already installed: `llmash update`.
 
@@ -56,9 +59,16 @@ Vulkan or CPU build, and models load into system RAM.
 | | Windows | Linux |
 |---|---|---|
 | Runtime | llmash CUDA 13, else Vulkan or CPU | llmash CUDA 13, else Vulkan or CPU |
-| Runs as | tray app, starts at login | systemd service (`--no-service` to skip) |
-| Installs to | `%ProgramData%\llmash` | `/usr/local/lib/llmash`, or `~/.local` with `--user` |
-| Options | `-NoOllama`, `-Runtime`, `-Dir`, `-Yes` | `--no-ollama`, `--runtime`, `--user`, `--uninstall` |
+| Runs as | tray app, starts at login | user service; as root, a system service under its own `llmash` account (`--no-service` to skip) |
+| Installs to | `%LOCALAPPDATA%\llmash`; from an admin window, `%ProgramData%\llmash` | `~/.local/lib/llmash`; as root, `/usr/local/lib/llmash` |
+| Options | `-NoOllama`, `-Runtime`, `-Dir`, `-Yes` | `--no-ollama`, `--runtime`, `--user`, `--system`, `--uninstall` |
+
+A machine install can be run by every user and changed only by administrators.
+On Linux its service runs as the unprivileged `llmash` account, not root, and
+keeps its models in `/var/lib/llmash/models` unless one is already set. The key
+for `llmash link`, in `link.json`, is readable by its owner alone: mode 0600 on
+Linux, and only that user, SYSTEM and Administrators on Windows. `llmash update`
+applies all of this to an install an older version made.
 
 Over SSH or from a script on Windows, save the installer and pass the options up
 front; with none it only lists them:
@@ -401,6 +411,9 @@ the other Qwen3.8-27B abliteration graded by a model:
 The prompt sets are fetched and cached on first use. Over a pipe, from an agent, or
 over ssh without a terminal, it requires `--yes` instead of waiting for input.
 
+The search itself is `llama-ablate`, a tool in llmash's runtime. Its source is at
+[omgitsbase/llmash-ablate](https://github.com/omgitsbase/llmash-ablate).
+
 ## Speculation
 
 A model carrying an MTP head drafts for itself, with nothing to fetch. For a model
@@ -477,8 +490,9 @@ where pulled GGUFs go. `llmash serve --help` lists the rest.
 Windows: Visual Studio 2022 with the C++ workload; CMake comes with it.
 
 ```powershell
-python build.py           # dist/llmash-win-x64.zip, and the Linux tarball when Docker is there
-python build.py --here    # ...and run this checkout on it
+python build.py                 # dist/llmash-win-x64.zip, and the Linux tarball when Docker is there
+python build.py --here          # ...and run this checkout on it
+python build.py --publish TAG   # both, with both test runs, uploaded to release TAG if they pass
 ```
 
 Linux: `cpp/build-linux.sh` in the container from `cpp/Dockerfile.test`, and
