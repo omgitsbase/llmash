@@ -56,8 +56,13 @@ struct Install {
     bool        dev     = true;
 };
 
+// A source checkout is a folder with build.py in it, as `update` decides. The installers' install.json names no
+// origin, so going by that alone called every install a checkout and skipped the update check.
 Install read_install_json(const std::string & root) {
-    Install info;
+    Install         info;
+    std::error_code ec;
+    info.dev    = fs::is_regular_file(fs::path(root) / "build.py", ec);
+    info.origin = info.dev ? "dev" : "the installer";
     std::ifstream in(fs::path(root) / "install.json", std::ios::binary);
     if (!in) {
         return info;
@@ -72,6 +77,8 @@ Install read_install_json(const std::string & root) {
     }
     if (j.contains("origin") && j["origin"].is_string() && !j["origin"].get<std::string>().empty()) {
         info.origin = j["origin"].get<std::string>();
+    } else if (!info.dev && j.contains("repo") && j["repo"].is_string() && !j["repo"].get<std::string>().empty()) {
+        info.origin = j["repo"].get<std::string>();
     }
     if (j.contains("dev") && j["dev"].is_boolean()) {
         info.dev = j["dev"].get<bool>();
