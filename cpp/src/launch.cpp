@@ -216,30 +216,65 @@ std::vector<std::string> current_environment() {
 #endif
 }
 
-// exec.LookPath's Windows rule: PATH combined with PATHEXT, current directory
-// not searched (a plain integration name is never a relative path here).
+#ifdef _WIN32
+constexpr char kPathSep = ';';
+#else
+constexpr char kPathSep = ':';
+#endif
+
+// exec.LookPath's rule on the PATH this process started with; the current directory is not searched
 std::string which(const std::string & exe) {
     if (exe.find('\\') != std::string::npos || exe.find('/') != std::string::npos) {
         return file_exists(exe) ? exe : "";
     }
-    const bool has_ext = exe.rfind('.') != std::string::npos && exe.rfind('.') > exe.find_last_of("\\/");
-    std::vector<std::string> exts;
-    if (has_ext) {
-        exts.push_back("");
-    } else {
-        for (auto & e : split(env_str("PATHEXT", ".COM;.EXE;.BAT;.CMD"), ';')) {
-            exts.push_back(e);
+    return which_in(exe, split(env_str("PATH"), kPathSep));
+}
+
+// PATH as it is saved now: a tool installed after this terminal opened is on it, and not on the PATH it inherited
+std::vector<std::string> saved_path_dirs() {
+    std::vector<std::string> out;
+#ifdef _WIN32
+    const auto read = [&out](HKEY root, const wchar_t * key) {
+        HKEY h = nullptr;
+        if (RegOpenKeyExW(root, key, 0, KEY_READ, &h) != ERROR_SUCCESS) {
+            return;
         }
-    }
-    for (const auto & dir : split(env_str("PATH"), ';')) {
-        for (const auto & ext : exts) {
-            const std::string candidate = (fs::path(dir) / (exe + ext)).string();
-            if (file_exists(candidate)) {
-                return candidate;
+        DWORD type = 0;
+        DWORD size = 0;
+        if (RegQueryValueExW(h, L"Path", nullptr, &type, nullptr, &size) == ERROR_SUCCESS && size > 0) {
+            std::wstring v(size / sizeof(wchar_t) + 1, L'\0');
+            if (RegQueryValueExW(h, L"Path", nullptr, &type, reinterpret_cast<BYTE *>(v.data()), &size) == ERROR_SUCCESS) {
+                v.resize(wcslen(v.c_str()));
+                if (type == REG_EXPAND_SZ) {
+                    std::wstring x(ExpandEnvironmentStringsW(v.c_str(), nullptr, 0), L'\0');
+                    ExpandEnvironmentStringsW(v.c_str(), x.data(), static_cast<DWORD>(x.size()));
+                    v = x.c_str();
+                }
+                for (const std::string & d : split(wide_to_utf8(v), ';')) {
+                    out.push_back(d);
+                }
             }
         }
+        RegCloseKey(h);
+    };
+    read(HKEY_CURRENT_USER, L"Environment");
+    read(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
+#endif
+    return out;
+}
+
+// The tool's own folder at the front of its PATH, so one found off PATH still finds what it runs from beside it.
+void put_dir_on_path(std::vector<std::string> & env, const std::string & tool) {
+    const std::string dir = fs::path(tool).parent_path().string();
+    for (std::string & e : env) {
+        std::string name = e.substr(0, e.find('='));
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return (char) std::toupper(c); });
+        if (name == "PATH" && e.find('=') != std::string::npos) {
+            e = e.substr(0, e.find('=') + 1) + dir + kPathSep + e.substr(e.find('=') + 1);
+            return;
+        }
     }
-    return "";
+    env.push_back("PATH=" + dir);
 }
 
 std::vector<std::string> installed_models() {
@@ -420,6 +455,83 @@ void pick_model(const Config & cfg, nlohmann::json & prof, const std::string & k
 
 } // namespace
 
+std::string which_in(const std::string & exe, const std::vector<std::string> & dirs) {
+    std::vector<std::string> exts{""};
+#ifdef _WIN32
+    if (!fs::path(exe).has_extension()) {
+        exts = split(env_str("PATHEXT", ".COM;.EXE;.BAT;.CMD"), ';');
+    }
+#endif
+    for (const auto & dir : dirs) {
+        for (const auto & ext : exts) {
+            const std::string candidate = (fs::path(dir) / (exe + ext)).string();
+            if (file_exists(candidate)) {
+                return candidate;
+            }
+        }
+    }
+    return "";
+}
+
+std::vector<std::string> usual_tool_dirs() {
+    std::vector<std::string> out;
+    const auto add = [&out](const std::string & base, const char * rel) {
+        if (!base.empty()) {
+            out.push_back((fs::path(base) / rel).string());
+        }
+    };
+#ifdef _WIN32
+    const std::string home     = env_str("USERPROFILE");
+    const std::string roaming  = env_str("APPDATA");
+    const std::string local    = env_str("LOCALAPPDATA");
+    const std::string programs = env_str("ProgramFiles");
+    add(home, ".local\\bin");  // Claude Code's own installer, uv and pipx
+    add(home, ".claude\\local");
+    add(roaming, "npm");
+    add(local, "pnpm");
+    add(home, ".bun\\bin");
+    add(home, ".volta\\bin");
+    add(home, "scoop\\shims");
+    add(local, "Microsoft\\WinGet\\Links");
+    add(home, ".cargo\\bin");
+    add(home, "go\\bin");
+    add(local, "Programs\\Microsoft VS Code\\bin");
+    add(programs, "Microsoft VS Code\\bin");
+    add(programs, "nodejs");
+#else
+    const std::string home = env_str("HOME");
+    add(home, ".local/bin");  // Claude Code's own installer, uv and pipx
+    add(home, ".claude/local");
+    add(home, ".npm-global/bin");
+    add(home, ".bun/bin");
+    add(home, ".volta/bin");
+    add(home, ".cargo/bin");
+    add(home, "go/bin");
+    out.push_back("/usr/local/bin");
+    out.push_back("/opt/homebrew/bin");
+    out.push_back("/snap/bin");
+    // nvm keeps each node version's global installs beside it
+    std::error_code ec;
+    if (!home.empty()) {
+        for (const auto & v : fs::directory_iterator(fs::path(home) / ".nvm" / "versions" / "node", ec)) {
+            out.push_back((v.path() / "bin").string());
+        }
+    }
+#endif
+    return out;
+}
+
+std::string find_tool(const std::string & exe) {
+    std::string path = which(exe);
+    if (path.empty()) {
+        path = which_in(exe, saved_path_dirs());
+    }
+    if (path.empty()) {
+        path = which_in(exe, usual_tool_dirs());
+    }
+    return path;
+}
+
 const std::map<std::string, Integration> & integrations() {
     static const std::map<std::string, Integration> m = {
         {"claude", {"Claude Code", "claude"}},
@@ -598,9 +710,15 @@ std::vector<std::string> claude_launch_env(std::vector<std::string> env, const s
 // Claude Code speaks Anthropic's Messages API, which the runtime serves at /v1/messages and llmash forwards to the
 // model as it does the OpenAI routes.
 void launch_claude(const Config &, const std::string & picked, const std::vector<std::string> & extra) {
-    const std::string path = which("claude");
+    const std::string path = find_tool("claude");
     if (path.empty()) {
-        std::fprintf(stderr, "Error: Claude Code is not installed (no 'claude' on PATH)\n");
+#ifdef _WIN32
+        const char * install = "irm https://claude.ai/install.ps1 | iex";
+#else
+        const char * install = "curl -fsSL https://claude.ai/install.sh | bash";
+#endif
+        std::fprintf(stderr, "Error: Claude Code is not installed: no 'claude' on PATH or where its installer puts it\n"
+                             "  install it with:  %s\n", install);
         std::exit(1);
     }
     const std::string model = !picked.empty() ? picked : claude_default_model();
@@ -620,15 +738,17 @@ void launch_claude(const Config &, const std::string & picked, const std::vector
 
     std::vector<std::string> args{"--model", model};
     args.insert(args.end(), extra.begin(), extra.end());
-    const std::vector<std::string> env = claude_launch_env(current_environment(), host, model, ctx);
+    std::vector<std::string> env = claude_launch_env(current_environment(), host, model, ctx);
+    put_dir_on_path(env, path);
     run_inherit(path, args, &env);
 }
 
 void launch_generic(const std::string & key, const std::string & model, const std::vector<std::string> & extra) {
     const auto & it = integrations().at(key);
-    const std::string path = which(it.exe);
+    const std::string path = find_tool(it.exe);
     if (path.empty()) {
-        std::fprintf(stderr, "Error: %s is not installed (no '%s' on PATH)\n", it.title.c_str(), it.exe.c_str());
+        std::fprintf(stderr, "Error: %s is not installed: no '%s' on PATH or in the folders installers use\n",
+                     it.title.c_str(), it.exe.c_str());
         std::exit(1);
     }
     const std::string host = ollama_host();
@@ -639,6 +759,7 @@ void launch_generic(const std::string & key, const std::string & model, const st
     for (auto & e : generic_launch_env(host, model)) {
         env.push_back(e);
     }
+    put_dir_on_path(env, path);
     run_inherit(path, extra, &env);
 }
 
@@ -669,7 +790,7 @@ void launch_menu(const Config & cfg) {
                                         ""};
         for (size_t i = 0; i < rows.size(); i++) {
             const bool        hl = static_cast<int>(i) == sel;
-            const std::string exe_installed = which(integrations().at(rows[i].key).exe).empty() ? " (install)" : "";
+            const std::string exe_installed = find_tool(integrations().at(rows[i].key).exe).empty() ? " (install)" : "";
             std::string       suffix        = exe_installed;
             if (rows[i].key == "claude") {
                 const std::string m = model_of(prof, rows[i].key, installed);

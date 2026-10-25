@@ -15,6 +15,16 @@ struct Integration {
     std::string exe;
 };
 
+// The executable `exe` in one of `dirs`, PATHEXT applied on Windows; "" when none holds it.
+std::string which_in(const std::string & exe, const std::vector<std::string> & dirs);
+
+// The folders installers put a per-user tool in without touching PATH, Claude Code's own installer among them.
+std::vector<std::string> usual_tool_dirs();
+
+// A tool to launch wherever it was installed: this process's PATH, then PATH as saved now (a tool installed after the
+// terminal opened), then the usual install folders.
+std::string find_tool(const std::string & exe);
+
 // The integrations `llmash launch <name>` knows, keyed the way the command
 // line names them, and the older/alternate names that resolve to one of them.
 const std::map<std::string, Integration> & integrations();

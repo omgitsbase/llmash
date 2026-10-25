@@ -147,6 +147,42 @@ int main() {
     }
 
     {
+        // Claude Code's own installer leaves it in ~/.local/bin and that folder off PATH
+        const fs::path home = fs::temp_directory_path() / "llmash_cpp_test_home";
+        fs::remove_all(home);
+        fs::create_directories(home / ".local" / "bin");
+#ifdef _WIN32
+        const fs::path exe = home / ".local" / "bin" / "claude.exe";
+        const char *   var = "USERPROFILE";
+#else
+        const fs::path exe = home / ".local" / "bin" / "claude";
+        const char *   var = "HOME";
+#endif
+        std::ofstream(exe) << "x";
+        const std::string saved = env_str(var);
+#ifdef _WIN32
+        _putenv_s(var, home.string().c_str());
+#else
+        setenv(var, home.string().c_str(), 1);
+#endif
+        std::string found = which_in("claude", usual_tool_dirs());
+        std::string want  = exe.string();
+#ifdef _WIN32
+        for (std::string * s : {&found, &want}) {  // PATHEXT spells it .EXE
+            std::transform(s->begin(), s->end(), s->begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        }
+#endif
+        eq(found, want, "launch: a tool its installer kept off PATH is found");
+        check(which_in("claude", {}).empty(), "launch: and nothing is found where nothing is");
+#ifdef _WIN32
+        _putenv_s(var, saved.c_str());
+#else
+        setenv(var, saved.c_str(), 1);
+#endif
+        fs::remove_all(home);
+    }
+
+    {
         const fs::path sdir = fs::temp_directory_path() / "llmash_cpp_test_split";
         fs::remove_all(sdir);
         fs::create_directories(sdir);
