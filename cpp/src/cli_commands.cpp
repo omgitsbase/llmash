@@ -1234,6 +1234,12 @@ Tiers tiers_of(const std::vector<QuantInfo> & quants, bool fp4) {
         }
     }
     t.medium = fp4 ? find({"NVFP4"}) : -1;
+    // Blackwell runs MXFP4 natively too, so with no NVFP4 build it takes the slot
+    for (size_t i = 0; fp4 && t.medium < 0 && i < quants.size(); i++) {
+        if (upper(quants[i].name).rfind("MXFP4", 0) == 0) {
+            t.medium = static_cast<int>(i);
+        }
+    }
     if (t.medium < 0) {
         t.medium = find({"Q4_K_M", "UD-Q4_K_XL", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q5_K_S"});
     }

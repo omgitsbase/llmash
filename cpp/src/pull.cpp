@@ -1500,34 +1500,59 @@ bool quantized_from(const HubModel & m, const std::string & repo) {
     return false;
 }
 
+// A model's name as its files and other repositories spell it: letters and digits alone, so Cold-Fusion is
+// ColdFusion, and without the -MTP a build of it drops.
+std::string name_key(const std::string & name) {
+    std::string s = lower(name);
+    if (ends_with(s, "-mtp")) {
+        s.resize(s.size() - 4);
+    }
+    std::string out;
+    for (const unsigned char c : s) {
+        if (std::isalnum(c)) {
+            out += static_cast<char>(c);
+        }
+    }
+    return out;
+}
+
 // A build in `fmt` (NVFP4 or MXFP4) of the same model from another repository, for when the repo asked for holds
 // none: the same exact-model check as a GSQ-RCO build, or a card that says it was quantized from the model with
 // files named after it, the most downloaded repository first.
 std::vector<QuantInfo> fp4_quants(const std::string & repo, const std::string & fmt) {
-    std::vector<QuantInfo> out;
-    std::string            base = without_org(repo.substr(repo.find('/') + 1));
+    std::string base = without_org(repo.substr(repo.find('/') + 1));
     for (const char * drop : {"-i1-GGUF", "-GGUF", "-gguf"}) {
         if (const size_t at = base.find(drop); at != std::string::npos) {
             base.erase(at, std::strlen(drop));
         }
     }
-    const std::string f = lower(fmt);
-    for (const HubModel & m : hub_search(base + " " + fmt, 30)) {
-        const std::string low = lower(m.id);
-        if (low.find(f) == std::string::npos || equal_fold(m.id, repo)) {
-            continue;
+    const std::string     f = lower(fmt);
+    std::set<std::string> seen;
+    // the builds a hub entry holds in `fmt` of this model, or none
+    const auto builds_in = [&](const HubModel & m) {
+        std::vector<QuantInfo> out;
+        const std::string      low = lower(m.id);
+        if (low.find(f) == std::string::npos || equal_fold(m.id, repo) || !seen.insert(low).second) {
+            return out;
         }
         const bool named = low.find("gguf") != std::string::npos && converts(m, repo);
         if (!named && !quantized_from(m, repo)) {
-            continue;
+            return out;
         }
         std::string         err;
         std::vector<HfFile> files = hf_files(m.id, &err);
-        if (!named) {
+        // A card naming the very GGUF repository asked for is a requantization of it, whatever its files are called.
+        // An original model is named by every build of it, a parts layout llama.cpp can't load among them, so a
+        // build of one has its files named for the model.
+        const auto bases = base_models_of(m);
+        const bool exact = contains(lower(repo), "gguf") &&
+                           std::any_of(bases.begin(), bases.end(),
+                                       [&](const std::string & b) { return equal_fold(b, repo); });
+        if (!named && !exact) {
             // a set of files named for their parts rather than the model is a layout llama.cpp doesn't load
-            const std::string want = without_org(model_name_of(repo));
+            const std::string want = name_key(without_org(model_name_of(repo)));
             files.erase(std::remove_if(files.begin(), files.end(),
-                                       [&](const HfFile & h) { return !contains(lower(h.name), want); }),
+                                       [&](const HfFile & h) { return !contains(name_key(h.name), want); }),
                         files.end());
         }
         for (QuantInfo q : quants_of(files)) {
@@ -1536,8 +1561,54 @@ std::vector<QuantInfo> fp4_quants(const std::string & repo, const std::string & 
                 out.push_back(q);
             }
         }
-        if (!out.empty()) {
-            break;
+        return out;
+    };
+    // The hub matches each word of a query inside a name, so the name in words also finds Cold-Fusion as ColdFusion.
+    // It is asked only when the name as written finds nothing, since it matches more of the model's relatives.
+    std::string words = base;
+    std::replace_if(words.begin(), words.end(), [](char c) { return c == '-' || c == '_'; }, ' ');
+    std::vector<std::string> queries{base + " " + fmt};
+    if (words != base) {
+        queries.push_back(words + " " + fmt);
+    }
+    for (const std::string & query : queries) {
+        for (const HubModel & m : hub_search(query, 30)) {
+            if (std::vector<QuantInfo> out = builds_in(m); !out.empty()) {
+                return out;
+            }
+        }
+    }
+    return {};
+}
+
+// The model a repo holds, whatever quant, GGUF or MTP marks its name carries.
+std::string held_model_key(const std::string & repo) {
+    static const std::regex quant_end(
+        R"([-_.]((?:ud-)?(?:iq|q|tq)[1-8](?:_[0-9a-z]+)*|bf16|f16|f32|mxfp4(?:_moe)?|nvfp4)$)");
+    std::string name = without_org(model_name_of(repo));
+    for (std::smatch m; std::regex_search(name, m, quant_end);) {
+        name.resize(static_cast<size_t>(m.position(0)));
+    }
+    return name_key(name);
+}
+
+// fp4_quants for the repo's model, then for the model its card says it quantizes, when the repo is named for that
+// model: a GSQ-RCO or GGUF repo holds the model's own weights. Many fine-tunes' cards name the original model as
+// what they quantize, and their names are their own, so they keep to their own builds.
+std::vector<QuantInfo> fp4_builds(const std::string & repo, const std::string & fmt) {
+    std::vector<QuantInfo> out = fp4_quants(repo, fmt);
+    HubModel               info;
+    if (!out.empty() || !hub_info(repo, info)) {
+        return out;
+    }
+    static const std::string pre = "base_model:quantized:";
+    const std::string        own = held_model_key(repo);
+    for (const std::string & t : info.tags) {
+        if (starts_with(t, pre) && !equal_fold(t.substr(pre.size()), repo) && held_model_key(t.substr(pre.size())) == own) {
+            out = fp4_quants(t.substr(pre.size()), fmt);
+            if (!out.empty()) {
+                break;
+            }
         }
     }
     return out;
@@ -4221,8 +4292,13 @@ void handle_quants(const httplib::Request & req, httplib::Response & res, Config
             return false;
         };
         if (!has(want)) {
-            const std::string model = out.value("from", "").empty() ? out.value("repo", "") : out.value("from", "");
-            for (const QuantInfo & q : fp4_quants(model, upper(want))) {
+            const std::string      model = out.value("from", "").empty() ? out.value("repo", "") : out.value("from", "");
+            std::vector<QuantInfo> found = fp4_builds(model, upper(want));
+            // Blackwell runs MXFP4 natively as well, so a model with no NVFP4 build anywhere offers its MXFP4 one
+            if (found.empty() && fp4 && !has(other)) {
+                found = fp4_builds(model, upper(other));
+            }
+            for (const QuantInfo & q : found) {
                 out["quants"].push_back(
                     json{{"name", q.name}, {"size", q.size}, {"files", q.files}, {"fetch", q.fetch}, {"repo", q.repo}});
             }

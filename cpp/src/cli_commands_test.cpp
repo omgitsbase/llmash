@@ -153,6 +153,9 @@ void test_tiers_of() {
         eq_str(qs[tiers_of(qs).medium].name, "Q4_K_M", "tiers medium by default stays Q4_K_M");
         const std::vector<QuantInfo> no_fp4{Q("Q4_K_M", 5), Q("Q8_0", 9)};
         eq_str(no_fp4[tiers_of(no_fp4, true).medium].name, "Q4_K_M", "tiers medium on Blackwell without NVFP4");
+        const std::vector<QuantInfo> mx{Q("Q4_K_M", 5), Q("MXFP4_MOE", 6), Q("Q8_0", 9)};
+        eq_str(mx[tiers_of(mx, true).medium].name, "MXFP4_MOE", "tiers medium on Blackwell falls back to MXFP4");
+        eq_str(mx[tiers_of(mx, false).medium].name, "Q4_K_M", "elsewhere MXFP4 keeps its own row");
     }
     {
         // the named builds win outright, whatever their order or size
