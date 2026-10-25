@@ -584,7 +584,13 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     const std::string head = from.empty() ? title : from + " holds no GGUF build, so these are " + repo + "'s:";
 
-    std::vector<QuantInfo> quants, plain, custom, published;
+    // a GSQ-RCO repository's own builds are what it is for, whatever their files are called
+    const bool gsq_repo = lower(repo).find("gsq-rco") != std::string::npos;
+    const auto own_gsq_build = [&](const QuantInfo & q) {
+        return q.repo.empty() && !is_fp4(q.name) && !is_rco(q.name) &&
+               (gsq_repo || lower(q.name).find("gsq-rco") != std::string::npos);
+    };
+    std::vector<QuantInfo> quants, plain, custom, published, own_gsq;
     if (have) {
         for (const auto & q : j_list(d, "quants")) {
             QuantInfo qi;
@@ -596,6 +602,8 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             quants.push_back(qi);
             if (!qi.repo.empty() && !is_fp4(qi.name)) {
                 published.push_back(qi);  // a GSQ-RCO build from elsewhere
+            } else if (own_gsq_build(qi)) {
+                own_gsq.push_back(qi);
             } else {
                 (is_rco(qi.name) ? custom : plain).push_back(qi);
             }
@@ -623,8 +631,12 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         int64_t     size     = 0;
         bool        registry = false;
         std::string repo;  // set for a build that lives in another repository
+        bool        gsq = false;
     };
     std::vector<Row> basic, full;
+    for (const QuantInfo & q : own_gsq) {
+        basic.push_back(Row{build_row("rco", q, gsq_desc(q.name)), q.name, q.size, false, "", true});
+    }
     // the published GSQ-RCO build nearest the custom one's size, when there is one
     if (!published.empty()) {
         const int64_t want = offered ? offered->size : 0;
@@ -634,23 +646,30 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
                 best = &q;
             }
         }
-        basic.push_back(Row{build_row("rco", *best, "GSQ-RCO " + best->name), best->name, best->size, false, best->repo});
+        basic.push_back(Row{build_row("rco", *best, gsq_desc(best->name)), best->name, best->size, false, best->repo});
     }
     if (offered) {
         basic.push_back(Row{build_row("custom", *offered, kRcoPitch), offered->name, offered->size, false});
     }
     if (plain.size() > 1) {
-        const bool  fp4 = have && d.value("fp4", false);
-        const Tiers t   = tiers_of(plain, fp4);
-        for (const auto & [label, idx] : {std::pair{"medium", t.medium}, {"large", t.large}}) {
-            const QuantInfo & q    = plain[static_cast<size_t>(idx)];
-            const bool        nvfp = equal_fold(q.name, "NVFP4");
-            basic.push_back(Row{build_row(label, q, nvfp ? "NVFP4, FP8 quality" : ""), q.name, q.size, false, q.repo});
+        const bool            fp4 = have && d.value("fp4", false);
+        const Tiers           t   = tiers_of(plain, fp4);
+        std::set<std::string> shown;  // a build is listed once, under the first label that fits it
+        const auto            add = [&](const char * label, const QuantInfo & q) {
+            if (shown.insert(lower(q.name) + "@" + q.repo).second) {
+                const bool nvfp = equal_fold(q.name, "NVFP4");
+                basic.push_back(Row{build_row(label, q, nvfp ? "NVFP4, FP8 quality" : ""), q.name, q.size, false, q.repo});
+            }
+        };
+        add("medium", plain[static_cast<size_t>(t.medium)]);
+        // an FP4 build is never the large one: with nothing wider than medium there is no large row
+        if (!is_fp4(plain[static_cast<size_t>(t.large)].name)) {
+            add("large", plain[static_cast<size_t>(t.large)]);
         }
         // other cards get the MXFP4 build beside the medium one, where sm_120 cards get NVFP4 in its place
         for (const QuantInfo & q : plain) {
             if (!fp4 && upper(q.name).find("MXFP4") != std::string::npos) {
-                basic.push_back(Row{build_row("fp4", q, ""), q.name, q.size, false, q.repo});
+                add("fp4", q);
                 break;
             }
         }
@@ -661,10 +680,11 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     }
     std::stable_sort(basic.begin(), basic.end(), [](const Row & a, const Row & b) { return a.size < b.size; });
     for (const auto & q : quants) {
-        const bool gsq  = !q.repo.empty() && !is_fp4(q.name);
+        const bool own  = own_gsq_build(q);
+        const bool gsq  = own || (!q.repo.empty() && !is_fp4(q.name));
         const bool nvfp = equal_fold(q.name, "NVFP4");
-        full.push_back(Row{build_row(gsq ? "rco" : "", q, gsq ? "GSQ-RCO " + q.name : nvfp ? "NVFP4, FP8 quality" : ""),
-                           q.name, q.size, false, q.repo});
+        full.push_back(Row{build_row(gsq ? "rco" : "", q, gsq ? gsq_desc(q.name) : nvfp ? "NVFP4, FP8 quality" : ""),
+                           q.name, q.size, false, q.repo, own});
     }
     if (registry_build) {
         const Row own{build_row("ollama", *registry_build, ""), "", registry_build->size, true};
@@ -692,9 +712,14 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     };
 
     // the published rco build when there is one, else the custom one, else the largest
+    // the repository's own GSQ-RCO build, else a published one, else the custom one, else the largest; an FP4 build
+    // borrowed from elsewhere is offered, not chosen for you
     const auto default_row = [&]() {
         for (size_t i = 0; i < basic.size(); i++) {
-            if (!basic[i].repo.empty()) return static_cast<int>(i);
+            if (basic[i].gsq) return static_cast<int>(i);
+        }
+        for (size_t i = 0; i < basic.size(); i++) {
+            if (!basic[i].repo.empty() && !is_fp4(basic[i].quant)) return static_cast<int>(i);
         }
         for (size_t i = 0; i < basic.size(); i++) {
             if (is_rco(basic[i].quant)) return static_cast<int>(i);
@@ -1005,6 +1030,19 @@ ShowOpts parse_show(const std::vector<std::string> & args) {
 }
 
 } // namespace
+
+// How a GSQ-RCO build reads in the list: "GSQ-RCO IQ3_S" for a build named by its type, "GSQ-RCO 3.5" for a
+// file named by its width (MiMo-V2.6-9B-gsq-rco-3p5-q4io), rather than the whole file name.
+std::string gsq_desc(const std::string & name) {
+    static const std::regex width(R"(rco[-_](\d+)(?:p(\d+)|\.(\d+))?)", std::regex::icase);
+    std::smatch             m;
+    if (std::regex_search(name, m, width)) {
+        const std::string frac = m[2].matched ? m[2].str() : m[3].str();
+        return "GSQ-RCO " + m[1].str() + (frac.empty() ? "" : "." + frac);
+    }
+    return "GSQ-RCO " + name;
+}
+
 
 // ============================================================== public API
 

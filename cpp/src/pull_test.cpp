@@ -232,6 +232,18 @@ void test_fp4_borrow() {
     check(!quantized_from(m, "Qwen/Qwen3.8-Flash-Next"), "a fine-tune that ships GGUFs is not");
     m.tags = {"base_model:quantized:Qwen/Qwen3.8-Flash-Next"};
     check(!quantized_from(m, "Qwen/Qwen3.8-Flash-Next"), "a quantization that is not a GGUF is not");
+
+    // sainez/MiMo-V2.6-Distill-Qwen-9B-GSQ-RCO-GGUF: one build whose file carries no quant tag
+    std::vector<HfFile> mimo(2);
+    mimo[0].name = "MiMo-V2.6-9B-gsq-rco-3p5-q4io.gguf";
+    mimo[0].size = 3911259680;
+    mimo[1].name = "dflash2_p40/mimo-dflash-v1-Q4_K_M.gguf";
+    mimo[1].size = 400000000;
+    const std::vector<QuantInfo> listed = quants_of(mimo);
+    check(listed.size() == 1 && listed[0].name == "MiMo-V2.6-9B-gsq-rco-3p5-q4io", "a tagless build is listed by its file");
+    check(build_offered(mimo, listed[0].name), "and pulling it by that name is allowed");
+    check(build_offered(mimo, "mimo-v2.6-9b-gsq-rco-3p5-q4io"), "in any case");
+    check(!build_offered(mimo, "Q8_0"), "a build it does not have is still refused");
 }
 
 void test_kind_of() {

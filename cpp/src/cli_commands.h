@@ -56,6 +56,9 @@ struct BuildChoice {
 double bits_of(const std::string & quant_name);
 Tiers  tiers_of(const std::vector<QuantInfo> & quants);
 
+// How a GSQ-RCO build reads in the picker: "GSQ-RCO IQ3_S", or "GSQ-RCO 3.5" for a file named by its width.
+std::string gsq_desc(const std::string & name);
+
 // What the custom-build prompt draws: the build against the published one
 // closest to it in size, as plain lines the caller styles whole.
 const QuantInfo *        nearest_by_size(const std::vector<QuantInfo> & plain, int64_t size);

@@ -119,6 +119,10 @@ struct QuantInfo {
 };
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files);
 
+// Whether `quant` names a build of these files: its quant tag, or the name the list gives a build whose file carries
+// none (MiMo-V2.6-9B-gsq-rco-3p5-q4io), so a pull takes whatever the picker offered.
+bool build_offered(const std::vector<HfFile> & files, const std::string & quant);
+
 // Bits per weight a quantisation name implies: BF16 is 16, not 1, and a
 // custom build carries its own budget.
 double bits_of_quant(const std::string & quant);

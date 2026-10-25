@@ -156,6 +156,9 @@ void test_tiers_of() {
         const std::vector<QuantInfo> mx{Q("Q4_K_M", 5), Q("MXFP4_MOE", 6), Q("Q8_0", 9)};
         eq_str(mx[tiers_of(mx, true).medium].name, "MXFP4_MOE", "tiers medium on Blackwell falls back to MXFP4");
         eq_str(mx[tiers_of(mx, false).medium].name, "Q4_K_M", "elsewhere MXFP4 keeps its own row");
+        eq_str(gsq_desc("MiMo-V2.6-9B-gsq-rco-3p5-q4io"), "GSQ-RCO 3.5", "a GSQ-RCO file named by its width reads as one");
+        eq_str(gsq_desc("IQ3_S"), "GSQ-RCO IQ3_S", "one named by its type keeps the type");
+        eq_str(gsq_desc("Model-GSQ-RCO-3"), "GSQ-RCO 3", "a whole width");
     }
     {
         // the named builds win outright, whatever their order or size

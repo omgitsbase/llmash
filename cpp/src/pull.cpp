@@ -1686,6 +1686,15 @@ std::string other_formats_text(const std::set<std::string> & exts) {
     return out;
 }
 
+bool build_offered(const std::vector<HfFile> & files, const std::string & quant) {
+    const std::vector<HfFile> want = pick_gguf(files, quant);
+    if (!want.empty() && equal_fold(quant_tag(want.front().name), quant)) {
+        return true;
+    }
+    const std::vector<QuantInfo> builds = quants_of(files);
+    return std::any_of(builds.begin(), builds.end(), [&](const QuantInfo & b) { return equal_fold(b.name, quant); });
+}
+
 std::vector<HfFile> pick_gguf(const std::vector<HfFile> & files, const std::string & quant) {
     std::vector<HfFile> builds;
     for (const auto & f : files) {
@@ -4069,8 +4078,7 @@ void run_pull(const json & body, const Config & cfg, Registry & reg, const Emit 
         // the nearest one instead has meant a tens-of-gigabytes download of a
         // build nobody asked for, and with --yes nothing stops to say so.
         if (!quant.empty() && rco_bpw_of_quant(q) <= 0) {
-            const std::vector<HfFile> want = pick_gguf(files, q);
-            if (!want.empty() && !equal_fold(quant_tag(want.front().name), q)) {
+            if (!pick_gguf(files, q).empty() && !build_offered(files, q)) {
                 std::string has;
                 for (const QuantInfo & o : quants_of(files)) {
                     has += (has.empty() ? "" : ", ") + o.name;
