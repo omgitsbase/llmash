@@ -85,4 +85,7 @@ std::string partial_name(const std::string & path);
 // The display name a loose file gets when nothing else names it.
 std::string loose_name(const std::string & path);
 
+// A sharded model weighs all its shards, not the first one it is listed by.
+uint64_t model_bytes(const std::string & path);
+
 } // namespace llmash

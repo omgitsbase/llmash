@@ -5,6 +5,7 @@
 // it as a sidecar beside them.
 
 #include "config.h"
+#include "gguf_io.h"
 #include "pull.h"
 #include "registry.h"
 
@@ -29,6 +30,7 @@ struct DraftCand {
     int                      score = 0;
     std::string              note;
     bool                     embedded = false; // an MTP head inside a full build: only the head is fetched
+    int64_t                  fetch    = 0;     // what installing it downloads, once fits_target has looked
     std::string              via;             // the model it was trained on, when that is not this model
 };
 
@@ -103,6 +105,15 @@ std::string spec_of_url(const std::string & url, GGUFSpec & out, bool & unreadab
 
 // Why a drafter cannot serve a target, or "" if it can.
 std::string pairs(const GGUFSpec & target, const GGUFSpec & draft);
+
+// What a head taken out of a full build is made of: the head's own block from the remote build, and the embedding,
+// output and final norm from the model on disk when it has them at the same shape. False when the build has no head.
+struct HeadPart {
+    ggufio::TensorEntry t;
+    bool                local = false;
+};
+bool mtp_head_parts(const ggufio::Layout & remote, const ggufio::Layout & here, std::vector<HeadPart> & plan,
+                    std::string & err);
 
 // pairs() for a candidate not yet downloaded: its header is range-fetched.
 // Reads the candidate's header; a file that turns out to hold an MTP head on its own is re-labelled as one.

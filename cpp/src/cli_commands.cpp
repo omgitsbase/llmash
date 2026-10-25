@@ -853,8 +853,10 @@ std::string install_draft_shown(const Model & m, const DraftCand & c, const Conf
     if (const std::string dest = draft_path(m, *c.kind, cfg); file_exists(dest)) {
         return dest;
     }
-    Progress   p;
-    const auto bar = std::make_shared<ProgBar>("pulling " + fs::path(c.file).filename().string() + ":", c.size, 0);
+    Progress          p;
+    const std::string what = c.embedded ? "the MTP head from " + fs::path(c.file).filename().string()
+                                        : fs::path(c.file).filename().string();
+    const auto        bar  = std::make_shared<ProgBar>("pulling " + what + ":", c.fetch > 0 ? c.fetch : c.size, 0);
     p.add(bar);
     const std::string path = install_draft(m, c, cfg, [&](int64_t done) { bar->set(done); }, err);
     p.stop();
@@ -875,6 +877,33 @@ void say_where(ApiClient & api, const std::string & name) {
         std::printf("  %s%s%s\n", kDim, m->path.c_str(), kReset);
     }
     std::printf("  %s%s run %s%s\n", kDim, prog().c_str(), name.c_str(), kReset);
+}
+
+// The drafters that fit as a menu: kind, repository, what comes down, and a last row for none. The candidate's index,
+// or -1 for none.
+int pick_drafter(const std::string & title, const std::vector<DraftCand> & fit) {
+    size_t width = 0;
+    for (const DraftCand & c : fit) {
+        width = std::max(width, c.repo.size());
+    }
+    std::vector<std::string> rows;
+    for (const DraftCand & c : fit) {
+        const std::string kind = c.kind != nullptr ? c.kind->name : "draft";
+        rows.push_back(pad_to(kind, 7, true) + " " + pad_to(c.repo, static_cast<int>(width), true) + " " +
+                       pad_to(human_bytes(c.fetch > 0 ? c.fetch : c.size), 9, false) +
+                       (c.embedded ? "  head only" : "") + (c.via.empty() ? "" : "  trained on " + c.via));
+    }
+    rows.push_back(pad_to("none", 7, true) + " keep the self-speculation it has");
+    if (!is_console_stdin() || !is_console_stdout()) {
+        std::printf("%s\n", title.c_str());
+        for (size_t i = 0; i + 1 < rows.size(); i++) {
+            std::printf("    %s\n", rows[i].c_str());
+        }
+        std::printf("  nothing to answer from, so none\n");
+        return -1;
+    }
+    const int n = pick_menu(title, rows, 0, kArrows + " move   enter choose   esc none", "");
+    return n >= 0 && n < static_cast<int>(fit.size()) ? n : -1;
 }
 
 // Runs at the end of a pull, and says nothing when there is nothing to offer.
@@ -908,17 +937,13 @@ void offer_draft(ApiClient & api, const std::string & name, bool yes) {
         std::printf("%snone that fit these weights%s\n", kDim, kReset);
         return;
     }
-    std::printf("\n  a drafter usually makes this model meaningfully faster. These fit:\n");
-    for (size_t i = 0; i < fit.size(); i++) {
-        std::printf("    %2d. %-56s %s\n", static_cast<int>(i + 1), fit[i].repo.c_str(), fit[i].note.c_str());
-    }
-    const int n = yes ? 1 : ask_number("  Install one? (0 for none)", 1, static_cast<int>(fit.size()));
-    if (n <= 0) {
+    const int n = yes ? 0 : pick_drafter("\n  a drafter usually makes this model meaningfully faster:", fit);
+    if (n < 0) {
         std::printf("  skipped. `%s pulldraft %s` does it later.\n", prog().c_str(), name.c_str());
         return;
     }
     std::string       err;
-    const std::string path = install_draft_shown(*m, fit[static_cast<size_t>(n - 1)], cfg, err);
+    const std::string path = install_draft_shown(*m, fit[static_cast<size_t>(n)], cfg, err);
     if (path.empty()) {
         std::printf("  could not install it: %s\n", err.c_str());
         return;
@@ -2747,22 +2772,15 @@ int pulldraft(const std::string & name, bool yes, bool force, const std::string 
                         spec_fallback().c_str(), verbose ? "" : " --verbose says why each was passed over.");
             return 0;
         }
-        if (yes || fit.size() == 1) {
+        if (yes) {
             std::printf("\nbest match: %s (%s)\n\n", fit[0].repo.c_str(), fit[0].note.c_str());
-            if (!yes && !confirm("Install it?")) {
-                return 0;
-            }
             return install(fit[0]);
         }
-        std::printf("\nthese fit, best first:\n");
-        for (size_t i = 0; i < fit.size(); i++) {
-            std::printf("  %d. %-58s %s\n", static_cast<int>(i + 1), fit[i].repo.c_str(), fit[i].note.c_str());
-        }
-        const int n = ask_number("Install which? (0 for none)", 1, static_cast<int>(fit.size()));
-        if (n <= 0) {
+        const int n = pick_drafter(fit.size() == 1 ? "\nthis one fits:" : "\nthese fit, best first:", fit);
+        if (n < 0) {
             return 0;
         }
-        return install(fit[static_cast<size_t>(n - 1)]);
+        return install(fit[static_cast<size_t>(n)]);
     } catch (const CliExit & e) {
         return e.code;
     }

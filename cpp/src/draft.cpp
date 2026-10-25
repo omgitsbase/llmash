@@ -994,6 +994,129 @@ std::string pairs(const GGUFSpec & target, const GGUFSpec & draft) {
     return "";
 }
 
+bool mtp_head_parts(const ggufio::Layout & remote, const ggufio::Layout & here, std::vector<HeadPart> & plan,
+                    std::string & err) {
+    int64_t layer = -1;
+    for (const auto & t : remote.tensors) {
+        if (t.name.rfind("blk.", 0) == 0 && t.name.find(".nextn.") != std::string::npos) {
+            layer = std::max<int64_t>(layer, std::atoll(t.name.c_str() + 4));
+        }
+    }
+    if (layer < 0) {
+        err = "the build carries no MTP head";
+        return false;
+    }
+    const std::string prefix = "blk." + std::to_string(layer) + ".";
+    plan.clear();
+    for (const auto & t : remote.tensors) {
+        if (t.name.rfind(prefix, 0) == 0) {
+            plan.push_back({t, false});
+        } else if (t.name == "token_embd.weight" || t.name == "output.weight" || t.name == "output_norm.weight") {
+            const ggufio::TensorEntry * own = nullptr;
+            for (const auto & o : here.tensors) {
+                if (here.error.empty() && o.name == t.name && o.dims == t.dims && o.part == 0) {
+                    own = &o;
+                    break;
+                }
+            }
+            plan.push_back(own != nullptr ? HeadPart{*own, true} : HeadPart{t, false});
+        }
+    }
+    return true;
+}
+
+static bool mtp_head_plan(const std::string & url, const std::string & local, ggufio::Layout & remote,
+                          ggufio::Layout & here, std::vector<HeadPart> & plan, std::string & err) {
+    std::string head;
+    for (const int64_t window : {32ll << 20, 128ll << 20}) {
+        if (!hub_head(url, window, head, err)) {
+            return false;
+        }
+        remote = ggufio::layout_from(head);
+        if (remote.error.empty()) {
+            break;
+        }
+    }
+    if (!remote.error.empty()) {
+        err = "could not read the build's header: " + remote.error;
+        return false;
+    }
+    here = local.empty() ? ggufio::Layout{} : ggufio::read_layout(local);
+    return mtp_head_parts(remote, here, plan, err);
+}
+
+// What installing an embedded head brings down: its block, and whatever of the rest the local model lacks.
+static int64_t mtp_head_fetch(const std::string & url, const std::string & local, std::string & err) {
+    ggufio::Layout        remote, here;
+    std::vector<HeadPart> plan;
+    if (!mtp_head_plan(url, local, remote, here, plan, err)) {
+        return -1;
+    }
+    int64_t bytes = 0;
+    for (const HeadPart & p : plan) {
+        bytes += p.local ? 0 : p.t.bytes;
+    }
+    return bytes;
+}
+
+// The head out of a full build: the file's own header (the runtime reads a sidecar as the model it belongs to) with
+// only the head's block fetched by its byte ranges, the embedding and the output read from the local model.
+static bool extract_mtp_head(const std::string & url, const std::string & local, const std::string & tmp,
+                             const ProgressFn & progress, std::string & err) {
+    ggufio::Layout        remote, here;
+    std::vector<HeadPart> plan;
+    if (!mtp_head_plan(url, local, remote, here, plan, err)) {
+        return false;
+    }
+    ggufio::Layout side = remote;
+    side.tensors.clear();
+    side.data_start.clear();
+    for (const HeadPart & p : plan) {
+        side.tensors.push_back(p.t);
+    }
+    if (ggufio::write_header(tmp, side, err) < 0) {
+        return false;
+    }
+    std::ofstream out(tmp, std::ios::binary | std::ios::app);
+    std::ifstream mine(local, std::ios::binary);
+    int64_t       done = 0;
+    for (const HeadPart & p : plan) {
+        const int64_t from = p.local ? here.file_offset(p.t) : remote.file_offset(p.t);
+        if (p.local) {
+            mine.seekg(from);
+        }
+        for (int64_t at = 0; at < p.t.bytes;) {
+            const int64_t     piece = std::min<int64_t>(p.t.bytes - at, 64ll << 20);
+            std::vector<char> buf(static_cast<size_t>(piece));
+            if (p.local) {
+                if (!mine.read(buf.data(), static_cast<std::streamsize>(piece))) {
+                    err = "could not read " + p.t.name + " from " + local;
+                    return false;
+                }
+            } else {
+                if (!hub_span(url, from + at, piece, buf.data(), err)) {
+                    return false;
+                }
+                done += piece;
+                if (progress) {
+                    progress(done);
+                }
+            }
+            out.write(buf.data(), static_cast<std::streamsize>(piece));
+            at += piece;
+        }
+        const int64_t pad = (p.t.bytes + side.align - 1) / side.align * side.align - p.t.bytes;
+        for (int64_t k = 0; k < pad; k++) {
+            out.put('\0');
+        }
+    }
+    if (!out) {
+        err = "could not write " + tmp;
+        return false;
+    }
+    return true;
+}
+
 std::string fits_target(const Model & m, DraftCand & c) {
     GGUFSpec target;
     if (!spec_of_file(m.path, target).empty()) {
@@ -1022,83 +1145,34 @@ std::string fits_target(const Model & m, DraftCand & c) {
     if (draft.nextn_layer >= 0 && draft.tensors < 64 && (c.kind == nullptr || c.kind->name != "mtp")) {
         c.kind     = &draft_kinds()[0];
         c.embedded = false;
-        c.note     = "MTP head, " + human_bytes(c.size);
+        c.note     = "MTP head";
         c.score    = std::max(c.score, c.kind->rank);
     }
+    // a drafter half the size of the model or more is another copy of the model, not something that drafts for it
+    const int64_t own   = static_cast<int64_t>(m.size > 0 ? m.size : model_bytes(m.path));
+    const bool    whole = own > 0 && c.size * 2 > own;
+    // a whole build that carries its head, named for one or as big as the model: only the head is taken out of it
+    if (draft.nextn_layer >= 0 && draft.tensors >= 64 && (whole || (c.kind != nullptr && c.kind->name == "mtp"))) {
+        c.kind     = &draft_kinds()[0];
+        c.embedded = true;
+        c.score    = std::max(c.score, c.kind->rank);
+    }
+    if (c.embedded) {
+        std::string   ferr;
+        const int64_t fetch = mtp_head_fetch(hf_download_url(c.repo, c.file), m.path, ferr);
+        if (fetch < 0) {
+            return ferr;
+        }
+        c.fetch = fetch;
+        c.note  = "MTP head, " + human_bytes(fetch) + " out of a full build";
+    } else {
+        c.fetch = c.size;
+        if (whole) {
+            return "at " + human_bytes(c.size) + " it is as big as the " + human_bytes(own) +
+                   " model itself, not a drafter for it";
+        }
+    }
     return pairs(target, draft);
-}
-
-// The head out of a full build: the file's own header (the runtime reads a sidecar as the model it belongs to)
-// with only the head's block, the embedding and the output kept, each fetched by its byte range.
-static bool extract_mtp_head(const std::string & url, const std::string & tmp, const ProgressFn & progress,
-                             std::string & err) {
-    std::string    head;
-    ggufio::Layout l;
-    for (const int64_t window : {32ll << 20, 128ll << 20}) {
-        if (!hub_head(url, window, head, err)) {
-            return false;
-        }
-        l = ggufio::layout_from(head);
-        if (l.error.empty()) {
-            break;
-        }
-    }
-    if (!l.error.empty()) {
-        err = "could not read the build's header: " + l.error;
-        return false;
-    }
-    int64_t layer = -1;
-    for (const auto & t : l.tensors) {
-        if (t.name.rfind("blk.", 0) == 0 && t.name.find(".nextn.") != std::string::npos) {
-            layer = std::max<int64_t>(layer, std::atoll(t.name.c_str() + 4));
-        }
-    }
-    if (layer < 0) {
-        err = "the build carries no MTP head";
-        return false;
-    }
-    ggufio::Layout side = l;
-    side.tensors.clear();
-    side.data_start.clear();
-    const std::string prefix = "blk." + std::to_string(layer) + ".";
-    int64_t           total  = 0;
-    for (const auto & t : l.tensors) {
-        if (t.name.rfind(prefix, 0) == 0 || t.name == "token_embd.weight" || t.name == "output.weight" ||
-            t.name == "output_norm.weight") {
-            side.tensors.push_back(t);
-            total += t.bytes;
-        }
-    }
-    if (ggufio::write_header(tmp, side, err) < 0) {
-        return false;
-    }
-    std::ofstream out(tmp, std::ios::binary | std::ios::app);
-    int64_t       done = 0;
-    for (const auto & t : side.tensors) {
-        const int64_t from = l.file_offset(t);
-        for (int64_t at = 0; at < t.bytes;) {
-            const int64_t     piece = std::min<int64_t>(t.bytes - at, 64ll << 20);
-            std::vector<char> buf(static_cast<size_t>(piece));
-            if (!hub_span(url, from + at, piece, buf.data(), err)) {
-                return false;
-            }
-            out.write(buf.data(), static_cast<std::streamsize>(piece));
-            at += piece;
-            done += piece;
-            if (progress) {
-                progress(done);
-            }
-        }
-        const int64_t pad = (t.bytes + l.align - 1) / l.align * l.align - t.bytes;
-        for (int64_t k = 0; k < pad; k++) {
-            out.put('\0');
-        }
-    }
-    if (!out) {
-        err = "could not write " + tmp;
-        return false;
-    }
-    return true;
 }
 
 // ============================================================= installing
@@ -1191,7 +1265,7 @@ std::string install_draft(const Model & m, const DraftCand & c, const Config & c
     const std::string tmp = dest + ".part";
     fs::remove(tmp, ec);
 
-    const bool ok = c.embedded ? extract_mtp_head(hf_download_url(c.repo, c.file), tmp, progress, err)
+    const bool ok = c.embedded ? extract_mtp_head(hf_download_url(c.repo, c.file), m.path, tmp, progress, err)
                                : fetch_blocks(hf_download_url(c.repo, c.file), tmp, c.size, progress, err);
     if (!ok) {
         fs::remove(tmp, ec);

@@ -942,6 +942,36 @@ void test_identify() {
     check_eq(pairs(t, s), std::string(""), "a head at the layer after the model's last pairs");
     t.blocks = 40;
     check_eq(pairs(t, s), std::string("its MTP head sits after layer 32, and this model has 40"), "one for another depth does not");
+
+    // a head taken out of a full build: its block comes down, the embedding and output come off the model on disk
+    GgufBuilder full;
+    full.kv_string("general.architecture", "qwen35");
+    full.tensor("token_embd.weight", {64, 200});
+    full.tensor("blk.31.attn_q.weight", {64, 64});
+    full.tensor("blk.32.nextn.eh_proj.weight", {128, 64});
+    full.tensor("blk.32.attn_q.weight", {64, 64});
+    full.tensor("output_norm.weight", {64});
+    full.tensor("output.weight", {64, 200});
+    GgufBuilder mine;
+    mine.kv_string("general.architecture", "qwen35");
+    mine.tensor("token_embd.weight", {64, 200});
+    mine.tensor("blk.31.attn_q.weight", {64, 64});
+    mine.tensor("output_norm.weight", {64});
+    mine.tensor("output.weight", {64, 100});
+    std::vector<HeadPart> plan;
+    check(mtp_head_parts(ggufio::layout_from(full.bytes()), ggufio::layout_from(mine.bytes()), plan, err),
+          "a full build with a head gives a plan");
+    std::string fetched, kept;
+    for (const HeadPart & p : plan) {
+        (p.local ? kept : fetched) += p.t.name + " ";
+    }
+    check_eq(fetched, std::string("blk.32.nextn.eh_proj.weight blk.32.attn_q.weight output.weight "),
+             "the head's block comes down, and an output of another shape with it");
+    check_eq(kept, std::string("token_embd.weight output_norm.weight "),
+             "the embedding and final norm are the model's own");
+    check(!mtp_head_parts(ggufio::layout_from(mine.bytes()), ggufio::Layout{}, plan, err) &&
+              err == "the build carries no MTP head",
+          "a build without a head has nothing to take");
 }
 
 void test_model_stem() {

@@ -425,7 +425,8 @@ when several fit:
 - an EAGLE-3, DFlash, DSpark or plain draft model published for it;
 - Gemma 4's assistant drafter, which Google publishes for each of its models;
 - the MTP head out of a full build that carries one (an `-MTP` GGUF): only the
-  head is fetched, as a sidecar, so a build without its head gets one back;
+  head's own layer is fetched (258 MB for a 9B), the embedding and output are
+  copied from the model on disk, and a build without its head gets one back;
 - for a fine-tune with nothing under its own name, the drafters of the model it
   was tuned from, marked as such; they share its vocabulary but accept fewer tokens.
 
