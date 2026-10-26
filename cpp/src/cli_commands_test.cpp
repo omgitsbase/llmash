@@ -4,6 +4,7 @@
 // list and ps drive, against a fake /api/tags-shaped document.
 
 #include "cli_commands.h"
+#include "cli_console.h"
 #include "cli_format.h"
 #include "config.h"
 #include "draft.h"
@@ -510,6 +511,73 @@ void test_prog() {
     set_prog(was);
 }
 
+// The escape sequences out, so a frame reads as it shows on screen.
+std::string plain(const std::string & s) {
+    std::string out;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '\x1b' && i + 1 < s.size() && s[i + 1] == '[') {
+            i += 2;
+            while (i < s.size() && !(s[i] >= 0x40 && s[i] <= 0x7e)) {
+                i++;
+            }
+            continue;
+        }
+        out += s[i];
+    }
+    return out;
+}
+
+void test_menu() {
+    Menu m;
+    m.question = "Pull which build?";
+    m.rows     = {"medium  Q4_K_M", "large   Q8_0", "custom  RCO-3"};
+    m.notes    = {"", "", "3 bits"};
+    m.keys     = {{'a', "all builds"}};
+    m.cursor   = 1;
+
+    const std::vector<std::string> f = menu_frame(m, 1, 40);
+    check(f.size() == 5, "a frame is the question, every row and the hint");
+    eq_str(plain(f[0]), "? Pull which build?", "the question leads with ?");
+    eq_str(plain(f[1]), "    medium  Q4_K_M", "an unselected row is indented past the cursor");
+    eq_str(plain(f[2]), "  \xe2\x9d\xaf large   Q8_0", "the selected row carries the cursor");
+    eq_str(plain(f[3]), "    custom  RCO-3    3 bits", "a note sits three columns past the widest row");
+    eq_str(plain(f[4]), "  \xe2\x86\x91\xe2\x86\x93 move \xc2\xb7 enter select \xc2\xb7 a all builds \xc2\xb7 esc cancel",
+           "every hint starts the same and names the extra keys");
+
+    Menu tall;
+    tall.question = "Which?";
+    for (int i = 0; i < 30; i++) {
+        tall.rows.push_back("row " + std::to_string(i));
+    }
+    const std::vector<std::string> t = menu_frame(tall, 20, 10);
+    check(static_cast<int>(t.size()) <= 10, "a long list fits the height it is given");
+    eq_str(plain(t[1]).substr(0, 9), "    \xe2\x86\x91 1", "rows above the window are counted");
+    check(plain(t[t.size() - 2]).find("more") != std::string::npos, "and so are the rows below it");
+    bool cursor_shown = false;
+    for (const std::string & l : t) {
+        cursor_shown = cursor_shown || plain(l).find("row 20") != std::string::npos;
+    }
+    check(cursor_shown, "the window follows the cursor");
+
+    eq_str(plain(menu_folded("Pull which build?", "Q4_K_M", false)), "\xe2\x9c\x93 Pull which build? Q4_K_M",
+           "an answered menu folds to its question and answer");
+    eq_str(plain(menu_folded("Pull which build?", "cancel", true)), "\xe2\x9c\x97 Pull which build? cancel",
+           "an escaped one says so");
+    eq_str(key_hint({{'c', "copy link"}, {'k', "copy key"}}, "done"),
+           "c copy link \xc2\xb7 k copy key \xc2\xb7 esc done", "a key bar uses the menus' words");
+
+    check(display_width("\x1b[1mab\x1b[0m") == 2, "escape sequences take no columns");
+    check(display_width("\xe2\x9d\xaf x") == 3, "a UTF-8 character takes one");
+
+    const auto keys = [](std::vector<int> bytes) {
+        size_t i = 0;
+        return read_pick([&]() { return i < bytes.size() ? bytes[i++] : 0; });
+    };
+    check(keys({0xE0, 0x48}) == kPickUp && keys({0xE0, 0x50}) == kPickDown, "arrows up and down");
+    check(keys({0xE0, 0x4D}) == kPickRight && keys({0xE0, 0x4B}) == kPickLeft, "arrows right and left");
+    check(keys({'\r'}) == kPickEnter && keys({0x1b}) == kPickEsc && keys({0x03}) == kPickEsc, "enter, esc, ctrl-c");
+}
+
 } // namespace
 
 int main() {
@@ -531,6 +599,7 @@ int main() {
     test_build_rows();
     test_tradeoff();
     test_prog();
+    test_menu();
 
     std::printf("%s: %d checks, %d failed\n", g_failed == 0 ? "PASS" : "FAIL", g_ran, g_failed);
     return g_failed == 0 ? 0 : 1;

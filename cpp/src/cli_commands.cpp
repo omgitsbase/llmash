@@ -66,10 +66,6 @@ namespace {
 
 std::string g_prog = "llmash";
 
-// U+2191 U+2193 as UTF-8 bytes: a narrow literal is otherwise transcoded to
-// the compiler's execution code page, which has no arrows.
-const std::string kArrows = "\xe2\x86\x91\xe2\x86\x93";
-
 std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
@@ -526,19 +522,8 @@ bool confirm_custom(const QuantInfo & custom, const std::vector<QuantInfo> & pla
     }
     std::printf("\n  %sBits go where they change the answer; this one is %s.%s\n", kDim,
                 rco_pitch_text(rco_bpw_of_quant(custom.name)).c_str(), kReset);
-    std::printf("  %sAssembled here; not the published GSQ-RCO build.%s\n", kDim, kReset);
-    for (;;) {
-        std::printf("\nBuild it? [Y/n] ");
-        const int k = read_pick([]() { return raw_getch(); });
-        if (k == 'y' || k == 'Y' || k == kPickEnter) {
-            std::printf("yes\n");
-            return true;
-        }
-        if (k == 'n' || k == 'N' || k == kPickEsc) {
-            std::printf("no\n\n");
-            return false;
-        }
-    }
+    std::printf("  %sAssembled here; not the published GSQ-RCO build.%s\n\n", kDim, kReset);
+    return ask_yes("Build it?");
 }
 
 // A custom build is a target width, not one build, so choosing it opens them.
@@ -546,24 +531,26 @@ std::string choose_width(const std::vector<QuantInfo> & custom, const std::vecto
                          const std::string & start, const std::string & source) {
     std::vector<QuantInfo> rungs = custom;
     std::sort(rungs.begin(), rungs.end(), [](const QuantInfo & a, const QuantInfo & b) { return a.size < b.size; });
-    std::vector<std::string> rows;
-    int                      cursor = 0;
+    Menu menu;
+    menu.question = "How small?";
+    menu.esc      = "back";
     for (size_t i = 0; i < rungs.size(); i++) {
         // every rung is read from the same source, so the bandwidth is the same
         // on all of them; what separates them is the size kept and the quality
-        rows.push_back(pad_to(rco_row_label(rungs[i].name), 8, true) + " " +
-                       pad_to("about " + human_bytes(rungs[i].size), 13, true) + "  " +
-                       rco_pitch_text(rco_bpw_of_quant(rungs[i].name)));
+        menu.rows.push_back(pad_to(rco_row_label(rungs[i].name), 8, true) + " " +
+                            pad_to("about " + human_bytes(rungs[i].size), 13, true));
+        menu.notes.push_back(rco_pitch_text(rco_bpw_of_quant(rungs[i].name)));
+        menu.answers.push_back(rungs[i].name);
         if (equal_fold(rungs[i].name, start)) {
-            cursor = static_cast<int>(i);
+            menu.cursor = static_cast<int>(i);
         }
     }
     for (;;) {
-        const int n = pick_menu("how small?", rows, cursor, kArrows + " move   enter choose   esc back", "");
+        const int n = choose(menu);
         if (n < 0) {
             return "";
         }
-        cursor = n;
+        menu.cursor = n;
         if (confirm_custom(rungs[static_cast<size_t>(n)], plain, source)) {
             return rungs[static_cast<size_t>(n)].name;
         }
@@ -582,7 +569,10 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
     if (!from.empty()) {
         choice.repo = "hf:" + repo;
     }
-    const std::string head = from.empty() ? title : from + " holds no GGUF build, so these are " + repo + "'s:";
+    const std::string head = from.empty() ? title : "Which build of " + repo + "?";
+    if (!from.empty()) {
+        std::printf("%s%s holds no GGUF build, so these are %s's%s\n", kDim, from.c_str(), repo.c_str(), kReset);
+    }
 
     // a GSQ-RCO repository's own builds are what it is for, whatever their files are called
     const bool gsq_repo = lower(repo).find("gsq-rco") != std::string::npos;
@@ -695,12 +685,16 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         return choice; // one build is not a choice
     }
 
-    const auto texts = [](const std::vector<Row> & rows) {
-        std::vector<std::string> out;
+    const auto menu_of = [&](const std::vector<Row> & rows, bool all, int cursor) {
+        Menu m;
+        m.question = all ? "Which build of " + repo + "? (every build)" : head;
+        m.cursor   = cursor;
+        m.keys     = {{'a', all ? "fewer builds" : "all builds"}};
         for (const Row & r : rows) {
-            out.push_back(r.text);
+            m.rows.push_back(r.text);
+            m.answers.push_back(r.registry ? "the Ollama build" : r.quant);
         }
-        return out;
+        return m;
     };
     const auto find_row = [](const std::vector<Row> & rows, const std::string & want) {
         for (size_t i = 0; i < rows.size(); i++) {
@@ -731,10 +725,7 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
                                    : (quant.empty() ? default_row() : std::max(find_row(basic, quant), 0));
     for (;;) {
         const std::vector<Row> & rows = showing_all ? full : basic;
-        const int                n =
-            showing_all ? pick_menu(repo + ", every build:", texts(full), cursor,
-                                    kArrows + " move   enter choose   a back", "aA")
-                        : pick_menu(head, texts(basic), cursor, kArrows + " move   enter choose   a all builds", "aA");
+        const int                n    = choose(menu_of(rows, showing_all, cursor));
         if (n == -1) {
             throw CliExit(1);
         }
@@ -789,33 +780,26 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
             break;
         }
     }
-    std::printf("Use the suggested MTP head, %s (%s)? [Y/n/a] ", names[static_cast<size_t>(def)].c_str(),
-                human_bytes(sizes[static_cast<size_t>(def)]).c_str());
-    for (;;) {
-        const int k = read_pick([]() { return raw_getch(); });
-        if (k == 'y' || k == 'Y' || k == kPickEnter) {
-            std::printf("yes\n");
-            choice.mtp = names[static_cast<size_t>(def)];
-            return choice;
-        }
-        if (k == 'n' || k == 'N' || k == kPickEsc) {
-            std::printf("no\n");
-            return choice;
-        }
-        if (k == 'a' || k == 'A') {
-            std::printf("choose\n");
-            std::vector<std::string> rows{"none"};
-            for (size_t i = 0; i < names.size(); i++) {
-                rows.push_back(pad_to(names[i], 40, true) + " " + pad_to(human_bytes(sizes[i]), 8, false));
-            }
-            const int n = pick_menu("MTP heads:", rows, def + 1, kArrows + " move   enter choose", "");
-            if (n <= 0) {
-                return choice;
-            }
-            choice.mtp = names[static_cast<size_t>(n - 1)];
-            return choice;
-        }
+    Menu menu;
+    menu.question = "Which MTP head?";
+    menu.cursor   = def;
+    menu.esc      = "none";
+    size_t width  = 0;
+    for (const std::string & n : names) {
+        width = std::max(width, n.size());
     }
+    for (size_t i = 0; i < names.size(); i++) {
+        menu.rows.push_back(pad_to(names[i], static_cast<int>(width), true) + "  " + pad_to(human_bytes(sizes[i]), 8, false));
+        menu.notes.push_back(static_cast<int>(i) == def ? "suggested" : "");
+        menu.answers.push_back(names[i]);
+    }
+    menu.rows.push_back("none");
+    menu.notes.push_back("keep the self-speculation it has");
+    const int n = choose(menu);
+    if (n >= 0 && n < static_cast<int>(names.size())) {
+        choice.mtp = names[static_cast<size_t>(n)];
+    }
+    return choice;
 }
 
 // ------------------------------------------------------------- drafters
@@ -881,28 +865,25 @@ void say_where(ApiClient & api, const std::string & name) {
 
 // The drafters that fit as a menu: kind, repository, what comes down, and a last row for none. The candidate's index,
 // or -1 for none.
-int pick_drafter(const std::string & title, const std::vector<DraftCand> & fit) {
+int pick_drafter(const std::string & question, const std::vector<DraftCand> & fit) {
     size_t width = 0;
     for (const DraftCand & c : fit) {
         width = std::max(width, c.repo.size());
     }
-    std::vector<std::string> rows;
+    Menu menu;
+    menu.question = question;
+    menu.esc      = "none";
     for (const DraftCand & c : fit) {
         const std::string kind = c.kind != nullptr ? c.kind->name : "draft";
-        rows.push_back(pad_to(kind, 7, true) + " " + pad_to(c.repo, static_cast<int>(width), true) + " " +
-                       pad_to(human_bytes(c.fetch > 0 ? c.fetch : c.size), 9, false) +
-                       (c.embedded ? "  head only" : "") + (c.via.empty() ? "" : "  trained on " + c.via));
+        menu.rows.push_back(pad_to(kind, 7, true) + " " + pad_to(c.repo, static_cast<int>(width), true) + " " +
+                            pad_to(human_bytes(c.fetch > 0 ? c.fetch : c.size), 9, false));
+        menu.notes.push_back(std::string(c.embedded ? "head only" : "") + (c.embedded && !c.via.empty() ? ", " : "") +
+                             (c.via.empty() ? "" : "trained on " + c.via));
+        menu.answers.push_back(c.repo);
     }
-    rows.push_back(pad_to("none", 7, true) + " keep the self-speculation it has");
-    if (!is_console_stdin() || !is_console_stdout()) {
-        std::printf("%s\n", title.c_str());
-        for (size_t i = 0; i + 1 < rows.size(); i++) {
-            std::printf("    %s\n", rows[i].c_str());
-        }
-        std::printf("  nothing to answer from, so none\n");
-        return -1;
-    }
-    const int n = pick_menu(title, rows, 0, kArrows + " move   enter choose   esc none", "");
+    menu.rows.push_back(pad_to("none", 7, true));
+    menu.notes.push_back("keep the self-speculation it has");
+    const int n = choose(menu);
     return n >= 0 && n < static_cast<int>(fit.size()) ? n : -1;
 }
 
@@ -937,7 +918,10 @@ void offer_draft(ApiClient & api, const std::string & name, bool yes) {
         std::printf("%snone that fit these weights%s\n", kDim, kReset);
         return;
     }
-    const int n = yes ? 0 : pick_drafter("\n  a drafter usually makes this model meaningfully faster:", fit);
+    if (!yes) {
+        std::printf("\n%sa drafter usually makes this model meaningfully faster%s\n", kDim, kReset);
+    }
+    const int n = yes ? 0 : pick_drafter("Install which drafter?", fit);
     if (n < 0) {
         std::printf("  skipped. `%s pulldraft %s` does it later.\n", prog().c_str(), name.c_str());
         return;
@@ -999,9 +983,9 @@ std::string tailnet_name(const std::string & ts) {
 
 void report_copy(bool ok, const std::string & what) {
     if (ok) {
-        std::printf("  %s%s%s\n", kGreen, what.c_str(), kReset);
+        std::printf("%s\xe2\x9c\x93%s %s\n", kGreen, kReset, what.c_str());
     } else {
-        std::printf("  (copy failed)\n");
+        std::printf("%s\xe2\x9c\x97 could not copy it%s\n", kDim, kReset);
     }
 }
 
@@ -1868,7 +1852,7 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
             // its own build joins the repository's in the one menu.
             const std::string hf   = j_str(d, "repo");
             const QuantInfo   here = {j_str(d, "quant"), static_cast<int64_t>(j_num(d, "size")), 1};
-            const BuildChoice c    = choose_build(api, "hf:" + hf, "", here, model + ", which build?");
+            const BuildChoice c    = choose_build(api, "hf:" + hf, "", here, "Which build of " + model + "?");
             if (!c.registry) {
                 repo  = c.repo.empty() ? "hf:" + hf : c.repo;
                 as    = model;
@@ -1879,7 +1863,7 @@ void do_pull(ApiClient & api, const std::string & model, std::string quant, bool
         }
     }
     if (!repo.empty() && interactive && !picked && repo.find('@') == std::string::npos) {
-        const BuildChoice c = choose_build(api, repo, quant, std::nullopt, repo + ", which build?");
+        const BuildChoice c = choose_build(api, repo, quant, std::nullopt, "Which build of " + repo + "?");
         quant               = c.quant;
         mtp                 = c.mtp;
         if (!c.repo.empty()) {
@@ -2238,14 +2222,10 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
             if (!tty) {
                 die("Refusing to ablate '" + name + "' without confirmation. Re-run with --yes.");
             }
-            std::printf("Ablate '%s'? This removes its refusal behaviour (uncensors it). [y/N] ", name.c_str());
-            std::fflush(stdout);
-            const int k = read_pick([]() { return raw_getch(); });
-            if (!(k == 'y' || k == 'Y')) {
-                std::printf("no\n");
+            std::printf("%sthis removes its refusal behaviour (uncensors it)%s\n", kDim, kReset);
+            if (!ask_yes("Ablate " + name + "?", false)) {
                 return 1;
             }
-            std::printf("yes\n");
         }
 
         const std::string dd = (fs::path(cfg.root) / "ablate-data").string();
@@ -2525,8 +2505,8 @@ int cmd_link(const std::vector<std::string> & args, const Config & cfg) {
         if (!is_console_stdin() || !is_console_stdout()) {
             return 0;
         }
-        std::printf("  %sc%s copy link   %sk%s copy key   %sq%s done %s(tunnel stays up in the background)%s\n", kBold,
-                    kReset, kBold, kReset, kBold, kReset, kDim, kReset);
+        std::printf("  %s%s%s  %sthe tunnel stays up in the background%s\n", kDim,
+                    key_hint({{'c', "copy link"}, {'k', "copy key"}}, "done").c_str(), kReset, kDim, kReset);
         for (;;) {
             const int ch = raw_getch();
             if (ch == 'c' || ch == 'C') {
@@ -2735,7 +2715,7 @@ int pulldraft(const std::string & name, bool yes, bool force, const std::string 
             if (const std::string why = fits_target(*m, c); !why.empty()) {
                 die("Error: it does not pair with " + name + ": " + why);
             }
-            if (!yes && !confirm("Install it?")) {
+            if (!yes && !ask_yes("Install it?")) {
                 return 0;
             }
             return install(c);
@@ -2776,7 +2756,8 @@ int pulldraft(const std::string & name, bool yes, bool force, const std::string 
             std::printf("\nbest match: %s (%s)\n\n", fit[0].repo.c_str(), fit[0].note.c_str());
             return install(fit[0]);
         }
-        const int n = pick_drafter(fit.size() == 1 ? "\nthis one fits:" : "\nthese fit, best first:", fit);
+        std::printf("\n");
+        const int n = pick_drafter("Install which drafter?", fit);
         if (n < 0) {
             return 0;
         }

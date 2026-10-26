@@ -6,6 +6,7 @@ namespace llmash {
 int raw_key();
 
 int terminal_columns();
+int terminal_rows();
 
 bool stdin_is_terminal();
 bool stdout_is_terminal();

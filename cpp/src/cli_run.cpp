@@ -835,8 +835,9 @@ void fit_context(RunOptions & o, const json & info, int asked_ctx, bool interact
     const double fixed      = weights * 1.05 + j_num(f, "state_gb") + j_num(f, "compute_gb");
     const double per_tok    = j_num(f, "cache_gb") / asked;
     const double per_tok_q8 = j_num(f, "cache_gb_q8") / asked;
-    std::printf("\n%s at %s context needs %s on the card; %s is free.\n", o.model.c_str(), ctx_text(asked).c_str(),
-                gb_text(fixed + j_num(f, "cache_gb")).c_str(), gb_text(j_num(f, "free_gb")).c_str());
+    std::printf("\n%s%s at %s context needs %s on the card; %s is free%s\n", kDim, o.model.c_str(),
+                ctx_text(asked).c_str(), gb_text(fixed + j_num(f, "cache_gb")).c_str(),
+                gb_text(j_num(f, "free_gb")).c_str(), kReset);
     struct Choice { std::string text; int ctx; std::string kv; bool on_gpu; };
     std::vector<Choice> choices;
     choices.push_back({ctx_text(fitted) + " context, on the card", fitted, "", true});
@@ -844,20 +845,20 @@ void fit_context(RunOptions & o, const json & info, int asked_ctx, bool interact
         choices.push_back({ctx_text(fitted_q8) + " context, with a q8_0 cache", fitted_q8, "q8_0", true});
     }
     choices.push_back({ctx_text(asked) + " context, cache in system RAM", asked, "", false});
-    size_t width = 0;
-    for (const Choice & c : choices) width = std::max(width, c.text.size());
-    std::vector<std::string> rows;
+    Menu menu;
+    menu.question = "Run it at which context?";
+    menu.esc      = "let llmash decide";
     for (const Choice & c : choices) {
-        std::string note;
+        menu.rows.push_back(c.text);
+        menu.answers.push_back(ctx_text(c.ctx) + (c.on_gpu ? "" : ", cache in RAM"));
         if (!c.on_gpu) {
-            note = gb_text(per_tok * c.ctx) + " of RAM, slower as the chat grows";
+            menu.notes.push_back(gb_text(per_tok * c.ctx) + " of RAM, slower as the chat grows");
         } else {
-            note = "fits, " + gb_text(fixed + (c.kv == "q8_0" ? per_tok_q8 : per_tok) * c.ctx) +
-                   (c.kv == "q8_0" ? "; the cache keeps 8 bits" : "");
+            menu.notes.push_back("fits, " + gb_text(fixed + (c.kv == "q8_0" ? per_tok_q8 : per_tok) * c.ctx) +
+                                 (c.kv == "q8_0" ? "; the cache keeps 8 bits" : ""));
         }
-        rows.push_back(c.text + std::string(width - c.text.size() + 4, ' ') + note);
     }
-    const int n = pick_menu("Which?", rows, 0, "\xe2\x86\x91\xe2\x86\x93 move   enter choose   esc let llmash decide", "");
+    const int n = choose(menu);
     if (n < 0 || n >= static_cast<int>(choices.size())) {
         o.options["num_ctx"] = asked;
         return;
@@ -883,7 +884,7 @@ json show_or_pull(RunOptions & o) {
     auto [d, code] = show_model(o.model);
     if (code == 200) return d;
     if (code != 404) die("Error: " + first_of({j_str(d, "error"), "could not read that model"}));
-    if (is_console(stdin) && is_console(stdout) && !confirm(o.model + " is not on this machine. Pull it?")) {
+    if (is_console(stdin) && is_console(stdout) && !ask_yes(o.model + " is not on this machine. Pull it?")) {
         throw CliExit(1);
     }
     pull_model(o.model);
@@ -907,11 +908,14 @@ static void offer_drafter(const json & info, const std::string & name) {
     const std::string instead = spec_fallback().rfind("ngram", 0) == 0
                                     ? ", so it drafts by n-gram lookup, which only speeds up text the chat already holds"
                                     : "";
-    std::printf("%s has no MTP head or draft model%s.\n", name.c_str(), instead.c_str());
-    const int c = pick_menu("Look for a draft model on Hugging Face?",
-                            {"yes, look now", "no, and don't ask about " + name + " again",
-                             "no, and don't ask about any model again"},
-                            0, "\xe2\x86\x91\xe2\x86\x93 move   enter choose   esc ask me next time", "");
+    std::printf("%s%s has no MTP head or draft model%s%s\n", kDim, name.c_str(), instead.c_str(), kReset);
+    Menu menu;
+    menu.question = "Look for a draft model on Hugging Face?";
+    menu.rows     = {"yes, look now", "no, and don't ask about " + name + " again",
+                     "no, and don't ask about any model again"};
+    menu.answers  = {"yes", "no, not for " + name, "no, not for any model"};
+    menu.esc      = "ask me next time";
+    const int c   = choose(menu);
     if (c < 0) {
         return;
     }

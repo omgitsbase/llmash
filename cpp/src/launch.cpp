@@ -1,4 +1,5 @@
 #include "launch.h"
+#include "cli_console.h"
 #include "terminal.h"
 
 #include <httplib.h>
@@ -26,10 +27,6 @@ using json   = nlohmann::json;
 namespace llmash {
 
 namespace {
-
-constexpr const char * kDim   = "\x1b[2m";
-constexpr const char * kBold  = "\x1b[1m";
-constexpr const char * kReset = "\x1b[0m";
 
 bool file_exists(const std::string & p) {
     std::error_code ec;
@@ -348,40 +345,9 @@ std::string claude_default_model() {
 
 bool is_console() { return stdout_is_terminal() && stdin_is_terminal(); }
 
-// One raw key, matching the Go menu's arrow/enter/escape vocabulary: 'U'/'D'
-// for up/down, '\r' enter, 0x1b escape, plain characters pass through as-is.
-int read_key() {
-    int ch = raw_key();
-    if (ch == 0xE0 || ch == 0x00) {
-        switch (raw_key()) {
-            case 'H':
-                return 'U';
-            case 'P':
-                return 'D';
-            default:
-                return 0;
-        }
-    }
-    return ch;
-}
-
 struct Row {
     std::string key, title, subtitle;
 };
-
-// Redraws in place: moves the cursor up over the previous frame and clears
-// each line, mirroring the Go menu's "\x1b[F\x1b[2K" per line.
-void draw(int & drawn, const std::vector<std::string> & lines) {
-    for (int i = 0; i < drawn; i++) {
-        std::fputs("\x1b[F\x1b[2K", stdout);
-    }
-    for (const auto & l : lines) {
-        std::fputs(l.c_str(), stdout);
-        std::fputc('\n', stdout);
-    }
-    std::fflush(stdout);
-    drawn = static_cast<int>(lines.size());
-}
 
 std::string title_of(const std::string & key) {
     const auto it = integrations().find(key);
@@ -405,52 +371,30 @@ void pick_model(const Config & cfg, nlohmann::json & prof, const std::string & k
     if (installed.empty()) {
         installed = installed_models();
     }
-    int drawn = 0;
     if (installed.empty()) {
-        draw(drawn, {std::string(kBold) + "model for " + title_of(key) + kReset, "",
-                     "  couldn't reach llmash at " + ollama_host() + ". Start it, then press the arrow again", "",
-                     std::string(kDim) + "press any key to go back" + kReset});
-        raw_key();
+        std::printf("%s\xe2\x9c\x97 couldn't reach llmash at %s; start it, then press %s again%s\n", kDim,
+                    ollama_host().c_str(), "\xe2\x86\x92", kReset);
         return;
     }
-    int sel = 0;
+    Menu menu;
+    menu.question = "Which model for " + title_of(key) + "?";
+    menu.rows     = installed;
+    menu.esc      = "back";
     const std::string cur = model_of(prof, key, installed);
     for (size_t i = 0; i < installed.size(); i++) {
         if (installed[i] == cur) {
-            sel = static_cast<int>(i);
+            menu.cursor = static_cast<int>(i);
         }
     }
-    for (;;) {
-        std::vector<std::string> lines{std::string(kBold) + "model for " + title_of(key) + kReset, ""};
-        for (size_t i = 0; i < installed.size(); i++) {
-            const bool hl = static_cast<int>(i) == sel;
-            lines.push_back(std::string(hl ? "\xE2\x96\xB8 " : "  ") + (hl ? kBold : "") + installed[i] + kReset);
-        }
-        lines.push_back("");
-        lines.push_back(std::string(kDim) + "up/down navigate, enter select, esc back" + kReset);
-        draw(drawn, lines);
-        switch (const int k = read_key()) {
-            case 'U':
-                sel = (sel - 1 + static_cast<int>(installed.size())) % static_cast<int>(installed.size());
-                break;
-            case 'D':
-                sel = (sel + 1) % static_cast<int>(installed.size());
-                break;
-            case '\r':
-                if (!prof.contains(key) || !prof[key].is_object()) {
-                    prof[key] = json::object();
-                }
-                prof[key]["model"] = installed[sel];
-                save_profiles(cfg, prof);
-                return;
-            case 0x1b:
-            case 'q':
-                return;
-            default:
-                (void) k;
-                break;
-        }
+    const int n = choose(menu);
+    if (n < 0) {
+        return;
     }
+    if (!prof.contains(key) || !prof[key].is_object()) {
+        prof[key] = json::object();
+    }
+    prof[key]["model"] = installed[static_cast<size_t>(n)];
+    save_profiles(cfg, prof);
 }
 
 } // namespace
@@ -773,68 +717,45 @@ void launch_menu(const Config & cfg) {
     }
     json prof = load_profiles(cfg);
     const std::vector<Row> rows = {
-        {"claude", "Launch Claude Code", "Anthropic's coding tool with subagents"},
-        {"opencode", "Launch OpenCode", "Anomaly's open-source coding agent"},
-        {"hermes", "Launch Hermes Agent", "Self-improving AI agent built by Nous Research"},
-        {"openclaw", "Launch OpenClaw", "Personal AI with 100+ skills"},
+        {"claude", "Claude Code", "Anthropic's coding tool with subagents"},
+        {"opencode", "OpenCode", "Anomaly's open-source coding agent"},
+        {"hermes", "Hermes Agent", "Self-improving AI agent built by Nous Research"},
+        {"openclaw", "OpenClaw", "Personal AI with 100+ skills"},
     };
     std::vector<std::string> installed;
-    int                      sel   = 0;
-    int                      drawn = 0;
-    std::fputs("\x1b[?25l", stdout);
+    Menu                     menu;
+    menu.question = "Launch which tool?";
+    menu.esc      = "quit";
+    menu.keys     = {{kPickRight, "pick its model"}};
     for (;;) {
-        std::vector<std::string> lines{std::string(kBold) + "llmash" + kReset, "", "  Chat, Code, & Work",
-                                        std::string(kDim) +
-                                            "    Chat with models, code, search the web, and delegate real work" +
-                                            kReset,
-                                        ""};
-        for (size_t i = 0; i < rows.size(); i++) {
-            const bool        hl = static_cast<int>(i) == sel;
-            const std::string exe_installed = find_tool(integrations().at(rows[i].key).exe).empty() ? " (install)" : "";
-            std::string       suffix        = exe_installed;
-            if (rows[i].key == "claude") {
-                const std::string m = model_of(prof, rows[i].key, installed);
-                suffix = m.empty() ? "" : (" (" + m + ")");
+        menu.rows.clear();
+        menu.notes.clear();
+        menu.answers.clear();
+        for (const Row & r : rows) {
+            std::string suffix = find_tool(integrations().at(r.key).exe).empty() ? " (install)" : "";
+            if (r.key == "claude") {
+                const std::string m = model_of(prof, r.key, installed);
+                suffix              = m.empty() ? "" : " (" + m + ")";
             }
-            lines.push_back(std::string(hl ? "\xE2\x96\xB8 " : "  ") + (hl ? kBold : "") + rows[i].title + suffix +
-                             kReset);
-            lines.push_back(std::string(kDim) + "    " + rows[i].subtitle + kReset);
-            lines.push_back("");
+            menu.rows.push_back(r.title + suffix);
+            menu.notes.push_back(r.subtitle);
+            menu.answers.push_back(r.title);
         }
-        lines.push_back(std::string(kDim) + "up/down navigate, enter launch, right-arrow configure, esc quit" +
-                         kReset);
-        draw(drawn, lines);
-
-        int ch = raw_key();
-        if (ch == 0xE0 || ch == 0x00) {
-            switch (raw_key()) {
-                case 'H':
-                    sel = (sel - 1 + static_cast<int>(rows.size())) % static_cast<int>(rows.size());
-                    break;
-                case 'P':
-                    sel = (sel + 1) % static_cast<int>(rows.size());
-                    break;
-                case 'M':
-                    pick_model(cfg, prof, rows[sel].key, installed);
-                    break;
-                default:
-                    break;
-            }
+        int       at = menu.cursor;
+        const int n  = choose(menu, &at);
+        menu.cursor  = at;
+        if (n == -kPickRight) {
+            pick_model(cfg, prof, rows[static_cast<size_t>(at)].key, installed);
             continue;
         }
-        if (ch == '\r') {
-            std::fputs("\x1b[?25h\n", stdout);
-            const std::string model = model_of(prof, rows[sel].key, installed);
-            if (rows[sel].key == "claude") {
-                launch_claude(cfg, model, {});
-            }
-            launch_generic(rows[sel].key, model, {});
-        }
-        if (ch == 0x1b || ch == 'q' || ch == 0x03) {
-            std::fputc('\n', stdout);
-            std::fputs("\x1b[?25h", stdout);
+        if (n < 0) {
             std::exit(0);
         }
+        const std::string model = model_of(prof, rows[static_cast<size_t>(n)].key, installed);
+        if (rows[static_cast<size_t>(n)].key == "claude") {
+            launch_claude(cfg, model, {});
+        }
+        launch_generic(rows[static_cast<size_t>(n)].key, model, {});
     }
 }
 

@@ -33,6 +33,15 @@ int terminal_columns() {
     return w > 0 ? w : 100;
 }
 
+int terminal_rows() {
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+        return 24;
+    }
+    const int h = info.srWindow.Bottom - info.srWindow.Top + 1;
+    return h > 0 ? h : 24;
+}
+
 #else
 
 namespace {
@@ -118,6 +127,14 @@ int terminal_columns() {
         return ws.ws_col;
     }
     return 100;
+}
+
+int terminal_rows() {
+    struct winsize ws {};
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
+        return ws.ws_row;
+    }
+    return 24;
 }
 
 #endif
