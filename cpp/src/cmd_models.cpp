@@ -217,6 +217,11 @@ void show_model_dirs(const Config & cfg, Registry & reg) {
         std::snprintf(note, sizeof(note), "%d models; an older store, still read", count_manifests(e));
         rows.push_back({"also", e, note});
     }
+    for (const auto & f : cfg.found_roots) {
+        const int n = reg.is_ollama_store(f.dir) ? count_manifests(f.dir) : count_library(f.dir).first;
+        std::snprintf(note, sizeof(note), "%d models; %s, read in place", n, f.what.c_str());
+        rows.push_back({"found", f.dir, note});
+    }
 
     // models.go's libraryDirs(): the model store, and only when it is a
     // folder of GGUFs rather than an Ollama store.
@@ -244,29 +249,24 @@ void show_model_dirs(const Config & cfg, Registry & reg) {
     for (const auto & r : rows) {
         std::printf("  %-7s %-*s  %s\n", r.kind.c_str(), static_cast<int>(width), r.dir.c_str(), r.note.c_str());
     }
+    if (!cfg.found_roots.empty()) {
+        std::printf("\n  a found folder is read until `%s models ignore <folder>`\n", prog_name().c_str());
+    }
+}
 
-    std::vector<std::string> guesses;
-    std::string              v = env_str("OLLAMA_MODELS");
-    if (v.empty()) {
-        v = env_str("LLMASH_MODELS");
+void ignore_model_dir(Config & cfg, const std::string & dir) {
+    json                     local  = read_local_json(cfg.root);
+    std::vector<std::string> ignore = local_string_list(local, "ignore_roots");
+    if (!contains_dir(ignore, dir)) {
+        ignore.push_back(dir);
     }
-    if (!v.empty()) {
-        guesses.push_back(v);
+    local["ignore_roots"] = ignore;
+    std::string err;
+    if (!write_local_json(cfg.root, local, err)) {
+        dief("Error: %s", err.c_str());
     }
-    const std::string home = env_str("USERPROFILE");
-    if (!home.empty()) {
-        guesses.push_back((fs::path(home) / ".ollama" / "models").string());
-    }
-    const std::string local_appdata = env_str("LOCALAPPDATA");
-    if (!local_appdata.empty()) {
-        guesses.push_back((fs::path(local_appdata) / "Ollama" / "models").string());
-    }
-    for (const auto & g : guesses) {
-        if (reg.is_ollama_store(g) && !same_dir(g, cfg.models_root) && !contains_dir(cfg.extra_roots, g)) {
-            std::printf("\nOllama's models at %s are not being read:  %s models set %s\n", g.c_str(),
-                       prog_name().c_str(), g.c_str());
-        }
-    }
+    std::printf("%s is no longer read\n", dir.c_str());
+    reload_paths();
 }
 
 void set_model_dir(Config & cfg, Registry & reg, const std::string & dir) {
@@ -355,11 +355,17 @@ void cmd_models(const std::vector<std::string> & args) {
         return;
     }
     const std::string dir = pos.back();
-    if (pos[0] == "set" && pos.size() < 2) {
-        dief("Error: %s models set needs a folder", prog_name().c_str());
+    if ((pos[0] == "set" || pos[0] == "ignore") && pos.size() < 2) {
+        dief("Error: %s models %s needs a folder", prog_name().c_str(), pos[0].c_str());
     }
-    if (pos[0] != "set" && pos.size() > 1) {
+    if (pos[0] != "set" && pos[0] != "ignore" && pos.size() > 1) {
         dief("Error: unknown command \"%s\" for \"%s models\"", pos[0].c_str(), prog_name().c_str());
+    }
+    if (pos[0] == "ignore") {
+        std::error_code ec;
+        const fs::path  abs = fs::absolute(dir, ec);
+        ignore_model_dir(cfg, (ec ? fs::path(dir) : abs).lexically_normal().string());
+        return;
     }
 
     std::error_code ec;

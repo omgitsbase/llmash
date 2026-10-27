@@ -12,6 +12,14 @@ struct Config {
     std::string models_root; // OLLAMA_MODELS, or models_root in local.json
     std::string gguf_dir;    // LLMASH_GGUF, or gguf_dir; empty means <root>/gguf
     std::vector<std::string> extra_roots;
+    // Model folders found on their own, read like extra_roots: other Ollama stores, LM Studio's folders, the
+    // Hugging Face and llama.cpp caches, and a top-level folder named for models on any drive. `what` says which.
+    struct FoundRoot {
+        std::string dir;
+        std::string what;
+    };
+    std::vector<FoundRoot>   found_roots;
+    std::vector<std::string> ignore_roots; // local.json ignore_roots: found folders the user does not want read
     std::string llama_bin;   // llama-server.exe
     int         port         = 11434;
     int         public_port  = 11435;
@@ -39,6 +47,11 @@ struct Config {
 
 // Never throws: an unreadable file leaves the defaults.
 Config load_config();
+
+// The model folders other tools keep under `home` and at the top of each of `drives`, that are there and hold
+// something, and are not already configured or ignored. load_config fills found_roots with the real ones.
+std::vector<Config::FoundRoot> find_model_roots(const Config & cfg, const std::string & home,
+                                                const std::vector<std::string> & drives);
 
 // A forced context for a model whose name contains a ctx_override key, else 0.
 int ctx_target(const Config & cfg, const std::string & name);

@@ -239,6 +239,54 @@ int main() {
               "a bin folder with no program above it is left alone");
     }
 
+    // Model folders found on their own: a store by its shape, a folder by its name, LM Studio by its index.
+    {
+        const fs::path home  = dir / "home";
+        const fs::path drive = dir / "drive";
+        fs::create_directories(home / ".ollama" / "models" / "manifests");
+        fs::create_directories(home / ".lmstudio" / ".internal");
+        fs::create_directories(dir / "lms" / "pub" / "repo");
+        fs::create_directories(drive / "gguf" / "deeper");
+        fs::create_directories(drive / "random");
+        fs::create_directories(drive / "ollama-x" / "manifests");
+        fs::create_directories(drive / "empty-models");
+        { std::ofstream f(dir / "lms" / "pub" / "repo" / "m.gguf"); }
+        { std::ofstream f(drive / "gguf" / "deeper" / "a.gguf"); }
+        { std::ofstream f(drive / "random" / "b.gguf"); }
+        {
+            std::ofstream f(home / ".lmstudio" / ".internal" / "model-index-cache.json");
+            f << "{\"models\":[{\"containingDirAbsolutePath\":\"" << (dir / "lms" / "pub" / "repo").generic_string()
+              << "\",\"containingDirSubpath\":\"pub/repo\"},{\"containingDirAbsolutePath\":"
+              << "\"C:/Program Files/LM Studio/resources/app/x/nomic\",\"containingDirSubpath\":\"nomic\"}]}";
+        }
+        Config cfg;
+        cfg.ignore_roots.push_back((drive / "ollama-x").string());
+        const auto found = find_model_roots(cfg, home.string(), {drive.string()});
+        const auto has   = [&](const fs::path & p, const char * what) {
+            return std::any_of(found.begin(), found.end(), [&](const Config::FoundRoot & f) {
+                return same_dir(f.dir, p.string()) && f.what == what;
+            });
+        };
+        check(has(home / ".ollama" / "models", "Ollama"), "found: Ollama's own store");
+        check(has(dir / "lms", "LM Studio"), "found: the folder LM Studio's index points into");
+        check(has(drive / "gguf", "folder"), "found: a top-level folder named for models, GGUFs deeper in it");
+        check(!has(drive / "random", "folder"), "a folder with any other name is left alone");
+        check(!has(drive / "empty-models", "folder"), "a model folder with nothing in it is not listed");
+        check(!has(drive / "ollama-x", "Ollama"), "an ignored folder stays ignored");
+        check(std::none_of(found.begin(), found.end(), [](const Config::FoundRoot & f) {
+                  return f.dir.find("Program Files") != std::string::npos;
+              }), "LM Studio's bundled models are not a model folder");
+        cfg.ignore_roots.clear();
+        cfg.gguf_dir = (drive / "gguf").string();
+        const auto again = find_model_roots(cfg, home.string(), {drive.string()});
+        check(std::none_of(again.begin(), again.end(), [&](const Config::FoundRoot & f) {
+                  return same_dir(f.dir, (drive / "gguf").string());
+              }), "a folder already configured is not found twice");
+        check(std::any_of(again.begin(), again.end(), [&](const Config::FoundRoot & f) {
+                  return same_dir(f.dir, (drive / "ollama-x").string());
+              }), "found: a store by its shape at the top of a drive");
+    }
+
     fs::remove_all(dir);
     check(kv_type_problem("q8_0").empty() && kv_type_problem("F16").empty(), "the cache types llama.cpp takes pass");
     check(kv_type_problem("q16_0").find("q16_0 is not a cache type; the types are f16, bf16, q8_0") == 0, "a made-up cache type is named with the list");

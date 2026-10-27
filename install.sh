@@ -233,7 +233,19 @@ MODELS_VAR=${OLLAMA_MODELS:-${LLMASH_MODELS:-}}
 [ -z "$MODELS_VAR" ] && MODELS_VAR=$(unit_models || true)
 [ -n "$MODELS_VAR" ] && say "OLLAMA_MODELS points at $MODELS_VAR"
 
-# what an earlier install settled on stands, and the rest of local.json with it
+# what an earlier install settled on stands, and the rest of local.json with it; a fresh install in the other
+# scope starts from that install's settings
+if [ ! -f "$ROOT/local.json" ]; then
+    for other in /usr/local/lib/llmash/local.json "${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)}/.local/lib/llmash/local.json" "$HOME/.local/lib/llmash/local.json"; do
+        case "$other" in /.local/*|"$ROOT/local.json") continue ;; esac
+        if [ -f "$other" ]; then
+            $SUDO mkdir -p "$ROOT"
+            $SUDO cp "$other" "$ROOT/local.json"
+            say "settings carried over from $(dirname "$other")"
+            break
+        fi
+    done
+fi
 SAVED=$(sed -n 's/^[[:space:]]*"models_root":[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/local.json" 2>/dev/null | head -1)
 
 # the machine's service runs as its own account, which has no business in root's home

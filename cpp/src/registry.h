@@ -61,6 +61,8 @@ public:
     bool is_ollama_store(const std::string & dir) const;
 
     void invalidate();
+    // A changed config: the folders read from are its, and the next list rescans them.
+    void reconfigure(Config cfg);
 
 private:
     Config             cfg_;

@@ -268,16 +268,21 @@ builds, with MTP and n-gram drafting, and on 1, 2 and 3 GPUs under layer split.
 
 ## Models and pulling
 
-Ollama's store is found and used as it is. To read a folder of GGUFs from
-llama.cpp or LM Studio:
+Models already on the machine are found without any setup: every Ollama store
+(the usual one, `OLLAMA_MODELS`, and any folder shaped like one at the top of a
+drive), LM Studio's folders, the Hugging Face and llama.cpp download caches,
+Jan's and GPT4All's folders, and a top-level folder on any drive named `models`,
+`gguf`, `llm` or the like. They are read in place, subfolders included; nothing
+is copied or deleted, and `rm` will not touch them. `llmash models` shows every
+folder being read and why, `llmash models ignore <folder>` drops one, and
+`llmash models set <folder>` makes a folder of GGUFs the main one (the same
+setting as `OLLAMA_MODELS`):
 
 ```powershell
 llmash models set D:\models
 ```
 
-It reads that folder in place, subfolders included. Nothing is copied or
-deleted, and `rm` will not touch it. `llmash models` shows what is being read.
-This is the same setting as `OLLAMA_MODELS`.
+An install carries these settings over from one it replaces.
 
 `pull` takes an Ollama name or a Hugging Face repository as `hf.co/<org>/<repo>`,
 lists its builds and asks which; `hf.co/<org>/<repo>@<quant>` or `--quant` names

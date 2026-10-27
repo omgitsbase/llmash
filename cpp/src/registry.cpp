@@ -352,6 +352,13 @@ void Registry::invalidate() {
     cache_.clear();
 }
 
+void Registry::reconfigure(Config cfg) {
+    std::lock_guard<std::mutex> lock(mu_);
+    cfg_    = std::move(cfg);
+    loaded_ = false;
+    cache_.clear();
+}
+
 std::vector<std::string> Registry::library_dirs() const {
     std::vector<std::string> dirs;
     const auto add = [&](const std::string & d) {
@@ -378,6 +385,11 @@ std::vector<std::string> Registry::library_dirs() const {
         add((fs::path(e) / "gguf").string());
         if (!is_ollama_store(e)) {
             add(e);
+        }
+    }
+    for (const auto & f : cfg_.found_roots) {
+        if (!is_ollama_store(f.dir)) {
+            add(f.dir);
         }
     }
     return dirs;
@@ -633,6 +645,11 @@ void Registry::scan() {
     for (const auto & e : cfg_.extra_roots) {
         if (is_ollama_store(e)) {
             scan_ollama_store(e, found);
+        }
+    }
+    for (const auto & f : cfg_.found_roots) {
+        if (is_ollama_store(f.dir)) {
+            scan_ollama_store(f.dir, found);
         }
     }
 

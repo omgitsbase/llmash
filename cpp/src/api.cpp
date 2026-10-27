@@ -276,7 +276,7 @@ void register_routes(httplib::Server & srv, Config & cfg, Manager & mgr, Registr
                 std::lock_guard<std::mutex> lock(st->reload_mu);
                 cfg = load_config();
             }
-            reg.invalidate();
+            reg.reconfigure(cfg);
             st->cli.invalidate();
         }
         write_json(res, 200,

@@ -384,9 +384,14 @@ if (-not $Dir) {
         Where-Object { $_ -ne $Root -and (Test-Path (Join-Path $_ 'llmashw.exe')) }
 }
 
+# the other install's settings (model folders, context choices) carry over, kept or removed
+$carried = $null
 foreach ($old in $elsewhere) {
     $v = 'an unknown version'
     if (Test-Path (Join-Path $old 'VERSION')) { $v = (Get-Content (Join-Path $old 'VERSION') -Raw).Trim() }
+    if (-not $carried -and (Test-Path (Join-Path $old 'local.json'))) {
+        try { $carried = Get-Content (Join-Path $old 'local.json') -Raw | ConvertFrom-Json } catch { $carried = $null }
+    }
     Write-Host ''
     Warn "llmash $v is already installed in $old"
     if (Ask "Remove it before installing here?") {
@@ -752,6 +757,9 @@ $localCfg = @{}
 if (Test-Path $localPath) {
     try { (Get-Content $localPath -Raw | ConvertFrom-Json).PSObject.Properties |
             ForEach-Object { $localCfg[$_.Name] = $_.Value } } catch { $localCfg = @{} }
+} elseif ($carried) {
+    $carried.PSObject.Properties | ForEach-Object { $localCfg[$_.Name] = $_.Value }
+    Say 'settings carried over from the other install'
 }
 
 $extras = @()

@@ -136,6 +136,54 @@ static std::string j_str(const json & j, const char * key) {
     return it->get<std::string>();
 }
 
+static std::vector<std::string> local_list(const json & j, const char * key) {
+    std::vector<std::string> out;
+    const auto               it = j.find(key);
+    if (it != j.end() && it->is_array()) {
+        for (const auto & e : *it) {
+            if (e.is_string() && !e.get<std::string>().empty()) {
+                out.push_back(e.get<std::string>());
+            }
+        }
+    }
+    return out;
+}
+
+static std::string lower_ascii(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+// The roots of the fixed drives on Windows; on Linux the places a data drive is mounted.
+static std::vector<std::string> fixed_drives() {
+    std::vector<std::string> out;
+#ifdef _WIN32
+    const DWORD mask = GetLogicalDrives();
+    for (int i = 0; i < 26; i++) {
+        if ((mask & (1u << i)) == 0) {
+            continue;
+        }
+        const std::string root = std::string(1, static_cast<char>('A' + i)) + ":\\";
+        if (GetDriveTypeA(root.c_str()) == DRIVE_FIXED) {
+            out.push_back(root);
+        }
+    }
+#else
+    std::error_code ec;
+    out.push_back("/");
+    for (const char * base : {"/mnt", "/media", "/srv", "/data"}) {
+        for (auto it = fs::directory_iterator(base, fs::directory_options::skip_permission_denied, ec);
+             !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            if (it->is_directory(ec)) {
+                out.push_back(it->path().string());
+            }
+        }
+        ec.clear();
+    }
+#endif
+    return out;
+}
+
 // LLAMA_BIN, local.json, the install's runtime folder, PATH.
 std::string find_llama_bin(const std::string & root, const std::string & from_local) {
     const std::string env = env_str("LLAMA_BIN");
@@ -357,7 +405,179 @@ Config load_config() {
             }
         }
     }
+
+    for (const auto & e : local_list(local, "ignore_roots")) {
+        c.ignore_roots.push_back(e);
+    }
+    c.found_roots = find_model_roots(c, env_str("USERPROFILE", env_str("HOME")), fixed_drives());
     return c;
+}
+
+namespace {
+
+bool has_manifests(const fs::path & p) {
+    std::error_code ec;
+    return fs::is_directory(p / "manifests", ec);
+}
+
+// A .gguf within `depth` folders of p, looking at no more than a few hundred entries: a folder of models is
+// shallow, and this runs on every start.
+bool holds_gguf(const fs::path & p, int depth) {
+    std::error_code       ec;
+    std::vector<fs::path> level{p};
+    int                   seen = 0;
+    for (int d = 0; d <= depth && !level.empty(); d++) {
+        std::vector<fs::path> next;
+        for (const fs::path & dir : level) {
+            for (auto it = fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
+                 !ec && it != fs::directory_iterator(); it.increment(ec)) {
+                if (++seen > 400) {
+                    return false;
+                }
+                const std::string name = it->path().filename().string();
+                if (it->is_directory(ec)) {
+                    if (!name.empty() && name[0] != '.') {
+                        next.push_back(it->path());
+                    }
+                } else if (name.size() > 5 && lower_ascii(name.substr(name.size() - 5)) == ".gguf") {
+                    return true;
+                }
+            }
+            ec.clear();
+        }
+        level = std::move(next);
+    }
+    return false;
+}
+
+// Folders named the way people name a folder of models.
+bool model_folder_name(const std::string & name) {
+    static const char * const names[] = {"gguf", "ggufs", "model", "models", "llm", "llms", "llm-models",
+                                         "ai-models", "lmstudio", "lm-studio", "ollama", "ollama-models",
+                                         "ollama-store"};
+    const std::string low = lower_ascii(name);
+    for (const char * n : names) {
+        if (low == n) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// LM Studio's index names where each model lives; the folders those sit in are its model folders.
+std::vector<std::string> lmstudio_roots(const fs::path & home) {
+    std::vector<std::string> out;
+    std::ifstream            in(home / ".lmstudio" / ".internal" / "model-index-cache.json", std::ios::binary);
+    if (!in) {
+        return out;
+    }
+    const json idx = json::parse(in, nullptr, false);
+    if (idx.is_discarded() || !idx.is_object()) {
+        return out;
+    }
+    for (const auto & m : idx.value("models", json::array())) {
+        const std::string abs = m.value("containingDirAbsolutePath", "");
+        const std::string sub = m.value("containingDirSubpath", "");
+        if (sub.empty() || abs.size() <= sub.size() || abs.compare(abs.size() - sub.size(), sub.size(), sub) != 0 ||
+            abs.find("/resources/app/") != std::string::npos) {
+            continue;
+        }
+        std::string root = abs.substr(0, abs.size() - sub.size());
+        while (!root.empty() && (root.back() == '/' || root.back() == '\\')) {
+            root.pop_back();
+        }
+        if (!root.empty() && std::none_of(out.begin(), out.end(), [&](const std::string & o) { return same_dir(o, root); })) {
+            out.push_back(root);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<Config::FoundRoot> find_model_roots(const Config & cfg, const std::string & home,
+                                                const std::vector<std::string> & drives) {
+    std::vector<Config::FoundRoot> out;
+    std::error_code                ec;
+    const auto                     taken = [&](const std::string & d) {
+        for (const std::string & k : {cfg.models_root, cfg.gguf_dir}) {
+            if (same_dir(k, d)) {
+                return true;
+            }
+        }
+        for (const auto & list : {cfg.extra_roots, cfg.ignore_roots}) {
+            for (const std::string & e : list) {
+                if (same_dir(e, d)) {
+                    return true;
+                }
+            }
+        }
+        for (const auto & f : out) {
+            if (same_dir(f.dir, d)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto add = [&](const fs::path & p, const char * what) {
+        const std::string d = p.lexically_normal().string();
+        if (!taken(d) && (has_manifests(p) || holds_gguf(p, 3))) {
+            out.push_back({d, what});
+        }
+    };
+    const fs::path h(home);
+    const fs::path app(env_str("LOCALAPPDATA"));
+
+    if (!home.empty()) {
+        add(h / ".ollama" / "models", "Ollama");
+    }
+    if (!app.empty()) {
+        add(app / "Ollama" / "models", "Ollama");
+    }
+    add("/usr/share/ollama/.ollama/models", "Ollama");
+    add("/var/lib/llmash/models", "llmash");
+
+    if (!home.empty()) {
+        add(h / ".lmstudio" / "models", "LM Studio");
+        add(h / ".cache" / "lm-studio" / "models", "LM Studio");
+        for (const std::string & r : lmstudio_roots(h)) {
+            add(r, "LM Studio");
+        }
+        const std::string hf_home = env_str("HF_HOME");
+        add(env_str("HF_HUB_CACHE", hf_home.empty() ? (h / ".cache" / "huggingface" / "hub").string()
+                                                    : (fs::path(hf_home) / "hub").string()),
+            "Hugging Face cache");
+        add(env_str("LLAMA_CACHE", (h / ".cache" / "llama.cpp").string()), "llama.cpp cache");
+        if (!app.empty()) {
+            add(app / "llama.cpp", "llama.cpp cache");
+            add(app / "nomic.ai" / "GPT4All", "GPT4All");
+        }
+        add(h / ".local" / "share" / "nomic.ai" / "GPT4All", "GPT4All");
+        add(h / "jan" / "models", "Jan");
+        add(h / "jan" / "data" / "models", "Jan");
+    }
+
+    // the top of each drive, and the home folder: an Ollama store by its shape, or a folder named for models
+    std::vector<std::string> tops(drives);
+    if (!home.empty()) {
+        tops.push_back(home);
+    }
+    for (const std::string & top : tops) {
+        for (auto it = fs::directory_iterator(top, fs::directory_options::skip_permission_denied, ec);
+             !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            const std::string name = it->path().filename().string();
+            if (name.empty() || name[0] == '.' || name[0] == '$' || !it->is_directory(ec)) {
+                continue;
+            }
+            if (has_manifests(it->path())) {
+                add(it->path(), "Ollama");
+            } else if (model_folder_name(name)) {
+                add(it->path(), "folder");
+            }
+        }
+        ec.clear();
+    }
+    return out;
 }
 
 
