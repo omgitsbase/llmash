@@ -111,13 +111,11 @@ out. All runs are from 2026-09-27.
 |---|---|---|--:|--:|--:|--:|
 | 3-bit, llmash only | llmash | RCO-3 | 3.1 GB | 324 | 478 | 569 |
 | 4-bit GGUF | llmash | Q4_K_M | 5.0 GB | 321 | 513 | 543 |
-| 4-bit GGUF | Ollama | q4_K_M\* | - | 151 | 160 | 163 |
+| 4-bit GGUF | Ollama | q4_K_M | 5.5 GB | 151 | 160 | 163 |
 | NVFP4 | vLLM | NVFP4 | 7.2 GB | 191 | 251 | 281 |
 | 8-bit | llmash | Q8_0 | 8.2 GB | 245 | 398 | 434 |
-| 8-bit | Ollama | q8_0\* | - | 133 | 133 | 137 |
+| 8-bit | Ollama | q8_0 | 8.0 GB | 133 | 133 | 137 |
 | 16-bit | vLLM | BF16 | 15.0 GB | 187 | 283 | 308 |
-
-\* Ollama's September build; the tag has since been republished smaller and with a draft model.
 
 #### Qwen3.8 27B
 

@@ -97,7 +97,7 @@
   "label": "Gemma 4 E4B",
   "tier": "4-bit",
   "build": "q4_K_M",
-  "size_gb": null,
+  "size_gb": 5.49,
   "model": "gemma4:e4b-it-q4_K_M",
   "workloads": {
    "conversation": 151.2,
@@ -121,15 +121,14 @@
     600
    ]
   },
-  "measured": "2026-09-27",
-  "note": "Ollama's September build; the tag has since been republished smaller and with a draft model"
+  "measured": "2026-09-27"
  },
  {
   "provider": "Ollama",
   "label": "Gemma 4 E4B",
   "tier": "8-bit",
   "build": "q8_0",
-  "size_gb": null,
+  "size_gb": 8.03,
   "model": "gemma4:e4b-it-q8_0",
   "workloads": {
    "conversation": 133.0,
@@ -153,8 +152,7 @@
     600
    ]
   },
-  "measured": "2026-09-27",
-  "note": "Ollama's September build; the tag has since been republished smaller and with a draft model"
+  "measured": "2026-09-27"
  },
  {
   "provider": "vLLM",

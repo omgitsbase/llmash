@@ -56,11 +56,9 @@ def mean_speed(entry):
     return sum(vals) / len(vals)
 
 
-def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0, legend=None, left_in=0.0):
-    """Horizontal bars, one per row, in labelled groups; the value and a note at each bar's end. A fixed left margin
-    (left_in inches) puts the bars of every chart drawn with it at the same place."""
-    height = 0.5 * len(rows) + 0.45 * sum(1 for g in groups if g["name"]) + 1.1 + (0.3 if legend else 0)
-    fig, ax = plt.subplots(figsize=(9.6, height))
+def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0):
+    """Horizontal bars, one per row, in labelled groups; the value and a note at each bar's end."""
+    fig, ax = plt.subplots(figsize=(9.6, 0.5 * len(rows) + 0.45 * sum(1 for g in groups if g["name"]) + 1.1))
     y, ys, labels = 0.0, [], []
     for g in groups:
         if g["name"]:
@@ -82,17 +80,9 @@ def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0, leg
     if ticks_to:
         ax.set_xticks(range(0, ticks_to + 1, 10))
     ax.set_xlabel(xlabel)
-    ax.set_title(title, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=10 + (18 if legend else 0))
-    if legend:
-        handles = [Patch(color=color, label=name) for name, color in legend]
-        ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=len(handles), frameon=False,
-                  fontsize=10.5, handlelength=1.0, columnspacing=1.4, borderaxespad=0.2, labelcolor=t["text"])
+    ax.set_title(title, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=10)
     clean(ax, t)
-    if left_in:
-        fig.subplots_adjust(left=left_in / 9.6, right=0.98, top=1 - (0.75 + (0.3 if legend else 0)) / height,
-                            bottom=0.6 / height)
-    else:
-        fig.tight_layout()
+    fig.tight_layout()
     fig.savefig(path, transparent=True)
     plt.close(fig)
 
@@ -111,24 +101,47 @@ def provider_rows(runs, m):
             yield name, rs
 
 
-def size_text(r):
-    return f"{r['size_gb']:.1f} GB" if r.get("size_gb") else "September build"
-
-
 def providers(theme):
-    """Per model: every build's decode speed, grouped by format, the provider, build and size in each row's label.
-    Every chart shares one scale and one label margin, so the charts line up with each other."""
+    """Per model: every build's decode speed, one band per format with its bars packed together in a fixed provider
+    order, the speed, build and size at each bar's end. Every chart shares one scale and one left margin, so the
+    charts line up with each other."""
     t = THEMES[theme]
     style(t)
     runs = json.loads((HERE / "providers.json").read_text("utf-8"))
     xmax = max(mean_speed(r) for r in runs)
+    step, bar, gap = 0.44, 0.34, 0.36
     for m in dict.fromkeys(r["label"] for r in runs):
-        groups = [{"name": name, "rows": [{"label": f"{r['provider']}  {r['build']}  ·  {size_text(r)}",
-                                           "value": mean_speed(r), "color": t[r["provider"]]} for r in rs]}
-                  for name, rs in provider_rows(runs, m)]
-        bars([r for g in groups for r in g["rows"]], groups, t, "tokens per second while generating", xmax,
-             DOCS / f"speed-{slug(m)}-{theme}.svg", m, lambda r: f"{r['value']:.0f}",
-             legend=[(p, t[p]) for p in PROVIDERS], left_in=3.1)
+        groups = list(provider_rows(runs, m))
+        n = sum(len(rs) for _, rs in groups)
+        height = step * n + gap * (len(groups) - 1) + 1.55
+        fig, ax = plt.subplots(figsize=(9.6, height))
+        y, ticks, names = 0.0, [], []
+        for name, rs in groups:
+            first = y
+            for r in rs:
+                v = mean_speed(r)
+                ax.barh(-y, v, height=bar, color=t[r["provider"]], zorder=2)
+                ax.text(v + xmax * 0.012, -y, f"{v:.0f}", va="center", fontsize=10.5, fontweight="bold",
+                        color=t["text"])
+                ax.text(v + xmax * 0.095, -y, f"{r['build']}  ·  {r['size_gb']:.1f} GB", va="center", fontsize=10,
+                        color=t["muted"])
+                y += step
+            ticks.append(-(first + y - step) / 2)
+            names.append(name)
+            y += gap
+        ax.set_yticks(ticks)
+        ax.set_yticklabels(names, fontweight="bold")
+        ax.set_ylim(-(y - gap - step) - step / 2 - 0.05, step / 2 + 0.05)
+        ax.set_xlim(0, xmax * 1.42)
+        ax.set_xlabel("tokens per second while generating")
+        ax.set_title(m, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=28)
+        ax.legend(handles=[Patch(color=t[p], label=p) for p in PROVIDERS], loc="lower left", bbox_to_anchor=(0, 1.0),
+                  ncol=len(PROVIDERS), frameon=False, fontsize=10.5, handlelength=1.0, columnspacing=1.4,
+                  borderaxespad=0.2, labelcolor=t["text"])
+        clean(ax, t)
+        fig.subplots_adjust(left=2.0 / 9.6, right=0.98, top=1 - 0.95 / height, bottom=0.6 / height)
+        fig.savefig(DOCS / f"speed-{slug(m)}-{theme}.svg", transparent=True)
+        plt.close(fig)
 
 
 def math(theme):
@@ -166,17 +179,10 @@ def readme_tables():
         lines = [f"#### {m}", "", picture(f"speed-{slug(m)}", f"{m}: decode speed of each build on llmash, Ollama and vLLM"),
                  "", "| format | provider | build | weights | conversation | coding | thinking |",
                  "|---|---|---|--:|--:|--:|--:|"]
-        notes = []
         for name, rs in provider_rows(runs, m):
             for r in rs:
                 cells = " | ".join(f"{r['workloads'][w]:.0f}" if r["workloads"].get(w) else "-" for w in WORKLOADS)
-                size = f"{r['size_gb']:.1f} GB" if r.get("size_gb") else "-"
-                build = r["build"] + ("\\*" if r.get("note") else "")
-                lines.append(f"| {name} | {r['provider']} | {build} | {size} | {cells} |")
-                if r.get("note") and r["note"] not in notes:
-                    notes.append(r["note"])
-        for n in notes:
-            lines += ["", f"\\* {n}."]
+                lines.append(f"| {name} | {r['provider']} | {r['build']} | {r['size_gb']:.1f} GB | {cells} |")
         parts.append("\n".join(lines))
     s = replace_block(s, "<!-- PROVIDERS -->", "<!-- /PROVIDERS -->", "\n\n".join(parts))
 
