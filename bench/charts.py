@@ -168,6 +168,70 @@ def math(theme):
              DOCS / f"math-{slug(m['model'])}-{theme}.svg", m["model"], lambda r: r["note"], ticks_to=40)
 
 
+def batch(theme):
+    """Per model: total tokens per second against concurrent requests, one line per provider and format. The levels
+    sit evenly along the axis, and each chart scales to its own fastest point."""
+    path = HERE / "batch.json"
+    if not path.exists():
+        return
+    t = THEMES[theme]
+    style(t)
+    rows = json.loads(path.read_text("utf-8"))
+    for m in dict.fromkeys(r["label"] for r in rows):
+        rs = [r for r in rows if r["label"] == m and not r.get("errors")]
+        levels = sorted({r["concurrency"] for r in rs})
+        pos = {c: i for i, c in enumerate(levels)}
+        ymax = max(r["throughput"] for r in rs)
+        fig, ax = plt.subplots(figsize=(9.6, 4.6))
+        for (provider, build) in dict.fromkeys((r["provider"], r["build"]) for r in rs):
+            pts = sorted((r["concurrency"], r["throughput"]) for r in rs if r["provider"] == provider and r["build"] == build)
+            xs, ys = [pos[c] for c, _ in pts], [v for _, v in pts]
+            dashed = "nvfp4" in build.lower()
+            ax.plot(xs, ys, color=t.get(provider, t["other"]), linewidth=2.2, linestyle="--" if dashed else "-",
+                    marker="o", markersize=4.5, label=f"{provider}  ·  {build}", zorder=3)
+            ax.text(xs[-1] + 0.12, ys[-1], f"{ys[-1]:.0f}", va="center", fontsize=10, fontweight="bold", color=t["text"])
+        ax.set_xticks(range(len(levels)))
+        ax.set_xticklabels([str(c) for c in levels])
+        ax.set_xlim(-0.2, len(levels) - 0.4)
+        ax.set_ylim(0, ymax * 1.12)
+        ax.set_xlabel("requests at once", fontsize=9.5)
+        ax.set_ylabel("tokens per second, all requests", fontsize=9.5)
+        ax.set_title(f"{m}: concurrent requests", loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=10)
+        ax.grid(axis="y", color=t["grid"], linewidth=0.5, alpha=0.6)
+        ax.set_axisbelow(True)
+        for s in ("top", "right"):
+            ax.spines[s].set_visible(False)
+        ax.tick_params(axis="both", length=0)
+        leg = ax.legend(loc="upper left", frameon=False, fontsize=9.5)
+        for txt in leg.get_texts():
+            txt.set_color(t["text"])
+        fig.tight_layout()
+        fig.savefig(DOCS / f"batch-{slug(m)}-{theme}.svg", transparent=True)
+        plt.close(fig)
+
+
+def batch_tables():
+    """A chart and a table per model between the BATCH markers: total tokens per second at each level."""
+    path = HERE / "batch.json"
+    if not path.exists():
+        return ""
+    rows = json.loads(path.read_text("utf-8"))
+    parts = []
+    for m in dict.fromkeys(r["label"] for r in rows):
+        rs = [r for r in rows if r["label"] == m and not r.get("errors")]
+        levels = sorted({r["concurrency"] for r in rs})
+        lines = [f"#### {m}", "", picture(f"batch-{slug(m)}", f"{m}: tokens per second against concurrent requests"), "",
+                 "| provider | format | file | " + " | ".join(str(c) for c in levels) + " |",
+                 "|---|---|---|" + "--:|" * len(levels)]
+        for (provider, build) in dict.fromkeys((r["provider"], r["build"]) for r in rs):
+            by = {r["concurrency"]: r for r in rs if r["provider"] == provider and r["build"] == build}
+            cells = " | ".join(f"{by[c]['throughput']:.0f}" if c in by else "-" for c in levels)
+            file = next(r.get("file", "") for r in by.values())
+            lines.append(f"| {provider} | {build} | {file} | {cells} |")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
 def picture(name, alt):
     return (f"<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"docs/{name}-dark.svg\">\n"
             f"  <img alt=\"{alt}\" src=\"docs/{name}-light.svg\">\n</picture>")
@@ -215,6 +279,8 @@ def readme_tables():
                          f"{b['tokens'] / 1000:.0f}k |")
         parts.append("\n".join(lines))
     s = replace_block(s, "<!-- MATH -->", "<!-- /MATH -->", "\n\n".join(parts))
+    if "<!-- BATCH -->" in s:
+        s = replace_block(s, "<!-- BATCH -->", "<!-- /BATCH -->", batch_tables())
     readme.write_text(s, encoding="utf-8")
 
 
@@ -227,5 +293,6 @@ if __name__ == "__main__":
             providers(theme)
         if (HERE / "math_results.json").exists():
             math(theme)
+        batch(theme)
     readme_tables()
     print("wrote", ", ".join(sorted(p.name for p in DOCS.glob("*.svg"))))

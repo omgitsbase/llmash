@@ -87,6 +87,12 @@ first streamed token to the last, the median of the three prompts; a bar is the
 mean of the three workloads. llmash 0.5.7 (runtime build 770) and Ollama
 0.40.11 were measured on 2026-10-26, vLLM (`vllm/vllm-openai:latest` as of
 2026-09-27) on 2026-09-27 on the same card, its checkpoints unchanged since.
+The Gemma 4 E4B rows of llmash were measured again on 2026-10-27 with the
+runtime from fork commit
+[`669eae10d`](https://github.com/omgitsbase/llama.cpp/commit/669eae10d), which
+is not in a release yet: Gemma's assistant drafts a whole round as one graph,
+and its per-layer tables sit in pinned host memory the card reads in place
+instead of in VRAM.
 One run per row, no concurrent load, temperature 0 only, and the card also
 drives the display.
 
@@ -112,8 +118,8 @@ Drafting, from each provider's flags and logs:
 | vLLM | the file's MTP head, 3 tokens a round (`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'`) | the assistant drafter, 3 tokens a round (`gemma4_mtp`) |
 
 The runtime alone: Gemma 4 E4B's `q8_0` on llmash with no drafter of any kind
-does 177 tokens a second; Ollama does 126 on the same file; llmash with the
-assistant drafter does 365.
+does 192 tokens a second; Ollama does 126 on the same file; llmash with the
+assistant drafter does 391.
 
 Other settings are each provider's defaults: Ollama `-c 262144 -b 512 -ub 512`,
 llmash `-c 8192 -b 4096 -ub 2048` plus what it picks per model, vLLM
@@ -139,10 +145,10 @@ GGUFs and have none.
 
 | format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
 |---|---|---|--:|--:|--:|--:|--:|--:|
-| RCO 3-bit, llmash only | llmash | assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16 | 2.9 GB | 51.95 | +10.7% | 281 | 411 | 444 |
-| NVFP4 | llmash | FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF | 5.2 GB | 60.95 | +29.9% | 295 | 434 | 497 |
+| RCO 3-bit, llmash only | llmash | assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16 | 2.9 GB | 51.95 | +10.7% | 322 | 477 | 556 |
+| NVFP4 | llmash | FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF | 5.2 GB | 60.95 | +29.9% | 346 | 500 | 581 |
 | NVFP4 | vLLM | unsloth/gemma-4-E4B-it-NVFP4 | 7.2 GB | - | - | 191 | 251 | 281 |
-| 8-bit | llmash | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 260 | 400 | 434 |
+| 8-bit | llmash | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 278 | 421 | 474 |
 | 8-bit | Ollama | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 121 | 127 | 128 |
 
 The model's own BF16 weights measure 46.92 on the same text with the same runtime.

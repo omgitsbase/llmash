@@ -74,9 +74,9 @@
   "file": "Ollama's gemma4:e4b-it-q8_0",
   "model": "gemma4:e4b-it-q8_0",
   "workloads": {
-   "conversation": 260.2,
-   "coding": 399.7,
-   "thinking": 434.1
+   "conversation": 278.2,
+   "coding": 421.2,
+   "thinking": 473.9
   },
   "tokens": {
    "conversation": [
@@ -95,7 +95,7 @@
     600
    ]
   },
-  "measured": "2026-10-26",
+  "measured": "2026-10-27",
   "ppl": 47.4405,
   "ppl_ref": 46.9225
  },
@@ -108,9 +108,9 @@
   "file": "assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16",
   "model": "google-gemma-4-e4b-it-l:rco-3",
   "workloads": {
-   "conversation": 281.4,
-   "coding": 410.7,
-   "thinking": 444.2
+   "conversation": 322.4,
+   "coding": 477.2,
+   "thinking": 556.5
   },
   "tokens": {
    "conversation": [
@@ -129,7 +129,7 @@
     600
    ]
   },
-  "measured": "2026-10-26",
+  "measured": "2026-10-27",
   "ppl": 51.955,
   "ppl_ref": 46.9225
  },
@@ -142,9 +142,9 @@
   "file": "FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF",
   "model": "gemma-4-e4b-it-nvfp4:gguf",
   "workloads": {
-   "conversation": 294.9,
-   "coding": 434.5,
-   "thinking": 496.7
+   "conversation": 346.2,
+   "coding": 499.5,
+   "thinking": 581.3
   },
   "tokens": {
    "conversation": [
@@ -163,7 +163,7 @@
     600
    ]
   },
-  "measured": "2026-10-26",
+  "measured": "2026-10-27",
   "ppl": 60.9506,
   "ppl_ref": 46.9225
  },
