@@ -88,11 +88,15 @@ processing are left out.
 
 ### Against Ollama and vLLM
 
-One bar per build, grouped by provider, the size on disk in the label. Each runs
+One bar per build, grouped by format so the same kind of build sits together on
+each provider; the 3-bit builds are llmash's own and run nowhere else. Each runs
 the way its provider runs it: llmash with the drafter it pairs with the model
 (the model's own MTP head, or Gemma's assistant drafter), vLLM with MTP or the
 same assistant drafter at three tokens a round, and Ollama as it ships. A bar is
-the mean of the three workloads; the table under it has each.
+the mean of the three workloads; the table under it has each. Every chart uses
+the same scale. Weights are the text model's, measured the same way for each
+provider: vision and audio towers, projectors and separate draft models left
+out. All runs are from 2026-09-27.
 
 <!-- PROVIDERS -->
 
@@ -103,15 +107,17 @@ the mean of the three workloads; the table under it has each.
   <img alt="Gemma 4 E4B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-gemma-4-e4b-light.svg">
 </picture>
 
-| provider | build | size | conversation | coding | thinking |
-|---|---|--:|--:|--:|--:|
-| llmash | RCO-3 | 3.1 GB | 324 | 478 | 569 |
-| llmash | Q4_K_M | 5.0 GB | 321 | 513 | 543 |
-| llmash | Q8_0 | 8.2 GB | 245 | 398 | 434 |
-| Ollama | q4_K_M | 9.6 GB | 151 | 160 | 163 |
-| Ollama | q8_0 | 11.0 GB | 133 | 133 | 137 |
-| vLLM | NVFP4 | 8.1 GB | 191 | 251 | 281 |
-| vLLM | BF16 | 16.0 GB | 187 | 283 | 308 |
+| format | provider | build | weights | conversation | coding | thinking |
+|---|---|---|--:|--:|--:|--:|
+| 3-bit, llmash only | llmash | RCO-3 | 3.1 GB | 324 | 478 | 569 |
+| 4-bit GGUF | llmash | Q4_K_M | 5.0 GB | 321 | 513 | 543 |
+| 4-bit GGUF | Ollama | q4_K_M\* | - | 151 | 160 | 163 |
+| NVFP4 | vLLM | NVFP4 | 7.2 GB | 191 | 251 | 281 |
+| 8-bit | llmash | Q8_0 | 8.2 GB | 245 | 398 | 434 |
+| 8-bit | Ollama | q8_0\* | - | 133 | 133 | 137 |
+| 16-bit | vLLM | BF16 | 15.0 GB | 187 | 283 | 308 |
+
+\* Ollama's September build; the tag has since been republished smaller and with a draft model.
 
 #### Qwen3.8 27B
 
@@ -120,16 +126,16 @@ the mean of the three workloads; the table under it has each.
   <img alt="Qwen3.8 27B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-qwen3-8-27b-light.svg">
 </picture>
 
-| provider | build | size | conversation | coding | thinking |
-|---|---|--:|--:|--:|--:|
-| llmash | RCO-3 | 10.3 GB | 183 | 192 | 213 |
-| llmash | GSQ-RCO | 11.9 GB | 193 | 189 | 211 |
-| llmash | NVFP4 | 17.1 GB | 168 | 172 | 203 |
-| llmash | Q4_K_XL | 17.6 GB | 162 | 165 | 173 |
-| Ollama | q4_K_M | 17.0 GB | 110 | 136 | 148 |
-| Ollama | q8_0 | 29.0 GB | 76 | 100 | 104 |
-| vLLM | NVFP4 | 21.9 GB | 111 | 115 | 125 |
-| vLLM | FP8 | 30.9 GB | 88 | 94 | 95 |
+| format | provider | build | weights | conversation | coding | thinking |
+|---|---|---|--:|--:|--:|--:|
+| 3-bit, llmash only | llmash | RCO-3 | 10.3 GB | 183 | 192 | 213 |
+| 3-bit, llmash only | llmash | GSQ-RCO | 11.9 GB | 193 | 189 | 211 |
+| 4-bit GGUF | llmash | Q4_K_XL | 17.6 GB | 162 | 165 | 173 |
+| 4-bit GGUF | Ollama | q4_K_M | 16.8 GB | 110 | 136 | 148 |
+| NVFP4 | llmash | NVFP4 | 17.1 GB | 168 | 172 | 203 |
+| NVFP4 | vLLM | NVFP4 | 21.0 GB | 111 | 115 | 125 |
+| 8-bit | Ollama | q8_0 | 29.1 GB | 76 | 100 | 104 |
+| 8-bit | vLLM | FP8 | 29.9 GB | 88 | 94 | 95 |
 
 #### Qwen3.6 35B-A3B
 
@@ -138,15 +144,15 @@ the mean of the three workloads; the table under it has each.
   <img alt="Qwen3.6 35B-A3B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-qwen3-6-35b-a3b-light.svg">
 </picture>
 
-| provider | build | size | conversation | coding | thinking |
-|---|---|--:|--:|--:|--:|
-| llmash | RCO-3 | 13.4 GB | 601 | 749 | 673 |
-| llmash | NVFP4 | 20.5 GB | 428 | 486 | 538 |
-| llmash | Q4_K_XL | 23.3 GB | 530 | 569 | 613 |
-| Ollama | q4_K_M | 22.0 GB | 164 | 179 | 180 |
-| Ollama | q8_0 | 38.0 GB | 176 | 188 | 192 |
-| vLLM | NVFP4 | 23.5 GB | 252 | 270 | 287 |
-| vLLM | FP8 | 37.5 GB | 223 | 252 | 270 |
+| format | provider | build | weights | conversation | coding | thinking |
+|---|---|---|--:|--:|--:|--:|
+| 3-bit, llmash only | llmash | RCO-3 | 13.4 GB | 601 | 749 | 673 |
+| 4-bit GGUF | llmash | Q4_K_XL | 23.3 GB | 530 | 569 | 613 |
+| 4-bit GGUF | Ollama | q4_K_M | 21.7 GB | 164 | 179 | 180 |
+| NVFP4 | llmash | NVFP4 | 20.5 GB | 428 | 486 | 538 |
+| NVFP4 | vLLM | NVFP4 | 22.5 GB | 252 | 270 | 287 |
+| 8-bit | Ollama | q8_0 | 37.8 GB | 176 | 188 | 192 |
+| 8-bit | vLLM | FP8 | 36.6 GB | 223 | 252 | 270 |
 
 <!-- /PROVIDERS -->
 

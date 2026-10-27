@@ -16,6 +16,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 DOCS = HERE.parent / "docs"
@@ -55,9 +56,11 @@ def mean_speed(entry):
     return sum(vals) / len(vals)
 
 
-def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0):
-    """Horizontal bars, one per row, in labelled groups; the value and a note at each bar's end."""
-    fig, ax = plt.subplots(figsize=(9.6, 0.5 * len(rows) + 0.45 * sum(1 for g in groups if g["name"]) + 1.1))
+def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0, legend=None, left_in=0.0):
+    """Horizontal bars, one per row, in labelled groups; the value and a note at each bar's end. A fixed left margin
+    (left_in inches) puts the bars of every chart drawn with it at the same place."""
+    height = 0.5 * len(rows) + 0.45 * sum(1 for g in groups if g["name"]) + 1.1 + (0.3 if legend else 0)
+    fig, ax = plt.subplots(figsize=(9.6, height))
     y, ys, labels = 0.0, [], []
     for g in groups:
         if g["name"]:
@@ -79,28 +82,53 @@ def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0):
     if ticks_to:
         ax.set_xticks(range(0, ticks_to + 1, 10))
     ax.set_xlabel(xlabel)
-    ax.set_title(title, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=10)
+    ax.set_title(title, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=10 + (18 if legend else 0))
+    if legend:
+        handles = [Patch(color=color, label=name) for name, color in legend]
+        ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=len(handles), frameon=False,
+                  fontsize=10.5, handlelength=1.0, columnspacing=1.4, borderaxespad=0.2, labelcolor=t["text"])
     clean(ax, t)
-    fig.tight_layout()
+    if left_in:
+        fig.subplots_adjust(left=left_in / 9.6, right=0.98, top=1 - (0.75 + (0.3 if legend else 0)) / height,
+                            bottom=0.6 / height)
+    else:
+        fig.tight_layout()
     fig.savefig(path, transparent=True)
     plt.close(fig)
 
 
+# builds grouped by format, so the same build on each provider sits together; within a group the providers keep one
+# order on every chart. The 3-bit builds are llmash's own and run nowhere else.
+TIERS = (("3-bit", "3-bit, llmash only"), ("4-bit", "4-bit GGUF"), ("NVFP4", "NVFP4"), ("8-bit", "8-bit"),
+         ("16-bit", "16-bit"))
+
+
+def provider_rows(runs, m):
+    for tier, name in TIERS:
+        rs = [r for p in PROVIDERS for r in sorted((r for r in runs if r["label"] == m and r["provider"] == p and
+                                                   r["tier"] == tier), key=lambda r: r["size_gb"] or 0)]
+        if rs:
+            yield name, rs
+
+
+def size_text(r):
+    return f"{r['size_gb']:.1f} GB" if r.get("size_gb") else "September build"
+
+
 def providers(theme):
-    """Per model: every build's decode speed, grouped by provider, the size in each row's label."""
+    """Per model: every build's decode speed, grouped by format, the provider, build and size in each row's label.
+    Every chart shares one scale and one label margin, so the charts line up with each other."""
     t = THEMES[theme]
     style(t)
     runs = json.loads((HERE / "providers.json").read_text("utf-8"))
+    xmax = max(mean_speed(r) for r in runs)
     for m in dict.fromkeys(r["label"] for r in runs):
-        groups = []
-        for p in PROVIDERS:
-            rs = sorted((r for r in runs if r["label"] == m and r["provider"] == p), key=lambda r: r["size_gb"])
-            if rs:
-                groups.append({"name": p, "rows": [{"label": f"{r['build']}  ·  {r['size_gb']:.1f} GB",
-                                                    "value": mean_speed(r), "color": t[p]} for r in rs]})
-        xmax = max(r["value"] for g in groups for r in g["rows"])
-        bars(groups and [r for g in groups for r in g["rows"]], groups, t, "tokens per second while generating",
-             xmax, DOCS / f"speed-{slug(m)}-{theme}.svg", m, lambda r: f"{r['value']:.0f}")
+        groups = [{"name": name, "rows": [{"label": f"{r['provider']}  {r['build']}  ·  {size_text(r)}",
+                                           "value": mean_speed(r), "color": t[r["provider"]]} for r in rs]}
+                  for name, rs in provider_rows(runs, m)]
+        bars([r for g in groups for r in g["rows"]], groups, t, "tokens per second while generating", xmax,
+             DOCS / f"speed-{slug(m)}-{theme}.svg", m, lambda r: f"{r['value']:.0f}",
+             legend=[(p, t[p]) for p in PROVIDERS], left_in=3.1)
 
 
 def math(theme):
@@ -136,11 +164,19 @@ def readme_tables():
     parts = []
     for m in dict.fromkeys(r["label"] for r in runs):
         lines = [f"#### {m}", "", picture(f"speed-{slug(m)}", f"{m}: decode speed of each build on llmash, Ollama and vLLM"),
-                 "", "| provider | build | size | conversation | coding | thinking |", "|---|---|--:|--:|--:|--:|"]
-        for p in PROVIDERS:
-            for r in sorted((r for r in runs if r["label"] == m and r["provider"] == p), key=lambda r: r["size_gb"]):
+                 "", "| format | provider | build | weights | conversation | coding | thinking |",
+                 "|---|---|---|--:|--:|--:|--:|"]
+        notes = []
+        for name, rs in provider_rows(runs, m):
+            for r in rs:
                 cells = " | ".join(f"{r['workloads'][w]:.0f}" if r["workloads"].get(w) else "-" for w in WORKLOADS)
-                lines.append(f"| {p} | {r['build']} | {r['size_gb']:.1f} GB | {cells} |")
+                size = f"{r['size_gb']:.1f} GB" if r.get("size_gb") else "-"
+                build = r["build"] + ("\\*" if r.get("note") else "")
+                lines.append(f"| {name} | {r['provider']} | {build} | {size} | {cells} |")
+                if r.get("note") and r["note"] not in notes:
+                    notes.append(r["note"])
+        for n in notes:
+            lines += ["", f"\\* {n}."]
         parts.append("\n".join(lines))
     s = replace_block(s, "<!-- PROVIDERS -->", "<!-- /PROVIDERS -->", "\n\n".join(parts))
 

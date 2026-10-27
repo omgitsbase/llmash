@@ -1,13 +1,24 @@
+"""Decode speed of one build on one provider, measured the same way for llmash, Ollama and vLLM: each one's
+OpenAI-compatible API, the three prompts of each workload below, greedy, 600 tokens, streamed, timed from the first
+streamed token to the last so model load and prompt processing are left out. A workload's speed is the median of its
+three prompts. The row is added to providers.json, which charts.py draws.
+
+    python bench/bench.py --url http://127.0.0.1:11434/v1 --model gemma-4-e4b-it:q4_k_m --provider llmash \\
+        --label "Gemma 4 E4B" --build Q4_K_M --format 4-bit --size-gb 4.98
+
+--size-gb is the text model's weights: the GGUF's size for llmash, the model layer of Ollama's manifest, and the
+safetensors tensors outside the vision and audio towers for vLLM. Projectors and separate draft models are left out.
+"""
 import argparse
 import json
 import pathlib
 import statistics
 import time
-import urllib.error
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
-RESULTS = HERE / "results.json"
+PROVIDERS = HERE / "providers.json"
+FORMATS = ("3-bit", "4-bit", "NVFP4", "8-bit", "16-bit")
 
 # Three prompts per workload, one per repeat. Repeating a single prompt at
 # temperature 0 lets a self-speculating drafter replay its own previous output,
@@ -46,188 +57,68 @@ WORKLOADS = {
 }
 
 
-def post(url, body, timeout=900):
-    req = urllib.request.Request(
-        url, data=json.dumps(body).encode(), method="POST",
-        headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
-
-
-def via_ollama(base, model, prompt, max_tokens, temperature):
-    body = {"model": model, "stream": False,
-            "options": {"num_predict": max_tokens, "temperature": temperature},
-            "messages": [{"role": "user", "content": prompt}]}
-    d = post(base.rstrip("/") + "/api/chat", body)
-    tokens = d.get("eval_count") or 0
-    secs = (d.get("eval_duration") or 0) / 1e9
-    return tokens, secs
-
-
-def via_openai(base, model, prompt, max_tokens, temperature):
-    body = {"model": model, "max_tokens": max_tokens, "temperature": temperature,
-            "stream": True, "stream_options": {"include_usage": True},
-            "messages": [{"role": "user", "content": prompt}]}
-    req = urllib.request.Request(
-        base.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
-        method="POST", headers={"Content-Type": "application/json"})
-    chunks, first, last, reported = 0, None, None, None
-    with urllib.request.urlopen(req, timeout=900) as r:
+def stream(url, model, prompt, max_tokens):
+    """Tokens per second between the first streamed token and the last, and the tokens generated."""
+    body = {"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": max_tokens,
+            "temperature": 0, "stream": True, "stream_options": {"include_usage": True}}
+    req = urllib.request.Request(url.rstrip("/") + "/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    first = last = None
+    chunks, usage = 0, None
+    with urllib.request.urlopen(req, timeout=1800) as r:
         for raw in r:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
                 continue
-            payload = line[5:].strip()
-            if payload == "[DONE]":
+            data = line[5:].strip()
+            if data == "[DONE]":
                 break
-            try:
-                ev = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(ev.get("usage"), dict):
-                reported = ev["usage"].get("completion_tokens") or reported
-            for choice in ev.get("choices") or []:
-                delta = choice.get("delta") or {}
-                piece = "".join(str(delta.get(k) or "") for k in
-                                ("content", "reasoning_content", "reasoning", "thinking"))
-                if not piece:
-                    continue
-                now = time.perf_counter()
-                first = first if first is not None else now
-                last = now
-                chunks += 1
-    if first is None or last is None or last <= first:
-        return 0, 0.0
-    return (reported or chunks), last - first
-
-
-def run_one(base, api, model, prompt, max_tokens, temperature):
-    fn = via_ollama if api == "ollama" else via_openai
-    return fn(base, model, prompt, max_tokens, temperature)
-
-
-def warm(base, api, model):
-    try:
-        run_one(base, api, model, "Say ok.", 16, 0.0)
-    except (urllib.error.URLError, OSError) as e:
-        print(f"  warm-up failed: {e}")
-
-
-def measure(args):
-    rows = []
-    warm(args.url, args.api, args.model)
-    for name, prompts in WORKLOADS.items():
-        rates, notes = [], []
-        for i in range(args.repeat):
-            prompt = prompts[i % len(prompts)]
-            tokens, secs = run_one(args.url, args.api, args.model, prompt,
-                                   args.max_tokens, args.temperature)
-            if tokens < args.min_tokens or secs <= 0:
-                notes.append(f"{tokens}t discarded")
-                continue
-            rates.append(tokens / secs)
-            notes.append(f"{tokens}t in {secs:.2f}s = {tokens / secs:.1f}")
-            time.sleep(1)
-        print(f"  {name:14} " + ("  ".join(notes) if notes else "no output"))
-        if len(rates) < 2:
-            print(f"  {'':14} not enough valid runs, skipped")
-            continue
-        rows.append({"workload": name, "tok_s": round(statistics.median(rates), 1),
-                     "runs": [round(x, 1) for x in rates]})
-        print(f"  {'':14} median {statistics.median(rates):.1f} tok/s")
-    return rows
-
-
-def load_results():
-    if RESULTS.exists():
-        return json.loads(RESULTS.read_text("utf-8"))
-    return {"models": {}}
-
-
-def save(args, rows):
-    data = load_results()
-    model = data["models"].setdefault(args.label or args.model, {})
-    entry = {"measured": time.strftime("%Y-%m-%d"), "model_id": args.model,
-             "workloads": {r["workload"]: r["tok_s"] for r in rows}}
-    if args.build:
-        entry["build"] = args.build
-    elif "build" in model.get(args.backend, {}):
-        entry["build"] = model[args.backend]["build"]
-    model[args.backend] = entry
-    RESULTS.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def table():
-    data = load_results()
-    order = [("ollama", "Ollama"), ("vllm", "vLLM"), ("llmash", "llmash")]
-    cols = ("conversation", "coding", "thinking")
-    out = []
-    for label, backends in data["models"].items():
-        out.append(f"**{label}**\n")
-        # the build is a column because the rows are different files
-        out.append("| backend | build | conversation | coding | thinking |")
-        out.append("|---|---|--:|--:|--:|")
-        for key, name in order:
-            if key not in backends:
-                continue
-            w = backends[key]["workloads"]
-            bold = "**" if key == "llmash" else ""
-            cells = " | ".join(f"{bold}{w[c]:.1f}{bold}" if c in w else "-" for c in cols)
-            build = backends[key].get("build", "") or "-"
-            star = "\\*" if key == "llmash" else ""
-            out.append(f"| {bold}{name}{bold}{star} | {build} | {cells} |")
-        out.append("")
-    out.append("Tokens per second while generating, median of five runs, "
-               "excluding model load and prompt processing. Ollama's rows are from one "
-               "model load; between loads they drift by about a tenth.")
-    out.append("")
-    out.append("\\* llmash runs a custom build: one quantization type per tensor, chosen "
-               "under a size budget and assembled on this machine. No other runtime has an "
-               "equivalent. It is a third of a Q8_0's bytes, which is where the speed comes from; on "
-               "forty math questions it matched Q8_0 on Qwen3.8-27B and lost ten of 28 on "
-               "Qwen3-1.7B, so its accuracy cost depends on the model. Ollama runs its own Q8_0 pull, which ships without "
-               "a draft model; vLLM runs 8-bit weights with speculative decoding; llmash "
-               "runs what a pull assembles, drafter and launch settings included.")
-    return "\n".join(out)
-
-
-def write_readme():
-    readme = HERE.parent / "README.md"
-    s = readme.read_text("utf-8")
-    start, end = "<!-- BENCHMARK -->", "<!-- /BENCHMARK -->"
-    i, j = s.index(start), s.index(end)
-    readme.write_text(s[:i] + start + "\n\n" + table() + "\n\n" + s[j:], encoding="utf-8")
-    print(f"wrote the table into {readme}")
+            d = json.loads(data)
+            if d.get("usage"):
+                usage = d["usage"]
+            for c in d.get("choices") or []:
+                delta = c.get("delta") or {}
+                if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
+                    now = time.perf_counter()
+                    first = first or now
+                    last = now
+                    chunks += 1
+    n = (usage or {}).get("completion_tokens") or chunks
+    if first is None or last <= first or n < 64:
+        return None, n
+    return (n - 1) / (last - first), n
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--backend", choices=["ollama", "vllm", "llmash"])
-    p.add_argument("--url", default="http://127.0.0.1:11434",
-                   help="server root, without /v1")
-    p.add_argument("--api", choices=["ollama", "openai"], default="ollama",
-                   help="ollama: /api/chat with the server's own decode timing. "
-                        "openai: /v1 streamed, timed between first and last token.")
-    p.add_argument("--model")
-    p.add_argument("--label", help="how the model is named in the table")
-    p.add_argument("--build", help="the file this row ran, e.g. \"RCO-3, 9.6 GB\"")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--url", required=True, help="the provider's OpenAI-compatible base, ending in /v1")
+    p.add_argument("--model", required=True, help="the name the provider serves the build under")
+    p.add_argument("--provider", required=True, choices=["llmash", "Ollama", "vLLM"])
+    p.add_argument("--label", required=True, help="the model, as the chart titles it")
+    p.add_argument("--build", required=True, help="the build's own name, e.g. Q4_K_M or NVFP4")
+    p.add_argument("--format", required=True, choices=FORMATS, help="the group the build is charted in")
+    p.add_argument("--size-gb", type=float, required=True, help="the text model's weights, in GB")
     p.add_argument("--max-tokens", type=int, default=600)
-    p.add_argument("--min-tokens", type=int, default=64)
-    p.add_argument("--temperature", type=float, default=0.0)
-    p.add_argument("--repeat", type=int, default=3)
-    p.add_argument("--table", action="store_true", help="rebuild the README table and exit")
     args = p.parse_args()
 
-    if args.table:
-        write_readme()
-        return 0
-    if not (args.backend and args.model):
-        p.error("--backend and --model are required unless --table is given")
-    print(f"{args.backend}: {args.model} at {args.url}")
-    rows = measure(args)
-    if rows:
-        save(args, rows)
+    stream(args.url, args.model, "Say ok.", 16)
+    res, toks = {}, {}
+    for name, prompts in WORKLOADS.items():
+        rates, counts = [], []
+        for prompt in prompts:
+            rate, n = stream(args.url, args.model, prompt, args.max_tokens)
+            if rate:
+                rates.append(rate)
+            counts.append(n)
+        res[name] = round(statistics.median(rates), 1) if rates else None
+        toks[name] = counts
+    print(f"{args.provider} {args.label} {args.build}: " + "  ".join(f"{k} {v}" for k, v in res.items()))
+
+    rows = json.loads(PROVIDERS.read_text("utf-8")) if PROVIDERS.exists() else []
+    rows.append({"provider": args.provider, "label": args.label, "tier": args.format, "build": args.build,
+                 "size_gb": args.size_gb, "model": args.model, "workloads": res, "tokens": toks,
+                 "measured": time.strftime("%Y-%m-%d")})
+    PROVIDERS.write_text(json.dumps(rows, indent=1) + "\n", encoding="utf-8")
     return 0
 
 
