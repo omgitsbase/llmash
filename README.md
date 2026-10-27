@@ -10,9 +10,12 @@
 [![Discord](https://img.shields.io/badge/Discord-contact-5865F2.svg?logo=discord&logoColor=white)](https://discord.com/users/1274629090346926121)
 
 An Ollama-compatible server and command line for Windows and Linux, on a fork
-of llama.cpp. It keeps Ollama's commands, API and model store. It replaces the
-runtime, the launch settings and the drafter, and can assemble a build when a
-repository has none at the wanted size.
+of llama.cpp ([omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp),
+branch `llmash`; the abliteration tool is
+[omgitsbase/llmash-ablate](https://github.com/omgitsbase/llmash-ablate)). It
+keeps Ollama's commands, API and model store. It replaces the runtime, the
+launch settings and the drafter, and can assemble a build when a repository has
+none at the wanted size.
 
 ## Contents
 
@@ -85,35 +88,44 @@ One RTX PRO 6000 Blackwell (96 GB), Linux, one request at a time.
 prompts each, greedy, 600 tokens, streamed. Speed is tokens per second from the
 first streamed token to the last, the median of the three prompts; a bar is the
 mean of the three workloads. llmash 0.5.7 (runtime build 770) and Ollama
-0.40.11 were measured on 2026-10-26, vLLM (`vllm/vllm-openai:latest` as of
-2026-09-27) on 2026-09-27 on the same card, its checkpoints unchanged since.
-One run per row, no concurrent load, temperature 0 only, and the card also
-drives the display.
+0.40.11 (bundling llama.cpp 0.7.0-dev, commit `9ff0d7e90`) were measured on
+2026-10-26 and 27, vLLM (`vllm/vllm-openai:latest` as of 2026-09-27) on
+2026-09-27 on the same card, its checkpoints unchanged since.
+One run per row, temperature 0 only, and the card also drives the display. No
+concurrent load was measured, which is the load vLLM is built for.
 
-Three formats per model:
+Two formats per model:
 
 - 8-bit: llmash and Ollama run the same file, Ollama's own `q8_0` pull. Ollama's
-  runner is upstream llama.cpp's server, so these rows are also this fork
-  against upstream under Ollama's flags. vLLM runs the FP8 checkpoint.
-- NVFP4: llmash runs an NVFP4 GGUF, vLLM an NVFP4 checkpoint. Different files;
-  the GGUF is smaller (17.1 against 21.0 GB on the 27B), and a single stream is
-  limited by the bytes read per token.
-- RCO-3: llmash's own 3-bit build, assembled by `pull`
-  ([Custom builds](#custom-builds)).
-  `llmash pull hf.co/bartowski/google_gemma-4-E4B-it-GGUF --quant RCO-3`
-  reproduces the Gemma 4 E4B file.
+  runner is stock llama.cpp's server drafting with the same MTP head, so these
+  rows are the fork against stock llama.cpp on the same file. vLLM runs an FP8
+  checkpoint.
+- NVFP4: llmash and Ollama run the same NVFP4 GGUF, vLLM an NVFP4 checkpoint.
+  The two files differ in what is NVFP4: on the 27B both put the MLP in NVFP4
+  (8.6 GB), but NVIDIA's checkpoint keeps attention in FP8 (7.2 GB) and the
+  embeddings in BF16 (2.5 GB), where the GGUF has them at Q5_K and NVFP4
+  (3.6 GB) and Q6_K (1.0 GB), so 21.0 GB against 17.1 GB. llmash takes the
+  more efficient NVFP4 build where the hub has one: on the 27B, more of the
+  model in 4 bits in a smaller file, within the measurement's error of BF16 on
+  perplexity; the 35B GGUF measures +1.8%, and the only Gemma 4 E4B NVFP4 GGUF
+  published +29.9%. A single stream is limited by the bytes read per token, so
+  a smaller file is part of a lead over vLLM. The same-file comparisons are
+  llmash against Ollama: the 8-bit rows and the NVFP4 rows. Ollama does not
+  load the 35B NVFP4 GGUF (its runner reports 1079 tensors against 1101
+  expected), so that chart has no Ollama NVFP4 row.
 
 Drafting, from each provider's flags and logs:
 
 | provider | Qwen3.8 27B, Qwen3.6 35B-A3B | Gemma 4 E4B |
 |---|---|---|
 | llmash | the file's MTP head, 3 tokens a round | Google's assistant drafter, 3 tokens a round |
-| Ollama | the file's MTP head, 4 tokens a round (`--spec-type draft-mtp --spec-draft-n-max 4`) | none; the `q8_0` tag ships no drafter |
+| Ollama | `q8_0` (its `-mtp` tag): the file's MTP head, 4 tokens a round (`--spec-type draft-mtp --spec-draft-n-max 4`); NVFP4 (the GGUF imported with a Modelfile): none, its log says `no implementations specified for speculative decoding` | none: its `q8_0` tag ships no drafter, and an imported GGUF gets none |
 | vLLM | the file's MTP head, 3 tokens a round (`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'`) | the assistant drafter, 3 tokens a round (`gemma4_mtp`) |
 
 The runtime alone: Gemma 4 E4B's `q8_0` on llmash with no drafter of any kind
-does 177 tokens a second; Ollama does 126 on the same file; llmash with the
-assistant drafter does 365.
+does 177 tokens a second (mean of the three workloads); Ollama does 126 on the
+same file; llmash with the assistant drafter does 365. The Qwen files draft on
+both runtimes with the same head, so those rows need no such split.
 
 Other settings are each provider's defaults: Ollama `-c 262144 -b 512 -ub 512`,
 llmash `-c 8192 -b 4096 -ub 2048` plus what it picks per model, vLLM
@@ -139,11 +151,12 @@ GGUFs and have none.
 
 | format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
 |---|---|---|--:|--:|--:|--:|--:|--:|
-| RCO 3-bit, llmash only | llmash | assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16 | 2.9 GB | 51.95 | +10.7% | 281 | 411 | 444 |
 | NVFP4 | llmash | FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF | 5.2 GB | 60.95 | +29.9% | 295 | 434 | 497 |
+| NVFP4 | Ollama | FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF | 5.2 GB | 60.95 | +29.9% | 167 | 162 | 157 |
 | NVFP4 | vLLM | unsloth/gemma-4-E4B-it-NVFP4 | 7.2 GB | - | - | 191 | 251 | 281 |
 | 8-bit | llmash | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 260 | 400 | 434 |
 | 8-bit | Ollama | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 121 | 127 | 128 |
+| 8-bit | vLLM | prithivMLmods/gemma-4-E4B-it-FP8 | 12.3 GB | - | - | 284 | 426 | 472 |
 
 The model's own BF16 weights measure 46.92 on the same text with the same runtime.
 
@@ -156,9 +169,8 @@ The model's own BF16 weights measure 46.92 on the same text with the same runtim
 
 | format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
 |---|---|---|--:|--:|--:|--:|--:|--:|
-| RCO 3-bit, llmash only | llmash | assembled here by pull from unsloth/Qwen3.8-27B-GGUF | 10.3 GB | 6.40 | +8.0% | 178 | 187 | 197 |
-| RCO 3-bit, llmash only | llmash | ISTA-DASLab's Qwen3.8-27B GSQ-RCO IQ3_S | 11.9 GB | 5.90 | -0.4% | 184 | 172 | 192 |
 | NVFP4 | llmash | cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF | 17.1 GB | 5.92 | -0.2% | 159 | 157 | 185 |
+| NVFP4 | Ollama | cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF | 17.1 GB | 5.92 | -0.2% | 61 | 61 | 60 |
 | NVFP4 | vLLM | nvidia/Qwen3.8-27B-NVFP4 | 21.0 GB | - | - | 111 | 115 | 125 |
 | 8-bit | llmash | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 109 | 102 | 124 |
 | 8-bit | Ollama | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 73 | 95 | 102 |
@@ -175,7 +187,6 @@ The model's own BF16 weights measure 5.93 on the same text with the same runtime
 
 | format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
 |---|---|---|--:|--:|--:|--:|--:|--:|
-| RCO 3-bit, llmash only | llmash | assembled here by pull from unsloth/Qwen3.6-35B-A3B-GGUF | 13.4 GB | 5.90 | +4.0% | 622 | 707 | 733 |
 | NVFP4 | llmash | michaelw9999/Qwen3.6-35B-A3B-NVFP4-MTP-GGUF (HQ) | 20.5 GB | 5.78 | +1.8% | 455 | 520 | 551 |
 | NVFP4 | vLLM | nvidia/Qwen3.6-35B-A3B-NVFP4 | 22.5 GB | - | - | 252 | 270 | 287 |
 | 8-bit | llmash | Ollama's qwen3.6:35b-a3b-mtp-q8_0 | 37.8 GB | 5.66 | -0.3% | 417 | 448 | 515 |
@@ -186,8 +197,7 @@ The model's own BF16 weights measure 5.67 on the same text with the same runtime
 
 <!-- /PROVIDERS -->
 
-Weights are the text model's only. Drafting accepts more on coding and thinking
-than on conversation.
+Weights are the text model's only.
 
 ### Math accuracy of the 3-bit builds
 
@@ -400,9 +410,15 @@ GSQ-RCO build, `pull` lists it first as `rco`.
 
 The source is the smallest published build at least two bits wider than the
 target (Q6_K or wider for RCO-3; never a 4-bit file), read a block at a time
-and quantized on the GPU; only the result is written to disk. The RCO-3 rows
-above were assembled from bartowski's bf16 (Gemma 4 E4B) and unsloth's GGUFs
-(the Qwen models). Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes, 10 of
+and quantized on the GPU; only the result is written to disk.
+
+Perplexity of RCO-3 builds against the model's own BF16, measured as in
+[Performance](#performance): Gemma 4 E4B +10.7% (2.9 GB, from bartowski's bf16
+with `llmash pull hf.co/bartowski/google_gemma-4-E4B-it-GGUF --quant RCO-3`),
+Qwen3.8-27B +8.0% (10.3 GB, from unsloth's GGUF; the published GSQ-RCO IQ3_S
+build measures -0.4% at 11.9 GB), Qwen3.6-35B-A3B +4.0% (13.4 GB). Decode
+speed on the RTX PRO 6000: 281 / 411 / 444, 178 / 187 / 197 and 622 / 707 /
+733 tokens a second on the three workloads. Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes, 10 of
 them the download. `rco convert` does the same from a model on disk and needs an
 importance matrix (`--imatrix`, a file or the repository holding one).
 
