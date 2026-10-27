@@ -265,7 +265,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 772 is commit `7a59bf007`. Changes from upstream:
+`llmash`; runtime build 770 is commit `84c6a24c1`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -283,30 +283,6 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
   gate and up still fuse, and a float gate and up pair runs as one launch.
 - Every fusion is matched on the graph, not by model name. Each has a bit in
   `GGML_CUDA_FUSE_OFF` that turns it off.
-- Gemma 4's assistant drafter runs its draft steps as one graph: the drafter
-  attends over the target's cache and writes no cache of its own, so each
-  step takes the argmax and hidden row of the one before on the GPU. Three
-  drafter decodes a round became one (E4B: 378 to 420 tokens a second against
-  build 770, replies identical).
-- The next draft chain is launched before the last one's ids are read back,
-  the ids coming to the host through a pinned slot with an event. The GPU
-  runs verify, chain, verify with under 2% idle on the Qwen models, whose
-  rates did not change: those rounds were GPU bound already.
-- `rms_norm` keeps its row in registers and reads its weights before the
-  dependent-launch wait.
-
-Where a drafted round goes, measured with the hub's flags on an RTX PRO 6000
-(`LLAMA_ROUND_TIMING=2` prints the round as a timeline):
-
-| model | verify | draft chain | GPU idle | tokens a round |
-|---|--:|--:|--:|--:|
-| Qwen3.8 27B GSQ-RCO IQ3_S | 12.2 ms | 0.8 ms | 0.1 ms | 2.65 |
-| Qwen3.6 35B-A3B RCO-3 | 3.5 ms | 0.6 ms | 0.1 ms | 2.54 |
-| Gemma 4 E4B RCO-3, assistant drafter | 4.3 ms | 0.5 ms | 0.4 ms | 2.22 |
-
-A change to the runtime is judged bit for bit: `llama-logits-hash` hashes
-every logits row of a prompt, of 32 greedy steps and of the same tokens as
-batches of 2, 4 and 8, and the hashes must not change.
 
 Each release's runtime is checked for the same greedy text as the previous one
 on dense, mixture-of-experts and delta-net models, across NVFP4, 3-bit and 4-bit
