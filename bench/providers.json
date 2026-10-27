@@ -168,72 +168,6 @@
   "ppl_ref": 46.9225
  },
  {
-  "provider": "Ollama",
-  "label": "Gemma 4 E4B",
-  "tier": "NVFP4",
-  "build": "NVFP4",
-  "size_gb": 5.19,
-  "file": "FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF",
-  "model": "gemma-4-e4b-it-nvfp4",
-  "workloads": {
-   "conversation": 167.2,
-   "coding": 161.8,
-   "thinking": 157.2
-  },
-  "tokens": {
-   "conversation": [
-    600,
-    600,
-    600
-   ],
-   "coding": [
-    600,
-    600,
-    600
-   ],
-   "thinking": [
-    600,
-    600,
-    600
-   ]
-  },
-  "measured": "2026-10-27",
-  "ppl": 60.9506,
-  "ppl_ref": 46.9225
- },
- {
-  "provider": "vLLM",
-  "label": "Gemma 4 E4B",
-  "tier": "8-bit",
-  "build": "FP8",
-  "size_gb": 12.35,
-  "file": "prithivMLmods/gemma-4-E4B-it-FP8",
-  "model": "m",
-  "workloads": {
-   "conversation": 284.5,
-   "coding": 425.9,
-   "thinking": 471.7
-  },
-  "tokens": {
-   "conversation": [
-    241,
-    298,
-    364
-   ],
-   "coding": [
-    600,
-    600,
-    600
-   ],
-   "thinking": [
-    600,
-    511,
-    600
-   ]
-  },
-  "measured": "2026-10-27"
- },
- {
   "provider": "vLLM",
   "label": "Qwen3.8 27B",
   "tier": "NVFP4",
@@ -449,40 +383,6 @@
   },
   "measured": "2026-10-26",
   "ppl": 5.9264,
-  "ppl_ref": 5.9259
- },
- {
-  "provider": "Ollama",
-  "label": "Qwen3.8 27B",
-  "tier": "NVFP4",
-  "build": "NVFP4",
-  "size_gb": 17.13,
-  "file": "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF",
-  "model": "qwen3.8-27b-imatrix-nvfp4-mtp",
-  "workloads": {
-   "conversation": 61.0,
-   "coding": 60.6,
-   "thinking": 60.1
-  },
-  "tokens": {
-   "conversation": [
-    352,
-    531,
-    578
-   ],
-   "coding": [
-    600,
-    600,
-    600
-   ],
-   "thinking": [
-    600,
-    600,
-    600
-   ]
-  },
-  "measured": "2026-10-27",
-  "ppl": 5.9158,
   "ppl_ref": 5.9259
  },
  {
