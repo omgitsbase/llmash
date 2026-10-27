@@ -1,0 +1,450 @@
+[
+ {
+  "provider": "Ollama",
+  "label": "Gemma 4 E4B",
+  "tier": "8-bit",
+  "build": "q8_0",
+  "size_gb": 8.03,
+  "file": "Ollama's gemma4:e4b-it-q8_0",
+  "model": "gemma4:e4b-it-q8_0",
+  "workloads": {
+   "conversation": 121.3,
+   "coding": 127.1,
+   "thinking": 128.5
+  },
+  "tokens": {
+   "conversation": [
+    410,
+    439,
+    459
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "tier": "8-bit",
+  "build": "q8_0, no drafter",
+  "size_gb": 8.03,
+  "file": "Ollama's gemma4:e4b-it-q8_0",
+  "model": "gemma4:e4b-it-q8_0",
+  "workloads": {
+   "conversation": 174.5,
+   "coding": 181.8,
+   "thinking": 176.0
+  },
+  "tokens": {
+   "conversation": [
+    255,
+    305,
+    324
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    517,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "tier": "8-bit",
+  "build": "q8_0, assistant drafter",
+  "size_gb": 8.03,
+  "file": "Ollama's gemma4:e4b-it-q8_0",
+  "model": "gemma4:e4b-it-q8_0",
+  "workloads": {
+   "conversation": 260.2,
+   "coding": 399.7,
+   "thinking": 434.1
+  },
+  "tokens": {
+   "conversation": [
+    255,
+    305,
+    296
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    513,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "tier": "3-bit",
+  "build": "RCO-3",
+  "size_gb": 2.88,
+  "file": "assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16",
+  "model": "google-gemma-4-e4b-it-l:rco-3",
+  "workloads": {
+   "conversation": 281.4,
+   "coding": 410.7,
+   "thinking": 444.2
+  },
+  "tokens": {
+   "conversation": [
+    308,
+    282,
+    340
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    539,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "tier": "NVFP4",
+  "build": "NVFP4",
+  "size_gb": 5.19,
+  "file": "FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF",
+  "model": "gemma-4-e4b-it-nvfp4:gguf",
+  "workloads": {
+   "conversation": 294.9,
+   "coding": 434.5,
+   "thinking": 496.7
+  },
+  "tokens": {
+   "conversation": [
+    247,
+    354,
+    348
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    570,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "tier": "8-bit",
+  "build": "q8_0",
+  "size_gb": 29.05,
+  "file": "Ollama's qwen3.8:27b-mtp-q8_0",
+  "model": "qwen3.8:27b-mtp-q8_0",
+  "workloads": {
+   "conversation": 108.8,
+   "coding": 102.1,
+   "thinking": 123.9
+  },
+  "tokens": {
+   "conversation": [
+    209,
+    529,
+    424
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    301,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "tier": "NVFP4",
+  "build": "NVFP4",
+  "size_gb": 17.13,
+  "file": "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF",
+  "model": "qwen3.8-27b-imatrix-nvfp4-mtp:gguf",
+  "workloads": {
+   "conversation": 159.3,
+   "coding": 157.1,
+   "thinking": 185.1
+  },
+  "tokens": {
+   "conversation": [
+    317,
+    514,
+    567
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    489,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "tier": "3-bit",
+  "build": "RCO-3",
+  "size_gb": 10.27,
+  "file": "assembled here by pull from unsloth/Qwen3.8-27B-GGUF",
+  "model": "qwen3.8-27b:rco-3",
+  "workloads": {
+   "conversation": 178.2,
+   "coding": 186.7,
+   "thinking": 196.8
+  },
+  "tokens": {
+   "conversation": [
+    240,
+    600,
+    362
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "tier": "3-bit",
+  "build": "GSQ-RCO",
+  "size_gb": 11.94,
+  "file": "ISTA-DASLab's Qwen3.8-27B GSQ-RCO IQ3_S",
+  "model": "qwen3.8-27b-gsq-rco:iq3_s",
+  "workloads": {
+   "conversation": 183.6,
+   "coding": 172.3,
+   "thinking": 192.4
+  },
+  "tokens": {
+   "conversation": [
+    255,
+    503,
+    371
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    586,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Qwen3.8 27B",
+  "tier": "8-bit",
+  "build": "q8_0",
+  "size_gb": 29.05,
+  "file": "Ollama's qwen3.8:27b-mtp-q8_0",
+  "model": "qwen3.8:27b-mtp-q8_0",
+  "workloads": {
+   "conversation": 73.1,
+   "coding": 95.4,
+   "thinking": 102.2
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "Ollama",
+  "label": "Qwen3.6 35B-A3B",
+  "tier": "8-bit",
+  "build": "q8_0",
+  "size_gb": 37.8,
+  "file": "Ollama's qwen3.6:35b-a3b-mtp-q8_0",
+  "model": "qwen3.6:35b-a3b-mtp-q8_0",
+  "workloads": {
+   "conversation": 161.7,
+   "coding": 184.7,
+   "thinking": 181.1
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.6 35B-A3B",
+  "tier": "8-bit",
+  "build": "q8_0",
+  "size_gb": 37.8,
+  "file": "Ollama's qwen3.6:35b-a3b-mtp-q8_0",
+  "model": "qwen3.6:35b-a3b-mtp-q8_0",
+  "workloads": {
+   "conversation": 416.9,
+   "coding": 447.9,
+   "thinking": 515.1
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.6 35B-A3B",
+  "tier": "NVFP4",
+  "build": "NVFP4",
+  "size_gb": 20.49,
+  "file": "michaelw9999/Qwen3.6-35B-A3B-NVFP4-MTP-GGUF (HQ)",
+  "model": "qwen3.6-35b-a3b-nvfp4-mtp-hq:gguf",
+  "workloads": {
+   "conversation": 455.3,
+   "coding": 519.6,
+   "thinking": 550.8
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.6 35B-A3B",
+  "tier": "3-bit",
+  "build": "RCO-3",
+  "size_gb": 13.42,
+  "file": "assembled here by pull from unsloth/Qwen3.6-35B-A3B-GGUF",
+  "model": "qwen3.6-35b-a3b-ud-xl:rco-3",
+  "workloads": {
+   "conversation": 622.5,
+   "coding": 707.2,
+   "thinking": 733.3
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-10-26"
+ }
+]

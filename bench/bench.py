@@ -3,21 +3,23 @@ OpenAI-compatible API, the three prompts of each workload below, greedy, 600 tok
 streamed token to the last so model load and prompt processing are left out. A workload's speed is the median of its
 three prompts. The row is added to providers.json, which charts.py draws.
 
-    python bench/bench.py --url http://127.0.0.1:11434/v1 --model gemma-4-e4b-it:q4_k_m --provider llmash \\
-        --label "Gemma 4 E4B" --build Q4_K_M --format 4-bit --size-gb 4.98
+    python bench/bench.py --url http://127.0.0.1:11434/v1 --model gemma4:e4b-it-q4_k_m --provider llmash \\
+        --label "Gemma 4 E4B" --build q4_K_M --format 4-bit --size-gb 5.49 --file "Ollama's gemma4:e4b-it-q4_K_M"
 
 --size-gb is the text model's weights: the GGUF's size for llmash, the model layer of Ollama's manifest, and the
 safetensors tensors outside the vision and audio towers for vLLM. Projectors and separate draft models are left out.
+--file names the exact file, so a row run on another provider's file says so. LLMASH_BENCH_OUT redirects the output.
 """
 import argparse
 import json
+import os
 import pathlib
 import statistics
 import time
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
-PROVIDERS = HERE / "providers.json"
+PROVIDERS = pathlib.Path(os.environ.get("LLMASH_BENCH_OUT", HERE / "providers.json"))
 FORMATS = ("3-bit", "4-bit", "NVFP4", "8-bit", "16-bit")
 
 # Three prompts per workload, one per repeat. Repeating a single prompt at
@@ -65,7 +67,7 @@ def stream(url, model, prompt, max_tokens):
                                  headers={"Content-Type": "application/json"})
     first = last = None
     chunks, usage = 0, None
-    with urllib.request.urlopen(req, timeout=1800) as r:
+    with urllib.request.urlopen(req, timeout=7200) as r:
         for raw in r:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -98,6 +100,7 @@ def main():
     p.add_argument("--build", required=True, help="the build's own name, e.g. Q4_K_M or NVFP4")
     p.add_argument("--format", required=True, choices=FORMATS, help="the group the build is charted in")
     p.add_argument("--size-gb", type=float, required=True, help="the text model's weights, in GB")
+    p.add_argument("--file", required=True, help="the exact file that ran: a Hugging Face repo and file, or an Ollama tag")
     p.add_argument("--max-tokens", type=int, default=600)
     args = p.parse_args()
 
@@ -116,7 +119,7 @@ def main():
 
     rows = json.loads(PROVIDERS.read_text("utf-8")) if PROVIDERS.exists() else []
     rows.append({"provider": args.provider, "label": args.label, "tier": args.format, "build": args.build,
-                 "size_gb": args.size_gb, "model": args.model, "workloads": res, "tokens": toks,
+                 "size_gb": args.size_gb, "file": args.file, "model": args.model, "workloads": res, "tokens": toks,
                  "measured": time.strftime("%Y-%m-%d")})
     PROVIDERS.write_text(json.dumps(rows, indent=1) + "\n", encoding="utf-8")
     return 0

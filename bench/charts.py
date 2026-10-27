@@ -87,10 +87,9 @@ def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0):
     plt.close(fig)
 
 
-# builds grouped by format, so the same build on each provider sits together; within a group the providers keep one
-# order on every chart. The 3-bit builds are llmash's own and run nowhere else.
-TIERS = (("3-bit", "3-bit, llmash only"), ("4-bit", "4-bit GGUF"), ("NVFP4", "NVFP4"), ("8-bit", "8-bit"),
-         ("16-bit", "16-bit"))
+# Three formats per model, each on every provider that runs it, the providers in one order on every chart. The 3-bit
+# builds are llmash's own and run nowhere else; in the 8-bit group llmash runs Ollama's own Q8_0 file.
+TIERS = (("3-bit", "RCO 3-bit, llmash only"), ("NVFP4", "NVFP4"), ("8-bit", "8-bit"))
 
 
 def provider_rows(runs, m):
@@ -101,45 +100,56 @@ def provider_rows(runs, m):
             yield name, rs
 
 
+def quality(r):
+    """A GGUF row's perplexity as its distance from the model's own BF16 weights: +1.1% says a little worse."""
+    if r.get("ppl_ref"):
+        return f"{100 * (r['ppl'] / r['ppl_ref'] - 1):+.1f}%"
+    return f"{r['ppl']:.2f}"
+
+
 def providers(theme):
     """Per model: every build's decode speed, one band per format with its bars packed together in a fixed provider
-    order, the speed, build and size at each bar's end. Every chart shares one scale and one left margin, so the
-    charts line up with each other."""
+    order, the speed, build and size at each bar's end. The charts share one left margin, so they line up, and each
+    has its own scale."""
     t = THEMES[theme]
     style(t)
     runs = json.loads((HERE / "providers.json").read_text("utf-8"))
-    xmax = max(mean_speed(r) for r in runs)
-    step, bar, gap = 0.44, 0.34, 0.36
+    step, bar, head, gap = 0.5, 0.38, 0.55, 0.3
     for m in dict.fromkeys(r["label"] for r in runs):
         groups = list(provider_rows(runs, m))
+        # each chart on its own scale: one fast model must not flatten the others
+        xmax = max(mean_speed(r) for _, rs in groups for r in rs)
         n = sum(len(rs) for _, rs in groups)
-        height = step * n + gap * (len(groups) - 1) + 1.55
+        height = step * n + (head + gap) * len(groups) + 1.2
         fig, ax = plt.subplots(figsize=(9.6, height))
-        y, ticks, names = 0.0, [], []
-        for name, rs in groups:
-            first = y
+        fig.subplots_adjust(left=0.025, right=0.99, top=1 - 0.6 / height, bottom=0.5 / height)
+        ax.set_xlim(0, xmax * 1.45)
+        y = 0.0
+        for gi, (name, rs) in enumerate(groups):
+            top = y + head * 0.15
+            # the format as a band: its name at the top, its bars under it, a faint fill to hold them together
+            ax.text(0.004, -(y + head * 0.5), name.upper(), transform=ax.get_yaxis_transform(), va="center",
+                    ha="left", fontsize=9, fontweight="bold", color=t["muted"])
+            y += head
             for r in rs:
                 v = mean_speed(r)
-                ax.barh(-y, v, height=bar, color=t[r["provider"]], zorder=2)
+                ax.barh(-y, v, height=bar, color=t[r["provider"]], linewidth=0, zorder=2)
+                ax.text(xmax * 0.012, -y, r["provider"], va="center", ha="left", fontsize=9.5, fontweight="bold",
+                        color=t["surface"], zorder=3)
                 ax.text(v + xmax * 0.012, -y, f"{v:.0f}", va="center", fontsize=10.5, fontweight="bold",
                         color=t["text"])
-                ax.text(v + xmax * 0.095, -y, f"{r['build']}  ·  {r['size_gb']:.1f} GB", va="center", fontsize=10,
-                        color=t["muted"])
+                note = f"{r['build']}  ·  {r['size_gb']:.1f} GB" + (f"  ·  ppl {quality(r)}" if r.get("ppl") else "")
+                ax.text(v + xmax * 0.085, -y, note, va="center", fontsize=9.5, color=t["muted"])
                 y += step
-            ticks.append(-(first + y - step) / 2)
-            names.append(name)
+            if gi % 2 == 0:
+                ax.axhspan(-(y - step / 2 - 0.02), -top, facecolor=t["text"], alpha=0.035, linewidth=0, zorder=0)
             y += gap
-        ax.set_yticks(ticks)
-        ax.set_yticklabels(names, fontweight="bold")
-        ax.set_ylim(-(y - gap - step) - step / 2 - 0.05, step / 2 + 0.05)
-        ax.set_xlim(0, xmax * 1.42)
-        ax.set_xlabel("tokens per second while generating")
-        ax.set_title(m, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=28)
-        ax.legend(handles=[Patch(color=t[p], label=p) for p in PROVIDERS], loc="lower left", bbox_to_anchor=(0, 1.0),
-                  ncol=len(PROVIDERS), frameon=False, fontsize=10.5, handlelength=1.0, columnspacing=1.4,
-                  borderaxespad=0.2, labelcolor=t["text"])
+        ax.set_ylim(-(y - gap) - 0.05, 0.05)
+        ax.set_yticks([])
+        ax.set_xlabel("tokens per second while generating", fontsize=9.5)
+        ax.set_title(m, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=10)
         clean(ax, t)
-        fig.subplots_adjust(left=2.0 / 9.6, right=0.98, top=1 - 0.95 / height, bottom=0.6 / height)
+        ax.grid(axis="x", color=t["grid"], linewidth=0.5, alpha=0.6)
         fig.savefig(DOCS / f"speed-{slug(m)}-{theme}.svg", transparent=True)
         plt.close(fig)
 
@@ -177,12 +187,17 @@ def readme_tables():
     parts = []
     for m in dict.fromkeys(r["label"] for r in runs):
         lines = [f"#### {m}", "", picture(f"speed-{slug(m)}", f"{m}: decode speed of each build on llmash, Ollama and vLLM"),
-                 "", "| format | provider | build | weights | conversation | coding | thinking |",
-                 "|---|---|---|--:|--:|--:|--:|"]
+                 "", "| format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |",
+                 "|---|---|---|--:|--:|--:|--:|--:|--:|"]
+        ref = next((r["ppl_ref"] for r in runs if r["label"] == m and r.get("ppl_ref")), None)
         for name, rs in provider_rows(runs, m):
             for r in rs:
                 cells = " | ".join(f"{r['workloads'][w]:.0f}" if r["workloads"].get(w) else "-" for w in WORKLOADS)
-                lines.append(f"| {name} | {r['provider']} | {r['build']} | {r['size_gb']:.1f} GB | {cells} |")
+                ppl = f"{r['ppl']:.2f}" if r.get("ppl") else "-"
+                vs = quality(r) if r.get("ppl_ref") else "-"
+                lines.append(f"| {name} | {r['provider']} | {r.get('file', r['build'])} | {r['size_gb']:.1f} GB | {ppl} | {vs} | {cells} |")
+        if ref:
+            lines += ["", f"The model's own BF16 weights measure {ref:.2f} on the same text with the same runtime."]
         parts.append("\n".join(lines))
     s = replace_block(s, "<!-- PROVIDERS -->", "<!-- /PROVIDERS -->", "\n\n".join(parts))
 

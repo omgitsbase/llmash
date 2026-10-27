@@ -9,11 +9,10 @@
 [![Ask DeepWiki](https://img.shields.io/badge/DeepWiki-omgitsbase%2Fllmash-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/omgitsbase/llmash)
 [![Discord](https://img.shields.io/badge/Discord-contact-5865F2.svg?logo=discord&logoColor=white)](https://discord.com/users/1274629090346926121)
 
-An Ollama-compatible server and command line for Windows and Linux, built on a
-fork of llama.cpp. It keeps Ollama's commands, API and model store, so anything
-already pointed at Ollama keeps working. It changes the runtime, the launch
-settings, the drafter, and, when a repository has no build at the size you want,
-the build itself.
+An Ollama-compatible server and command line for Windows and Linux, on a fork
+of llama.cpp. It keeps Ollama's commands, API and model store. It replaces the
+runtime, the launch settings and the drafter, and can assemble a build when a
+repository has none at the wanted size.
 
 ## Contents
 
@@ -45,15 +44,15 @@ Linux:
 curl -fsSL https://raw.githubusercontent.com/omgitsbase/llmash/main/install.sh | sh
 ```
 
-Run normally, either installer sets llmash up for you alone. Run from an admin
-PowerShell, or with `sudo sh` on Linux, it installs for the whole machine.
+A normal window installs for the current user. An admin PowerShell, or
+`sudo sh` on Linux, installs for the machine. The installer takes the latest
+release. `llmash update` takes the latest push to main (the `edge` build), or
+the latest release with `--stable`. `ollama` is installed as an alias of
+`llmash`.
 
-Already installed: `llmash update`.
-
-The installer puts `llmash` on your PATH, fetches the runtime for your hardware
-and starts the server: in the tray on Windows, as a systemd service on Linux.
-An NVIDIA card from Turing (RTX 20) on, with driver 580 or newer, gets llmash's
-own CUDA 13 runtime on both systems. Anything else gets upstream llama.cpp's
+The installer puts `llmash` on PATH, fetches the runtime for the hardware and
+starts the server. An NVIDIA card from Turing (RTX 20) on with driver 580 or
+newer gets llmash's CUDA 13 runtime; anything else gets upstream llama.cpp's
 Vulkan or CPU build, and models load into system RAM.
 
 | | Windows | Linux |
@@ -63,15 +62,16 @@ Vulkan or CPU build, and models load into system RAM.
 | Installs to | `%LOCALAPPDATA%\llmash`; from an admin window, `%ProgramData%\llmash` | `~/.local/lib/llmash`; as root, `/usr/local/lib/llmash` |
 | Options | `-NoOllama`, `-Runtime`, `-Dir`, `-Yes` | `--no-ollama`, `--runtime`, `--user`, `--system`, `--uninstall` |
 
-A machine install can be run by every user and changed only by administrators.
-On Linux its service runs as the unprivileged `llmash` account, not root, and
-keeps its models in `/var/lib/llmash/models` unless one is already set. The key
-for `llmash link`, in `link.json`, is readable by its owner alone: mode 0600 on
-Linux, and only that user, SYSTEM and Administrators on Windows. `llmash update`
-applies all of this to an install an older version made.
+A machine install is usable by every user and writable by administrators only.
+On Linux the service runs as the `llmash` account, with models in
+`/var/lib/llmash/models` unless a folder is already set. `link.json`, which
+holds the key for `llmash link`, is readable by its owner alone: mode 0600 on
+Linux; the user, SYSTEM and Administrators on Windows. `llmash update` applies
+this to installs made by older versions. An install takes its settings from one
+it replaces.
 
-Over SSH or from a script on Windows, save the installer and pass the options up
-front; with none it only lists them:
+Over SSH, or from a script on Windows, save the installer and pass options on
+the command line; with none it lists them:
 
 ```powershell
 irm https://raw.githubusercontent.com/omgitsbase/llmash/main/install.ps1 -OutFile install.ps1
@@ -80,23 +80,53 @@ powershell -ExecutionPolicy RemoteSigned -File .\install.ps1 -NoOllama
 
 ## Performance
 
-All numbers are from one RTX PRO 6000 Blackwell (96 GB) under Linux. Every
-provider gets the same requests: `bench/bench.py`'s conversation, coding and
-thinking workloads, three prompts each, greedy, 600 tokens, streamed. Speed is
-counted from the first streamed token to the last, so model load and prompt
-processing are left out.
+One RTX PRO 6000 Blackwell (96 GB), Linux, one request at a time.
+`bench/bench.py` sends three workloads (conversation, coding, thinking), three
+prompts each, greedy, 600 tokens, streamed. Speed is tokens per second from the
+first streamed token to the last, the median of the three prompts; a bar is the
+mean of the three workloads. llmash 0.5.7 (runtime build 770) and Ollama
+0.40.11 were measured on 2026-10-26, vLLM (`vllm/vllm-openai:latest` as of
+2026-09-27) on 2026-09-27 on the same card, its checkpoints unchanged since.
+One run per row, no concurrent load, temperature 0 only, and the card also
+drives the display.
 
-### Against Ollama and vLLM
+Three formats per model:
 
-One bar per build, grouped by format so the same kind of build sits together on
-each provider; the 3-bit builds are llmash's own and run nowhere else. Each runs
-the way its provider runs it: llmash with the drafter it pairs with the model
-(the model's own MTP head, or Gemma's assistant drafter), vLLM with MTP or the
-same assistant drafter at three tokens a round, and Ollama as it ships. A bar is
-the mean of the three workloads; the table under it has each. Every chart uses
-the same scale. Weights are the text model's, measured the same way for each
-provider: vision and audio towers, projectors and separate draft models left
-out. All runs are from 2026-09-27.
+- 8-bit: llmash and Ollama run the same file, Ollama's own `q8_0` pull. Ollama's
+  runner is upstream llama.cpp's server, so these rows are also this fork
+  against upstream under Ollama's flags. vLLM runs the FP8 checkpoint.
+- NVFP4: llmash runs an NVFP4 GGUF, vLLM an NVFP4 checkpoint. Different files;
+  the GGUF is smaller (17.1 against 21.0 GB on the 27B), and a single stream is
+  limited by the bytes read per token.
+- RCO-3: llmash's own 3-bit build, assembled by `pull`
+  ([Custom builds](#custom-builds)).
+  `llmash pull hf.co/bartowski/google_gemma-4-E4B-it-GGUF --quant RCO-3`
+  reproduces the Gemma 4 E4B file.
+
+Drafting, from each provider's flags and logs:
+
+| provider | Qwen3.8 27B, Qwen3.6 35B-A3B | Gemma 4 E4B |
+|---|---|---|
+| llmash | the file's MTP head, 3 tokens a round | Google's assistant drafter, 3 tokens a round |
+| Ollama | the file's MTP head, 4 tokens a round (`--spec-type draft-mtp --spec-draft-n-max 4`) | none; the `q8_0` tag ships no drafter |
+| vLLM | the file's MTP head, 3 tokens a round (`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'`) | the assistant drafter, 3 tokens a round (`gemma4_mtp`) |
+
+The runtime alone: Gemma 4 E4B's `q8_0` on llmash with no drafter of any kind
+does 177 tokens a second; Ollama does 126 on the same file; llmash with the
+assistant drafter does 365.
+
+Other settings are each provider's defaults: Ollama `-c 262144 -b 512 -ub 512`,
+llmash `-c 8192 -b 4096 -ub 2048` plus what it picks per model, vLLM
+`--max-model-len 8192`. Ollama applies its own chat template, so its replies
+differ in length from llmash's (Gemma 4 E4B conversation: 410 to 459 tokens
+against 255 to 324); every reply's token count is in `bench/providers.json`.
+Acceptance rates were not recorded.
+
+Perplexity: wikitext-2 as raw text, 2048-token windows, 123k tokens,
+`llama-perplexity` from build 770, for every GGUF row and for the model's own
+BF16 weights. Only the gap to BF16 means anything, and a gap under about 1% is
+within the measurement's error. vLLM's checkpoints are not
+GGUFs and have none.
 
 <!-- PROVIDERS -->
 
@@ -107,15 +137,15 @@ out. All runs are from 2026-09-27.
   <img alt="Gemma 4 E4B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-gemma-4-e4b-light.svg">
 </picture>
 
-| format | provider | build | weights | conversation | coding | thinking |
-|---|---|---|--:|--:|--:|--:|
-| 3-bit, llmash only | llmash | RCO-3 | 3.1 GB | 324 | 478 | 569 |
-| 4-bit GGUF | llmash | Q4_K_M | 5.0 GB | 321 | 513 | 543 |
-| 4-bit GGUF | Ollama | q4_K_M | 5.5 GB | 151 | 160 | 163 |
-| NVFP4 | vLLM | NVFP4 | 7.2 GB | 191 | 251 | 281 |
-| 8-bit | llmash | Q8_0 | 8.2 GB | 245 | 398 | 434 |
-| 8-bit | Ollama | q8_0 | 8.0 GB | 133 | 133 | 137 |
-| 16-bit | vLLM | BF16 | 15.0 GB | 187 | 283 | 308 |
+| format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
+|---|---|---|--:|--:|--:|--:|--:|--:|
+| RCO 3-bit, llmash only | llmash | assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16 | 2.9 GB | 51.95 | +10.7% | 281 | 411 | 444 |
+| NVFP4 | llmash | FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF | 5.2 GB | 60.95 | +29.9% | 295 | 434 | 497 |
+| NVFP4 | vLLM | unsloth/gemma-4-E4B-it-NVFP4 | 7.2 GB | - | - | 191 | 251 | 281 |
+| 8-bit | llmash | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 260 | 400 | 434 |
+| 8-bit | Ollama | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 121 | 127 | 128 |
+
+The model's own BF16 weights measure 46.92 on the same text with the same runtime.
 
 #### Qwen3.8 27B
 
@@ -124,16 +154,17 @@ out. All runs are from 2026-09-27.
   <img alt="Qwen3.8 27B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-qwen3-8-27b-light.svg">
 </picture>
 
-| format | provider | build | weights | conversation | coding | thinking |
-|---|---|---|--:|--:|--:|--:|
-| 3-bit, llmash only | llmash | RCO-3 | 10.3 GB | 183 | 192 | 213 |
-| 3-bit, llmash only | llmash | GSQ-RCO | 11.9 GB | 193 | 189 | 211 |
-| 4-bit GGUF | llmash | Q4_K_XL | 17.6 GB | 162 | 165 | 173 |
-| 4-bit GGUF | Ollama | q4_K_M | 16.8 GB | 110 | 136 | 148 |
-| NVFP4 | llmash | NVFP4 | 17.1 GB | 168 | 172 | 203 |
-| NVFP4 | vLLM | NVFP4 | 21.0 GB | 111 | 115 | 125 |
-| 8-bit | Ollama | q8_0 | 29.1 GB | 76 | 100 | 104 |
-| 8-bit | vLLM | FP8 | 29.9 GB | 88 | 94 | 95 |
+| format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
+|---|---|---|--:|--:|--:|--:|--:|--:|
+| RCO 3-bit, llmash only | llmash | assembled here by pull from unsloth/Qwen3.8-27B-GGUF | 10.3 GB | 6.40 | +8.0% | 178 | 187 | 197 |
+| RCO 3-bit, llmash only | llmash | ISTA-DASLab's Qwen3.8-27B GSQ-RCO IQ3_S | 11.9 GB | 5.90 | -0.4% | 184 | 172 | 192 |
+| NVFP4 | llmash | cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF | 17.1 GB | 5.92 | -0.2% | 159 | 157 | 185 |
+| NVFP4 | vLLM | nvidia/Qwen3.8-27B-NVFP4 | 21.0 GB | - | - | 111 | 115 | 125 |
+| 8-bit | llmash | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 109 | 102 | 124 |
+| 8-bit | Ollama | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 73 | 95 | 102 |
+| 8-bit | vLLM | Qwen/Qwen3.8-27B-FP8 | 29.9 GB | - | - | 88 | 94 | 95 |
+
+The model's own BF16 weights measure 5.93 on the same text with the same runtime.
 
 #### Qwen3.6 35B-A3B
 
@@ -142,28 +173,29 @@ out. All runs are from 2026-09-27.
   <img alt="Qwen3.6 35B-A3B: decode speed of each build on llmash, Ollama and vLLM" src="docs/speed-qwen3-6-35b-a3b-light.svg">
 </picture>
 
-| format | provider | build | weights | conversation | coding | thinking |
-|---|---|---|--:|--:|--:|--:|
-| 3-bit, llmash only | llmash | RCO-3 | 13.4 GB | 601 | 749 | 673 |
-| 4-bit GGUF | llmash | Q4_K_XL | 23.3 GB | 530 | 569 | 613 |
-| 4-bit GGUF | Ollama | q4_K_M | 21.7 GB | 164 | 179 | 180 |
-| NVFP4 | llmash | NVFP4 | 20.5 GB | 428 | 486 | 538 |
-| NVFP4 | vLLM | NVFP4 | 22.5 GB | 252 | 270 | 287 |
-| 8-bit | Ollama | q8_0 | 37.8 GB | 176 | 188 | 192 |
-| 8-bit | vLLM | FP8 | 36.6 GB | 223 | 252 | 270 |
+| format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
+|---|---|---|--:|--:|--:|--:|--:|--:|
+| RCO 3-bit, llmash only | llmash | assembled here by pull from unsloth/Qwen3.6-35B-A3B-GGUF | 13.4 GB | 5.90 | +4.0% | 622 | 707 | 733 |
+| NVFP4 | llmash | michaelw9999/Qwen3.6-35B-A3B-NVFP4-MTP-GGUF (HQ) | 20.5 GB | 5.78 | +1.8% | 455 | 520 | 551 |
+| NVFP4 | vLLM | nvidia/Qwen3.6-35B-A3B-NVFP4 | 22.5 GB | - | - | 252 | 270 | 287 |
+| 8-bit | llmash | Ollama's qwen3.6:35b-a3b-mtp-q8_0 | 37.8 GB | 5.66 | -0.3% | 417 | 448 | 515 |
+| 8-bit | Ollama | Ollama's qwen3.6:35b-a3b-mtp-q8_0 | 37.8 GB | 5.66 | -0.3% | 162 | 185 | 181 |
+| 8-bit | vLLM | Qwen/Qwen3.6-35B-A3B-FP8 | 36.6 GB | - | - | 223 | 252 | 270 |
+
+The model's own BF16 weights measure 5.67 on the same text with the same runtime.
 
 <!-- /PROVIDERS -->
 
-Tokens per second while generating, median of the three prompts in each
-workload. Speculative decoding runs faster on predictable text, so coding and
-thinking usually read higher than conversation.
+Weights are the text model's only. Drafting accepts more on coding and thinking
+than on conversation.
 
-### What a 3-bit build costs in accuracy
+### Math accuracy of the 3-bit builds
 
-Forty math questions (ten each from GSM8K, MATH level 3, MATH level 5 and AIME
-2025), thinking on, each family's recommended sampling with a fixed seed per
-question, graded by the final `\boxed{}` answer. Each bar's end says how many
-tokens the build generated over the forty.
+Forty questions, ten each from GSM8K, MATH level 3, MATH level 5 and AIME 2025.
+Thinking on, each family's recommended sampling, one seed per question, graded
+on the final `\boxed{}` answer. Forty questions separate builds only by several
+answers; a 2-bit build scoring 39 to Q8_0's 38 is within that noise. The RCO-3
+builds generated 21% (Qwen3.8-27B) and 25% (Gemma 4 E4B) more tokens than Q8_0.
 
 <!-- MATH -->
 
@@ -196,15 +228,9 @@ tokens the build generated over the forty.
 
 <!-- /MATH -->
 
-On Qwen3.8-27B the RCO-3 build answered as many as Q8_0, 38 of 40, at a third
-of the size. On Gemma 4 E4B it answered 27 to Q8_0's 29 at 38% of the size,
-where a 2-bit build of about the same size answered 20. Both RCO-3 builds wrote
-more to get there: 21% more tokens than Q8_0 on Qwen3.8-27B and 25% more on
-Gemma 4 E4B.
-
 ## Weight formats
 
-`pull` lists the builds a repository holds, with a few picked out:
+`pull` lists a repository's builds with these rows picked out:
 
 | Row | What it is | When it is offered |
 |---|---|---|
@@ -214,19 +240,17 @@ Gemma 4 E4B.
 | `large` | Q8_0, or the nearest 6-8 bit build | always |
 
 NVFP4 stores weights as 4-bit floats with an FP8 scale per 16 values. Cards of
-compute capability 12.0 (sm_120: the RTX 50 series and the Blackwell RTX PRO cards)
-run it on their FP4 tensor cores; a B200 is sm_100, which this runtime's FP4 kernels
-are not built for. On a dense model, Qwen3.8-27B NVFP4 generates 2-14% faster than
+compute capability 12.0 (sm_120: RTX 50 series, Blackwell RTX PRO) run it on
+their FP4 tensor cores. A B200 is sm_100, which this runtime's FP4 kernels are
+not built for. On a dense model, Qwen3.8-27B NVFP4 generates 2-14% faster than
 the UD-Q4_K_XL build of the same size and reads a long prompt 31% faster. On a
-mixture-of-experts model it reads prompts at the same rate as Q4 and, depending on
-what the file keeps at higher precision, can generate slower. On a machine where
-every card is sm_120, the medium row is an NVFP4 build when the repository, or
-another repository's GGUF of the same model, has one, and it takes the place of an
-MXFP4 build. Other machines get an MXFP4 build, found the same way, in a row of its
-own in place of NVFP4. Older cards decode NVFP4 in software, and a Q4_K_M runs
-faster there. `LLMASH_FP4=1`
-or `0` overrides the detection. On such a machine, a repository holding an NVFP4
-build next to the others reads like this:
+mixture-of-experts model it reads prompts at the same rate as Q4 and can
+generate slower, depending on what the file keeps at higher precision. Where
+every card is sm_120 the medium row is an NVFP4 build when the repository, or
+another repository's GGUF of the same model, has one, in place of an MXFP4
+build; other machines get an MXFP4 build, found the same way, in its own row.
+Older cards decode NVFP4 in software and run a Q4_K_M faster. `LLMASH_FP4=1`
+or `0` overrides the detection.
 
 ```
 qwen3.8-27b, which build?
@@ -238,83 +262,77 @@ qwen3.8-27b, which build?
 
 ## The runtime
 
-The runtime is a llama.cpp fork the installer fetches beside the program, and
-`llmash update` refreshes it when a release carries a newer one. What it adds:
+A llama.cpp fork, fetched beside the program by the installer and refreshed by
+`llmash update` when a release carries a newer one. Source:
+[omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
+`llmash`; runtime build 770 is commit `84c6a24c1`. Changes from upstream:
 
-- **One CUDA graph per speculative round**: the verify batch, the accept decision
+- One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
-- **A 4-bit draft head**: an MTP head drafts through the 131,072 most frequent rows
-  of the LM head, requantized to Q4_K at load, for about the bytes of 65,536 rows
-  at Q8_0. Verification still reads the full head, so the output is the model's
-  own.
-- **Fused recurrent layers**: on delta-net layers (Qwen3.5, 3.6, 3.8 and the
-  Next models) the input projection runs the causal convolution, its SiLU and the
-  state snapshots in its own store, the gating projections run as one launch, the
-  recurrence normalizes q and k as it loads them, and the gated norm is quantized
-  straight into the output projection's input.
-- **Fused mixture-of-experts tails**: the expert matvec applies the router
-  weights as it stores, and a residual add rides the output projection it follows.
-- **NVFP4 under speculation**: the second-level scales of NVFP4 weights, per
-  expert or per tensor, ride the matvecs of a verify batch as they do for a single
-  token, so the expert gate and up still fuse, and a float gate and up pair (the
-  BF16 shared experts NVFP4 files often keep) runs as one launch.
-- **Every fusion is matched on the graph, not by model name**, so any architecture
-  with the pattern gets it, and each has a bit in `GGML_CUDA_FUSE_OFF` to turn it
-  off.
+- Draft head: an MTP head drafts through the 131,072 most frequent rows of the
+  LM head, requantized to Q4_K at load. Verification reads the full head.
+- Fused recurrent layers (Qwen3.5, 3.6, 3.8 and the Next models): the input
+  projection runs the causal convolution, its SiLU and the state snapshots in
+  its own store; the gating projections run as one launch; the recurrence
+  normalizes q and k as it loads them; the gated norm is quantized straight into
+  the output projection's input.
+- Fused mixture-of-experts tails: the expert matvec applies the router weights
+  as it stores; a residual add rides the output projection it follows.
+- NVFP4 under speculation: the second-level scales, per expert or per tensor,
+  ride the matvecs of a verify batch as they do for one token, so the expert
+  gate and up still fuse, and a float gate and up pair runs as one launch.
+- Every fusion is matched on the graph, not by model name. Each has a bit in
+  `GGML_CUDA_FUSE_OFF` that turns it off.
 
-Each release's runtime is checked for the same greedy text as the one before it,
+Each release's runtime is checked for the same greedy text as the previous one
 on dense, mixture-of-experts and delta-net models, across NVFP4, 3-bit and 4-bit
 builds, with MTP and n-gram drafting, and on 1, 2 and 3 GPUs under layer split.
 
 ## Models and pulling
 
-Models already on the machine are found without any setup: every Ollama store
-(the usual one, `OLLAMA_MODELS`, and any folder shaped like one at the top of a
-drive), LM Studio's folders, the Hugging Face and llama.cpp download caches,
-Jan's and GPT4All's folders, and a top-level folder on any drive named `models`,
-`gguf`, `llm` or the like. They are read in place, subfolders included; nothing
-is copied or deleted, and `rm` will not touch them. `llmash models` shows every
-folder being read and why, `llmash models ignore <folder>` drops one, and
-`llmash models set <folder>` makes a folder of GGUFs the main one (the same
-setting as `OLLAMA_MODELS`):
+Models on the machine are found without setup: every Ollama store (the default
+one, `OLLAMA_MODELS`, and any folder shaped like one at the top of a drive), LM
+Studio's folders, the Hugging Face and llama.cpp download caches, Jan's and
+GPT4All's folders, and a top-level folder on any drive named `models`, `gguf`,
+`llm` or similar. They are read in place, subfolders included. Nothing is copied
+or deleted and `rm` does not touch them. `llmash models` lists every folder read
+and why; `llmash models ignore <folder>` drops one; `llmash models set <folder>`
+makes a folder of GGUFs the main one (the same setting as `OLLAMA_MODELS`):
 
 ```powershell
 llmash models set D:\models
 ```
 
-An install carries these settings over from one it replaces.
-
 `pull` takes an Ollama name or a Hugging Face repository as `hf.co/<org>/<repo>`,
-lists its builds and asks which; `hf.co/<org>/<repo>@<quant>` or `--quant` names
-one directly. A width asked for by name is a requirement: when the repository
-does not have it, the pull stops and lists what it does have. A repository with
-no GGUF is answered only by a GGUF conversion of that exact model, never a
-fine-tune, merge or abliteration of it; when there is none, the pull says so and
-lists the near matches as different models. Files come down over several
-connections at once, inside the server, so closing the terminal does not stop it.
-A gated repository (Gemma and Llama as their makers publish them) is read with
-the token `hf auth login` stores, or `HF_TOKEN`; the token goes to the hub only.
+lists its builds and asks which. `hf.co/<org>/<repo>@<quant>` or `--quant`
+names one. A width asked for by name is required: when the repository lacks it,
+the pull stops and lists what it has. A repository with no GGUF is answered only
+by a GGUF conversion of that exact model, never a fine-tune, merge or
+abliteration; when there is none, the pull says so and lists the near matches as
+different models. Files come down over several connections inside the server,
+so closing the terminal does not stop a pull. A gated repository is read with
+the token from `hf auth login` or `HF_TOKEN`; the token is sent to the hub only.
 A build named without a width (`-APEX-Balanced`, `gemma-2b.gguf`) is listed by
 what sets it apart and taken by that name.
 
-`rm` takes a model's full name or any part of it (0.5.0 and up): `llmash rm qwen`
-removes the one model with qwen in its name, and when several match it lists
-them and removes none.
+`rm` takes a model's full name or any part of it: `llmash rm qwen` removes the
+one model with qwen in its name; when several match it lists them and removes
+none.
 
 ## Classifiers
 
 A classifier answers questions about a text from one forward pass and generates
 nothing (0.5.2 and up). The hub tags them `text-classification`: decision models
 such as Laya, Jev-Style and decider, and rerankers with a scoring head. `pull`
-records the tag and takes whatever the repository publishes for reading the
-answers: Laya's decision head is fetched as a sidecar beside the encoder, a
-verdict or answer-letter model gets its readout written to `<model>.classifier.json`,
-and a scoring head inside the GGUF needs nothing more. A model pulled before this
-gets the same the first time it is shown or run. `show` lists such a model with
-the capability `classification`.
+records the tag and takes what the repository publishes for reading the
+answers: Laya's decision head is fetched as a sidecar beside the encoder; a
+verdict or answer-letter model gets its readout written to
+`<model>.classifier.json`; a scoring head inside the GGUF needs nothing more. A
+model pulled earlier gets the same the first time it is shown or run. `show`
+lists such a model with the capability `classification`.
 
-`run` on a classifier takes questions first, one per line, then judges every line
-of text against them:
+`run` on a classifier takes questions first, one per line, then judges every
+line of text against them:
 
 ```
 >>> Which team should handle this? [billing, technical, sales]
@@ -326,13 +344,12 @@ score: How urgent is it?        1.7 of 0-2  ·  not at all 4%  ·  slightly 22% 
 Is the customer angry?          yes 83%
 ```
 
-A choice lists its options in brackets and `name: description` describes one;
+A choice lists its options in brackets; `name: description` describes one;
 `score:` lists ordered levels, lowest first; a question with no options is
-answered yes or no. The same lines work in any chat window pointed at llmash, put
+answered yes or no. The same lines work in any chat client pointed at llmash,
 after the text or in the system prompt, and `/api/chat`, `/api/generate` and
 `/v1/chat/completions` answer with the lines above plus an `answers` object.
-`POST /api/classify` (also `/v1/systemone`, the shape decision models share)
-takes the questions as JSON:
+`POST /api/classify` (also `/v1/systemone`) takes the questions as JSON:
 
 ```json
 {"model": "laya:q8_0",
@@ -344,16 +361,16 @@ takes the questions as JSON:
                "angry": {"type": "noul", "instructions": "Is the customer angry?"}}}
 ```
 
-and answers `{"answers": {"team": {"type": "choice", "choice": "billing", "probabilities": {...}, "confidence": 0.8}, ...}}`.
+It answers `{"answers": {"team": {"type": "choice", "choice": "billing", "probabilities": {...}, "confidence": 0.8}, ...}}`.
 `state` may be an object. A chat model asked on `/api/classify` is read at the
 answer letter of the common decision prompt, which works less well than a model
-trained for it; `<model>.classifier.json` beside a GGUF says how any model is read.
+trained for it. `<model>.classifier.json` beside a GGUF says how a model is read.
 
 ## Context
 
-A model runs at 8192 tokens unless something asks for more: the request's
-`num_ctx`, `llmash ctx`, or the `num_ctx` in an Ollama model's Modelfile. Past its
-trained context, llmash runs it under YaRN, up to four times the trained length.
+A model runs at 8192 tokens unless the request's `num_ctx`, `llmash ctx`, or
+the `num_ctx` in an Ollama model's Modelfile asks for more. Past its trained
+context it runs under YaRN, up to four times the trained length.
 
 ```
 llmash ctx qwen3.8-27b:rco-3 768k --keep
@@ -361,30 +378,33 @@ qwen3.8-27b:rco-3 runs at 768k (YaRN x3 over the trained 256k); 59 GB on the car
 loading and keeping it ... loaded
 ```
 
-`--kv q8_0` halves the cache and `--keep` holds the model loaded. The cost comes
-from the model's header: how many layers attend over the whole context, how many
-heads they keep, and what a recurrent or windowed layer holds instead. On Windows
-every video allocation is backed by commit charge (RAM plus pagefile), so llmash
-reads that figure live and `ctx` says when a window is over it rather than over
-the card.
+`--kv q8_0` halves the cache; `--keep` holds the model loaded. The cost is
+computed from the model's header: how many layers attend over the whole
+context, how many heads they keep, and what a recurrent or windowed layer holds
+instead. On Windows every video allocation is backed by commit charge (RAM plus
+pagefile); llmash reads that figure and `ctx` reports when a window exceeds it.
 
 ## Custom builds
 
-`pull` lists a build assembled here beside the published ones. Every tensor is
-measured at each candidate type and given the one that buys the most accuracy per
-byte under a size budget. The measure is imatrix-weighted weight error, the
-budget is met by bisection on one Lagrange multiplier, and only the output head
-and the embedding keep a floor. The ladder runs 2.4, 2.75 and 3 bits a weight.
+`pull` lists a build assembled on this machine beside the published ones. Every
+tensor is measured at each candidate type and given the one with the most
+accuracy per byte under a size budget. The measure is imatrix-weighted weight
+error; the budget is met by bisection on one Lagrange multiplier; only the
+output head and the embedding keep a floor. The ladder is 2.4, 2.75 and 3 bits
+a weight.
 
-This is the allocation idea from the published GSQ-RCO method, run with ggml's own
-quantizers. llmash does not implement GSQ's learned grids, and none of GSQ-RCO's
-published scores are numbers for the files llmash makes; where the hub carries a
-real GSQ-RCO build, `pull` lists it first as `rco`.
+This is the allocation idea of the published GSQ-RCO method, run with ggml's
+quantizers. llmash does not implement GSQ's learned grids, and GSQ-RCO's
+published scores do not describe the files llmash makes. Where the hub has a
+GSQ-RCO build, `pull` lists it first as `rco`.
 
-The source is the smallest published build still comfortably wider than the
-target, read a block at a time and quantized on the GPU, so only the result
-touches disk. Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes, 10 of them
-the download. `rco convert` does the same from a model already on disk.
+The source is the smallest published build at least two bits wider than the
+target (Q6_K or wider for RCO-3; never a 4-bit file), read a block at a time
+and quantized on the GPU; only the result is written to disk. The RCO-3 rows
+above were assembled from bartowski's bf16 (Gemma 4 E4B) and unsloth's GGUFs
+(the Qwen models). Qwen3.6-35B-A3B goes from 32 GB to 13 GB in 12 minutes, 10 of
+them the download. `rco convert` does the same from a model on disk and needs an
+importance matrix (`--imatrix`, a file or the repository holding one).
 
 ## Abliteration
 
@@ -392,58 +412,59 @@ the download. `rco convert` does the same from a model already on disk.
 llmash ablate MODEL          # or: abliterate, or  pull MODEL --ablate
 ```
 
-Removes a model's refusals without touching its weights. llmash finds the direction each
-layer uses for "refuse" and writes a small control vector that projects it out at
-inference, kept beside the model as a `.ablation.gguf` sidecar (a few hundred KB, 1.2 MB
-on a 27B). It loads with the model automatically; delete it to undo.
+Removes a model's refusals without changing its weights. llmash finds the
+direction each layer uses for refusing and writes a control vector that projects
+it out at inference, kept beside the model as `<model>.ablation.gguf` (a few
+hundred KB; 1.2 MB on a 27B). It loads with the model; deleting it undoes the
+change.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/abliterate-dark.svg">
   <img alt="Refusals out of 100 harmful prompts before and after llmash ablate, with the KL cost, across four models" src="docs/abliterate-light.svg">
 </picture>
 
-Refusals are counted on 100 held-out prompts from `mlabonne/harmful_behaviors` by an
-uncensored model reading each whole answer. KL is how far the first answer token moves
-from the original model on 100 harmless prompts; a 16-pass search minimises it. Each
-layer gets its own direction, which Gemma needs. When a model's best vector still lands
-at a high KL, nothing is written and the command says so.
+Refusals are counted on 100 held-out prompts from `mlabonne/harmful_behaviors`
+by an uncensored model reading each whole answer, so the count is a model's
+judgement. KL is the shift of the first answer token from the original model
+on 100 harmless prompts, and says nothing about later tokens; a 16-pass search
+minimises it. Each layer gets its own direction. When the best vector still has
+a high KL, nothing is written and the command says so.
 
 Against [AEON Ultimate](https://huggingface.co/AEON-7/Qwen3.8-27B-AEON-ULTIMATE-UNCENSORED-BF16),
-the other Qwen3.8-27B abliteration graded by a model:
+another Qwen3.8-27B abliteration graded the same way:
 
 | build | refusals | what it changes | search |
 |---|--:|---|---|
 | Qwen3.8-27B, as released | 94/100 | nothing | none |
 | AEON Ultimate | 36/100 | the bf16 weights | 50 trials on an H200 |
-| **llmash ablate** | **2/100** | **a 1.2 MB sidecar** | **16 passes, 70 s on one RTX PRO 6000** |
+| llmash ablate | 2/100 | a 1.2 MB sidecar | 16 passes, 70 s on one RTX PRO 6000 |
 
-The prompt sets are fetched and cached on first use. Over a pipe, from an agent, or
-over ssh without a terminal, it requires `--yes` instead of waiting for input.
+The prompt sets are fetched and cached on first use. Over a pipe, from an agent
+or over SSH without a terminal, `--yes` is required.
 
-The search itself is `llama-ablate`, a tool in llmash's runtime. Its source is at
+The search is `llama-ablate`, a tool in llmash's runtime. Source:
 [omgitsbase/llmash-ablate](https://github.com/omgitsbase/llmash-ablate).
 
 ## Speculation
 
-A model carrying an MTP head drafts for itself, with nothing to fetch. For a model
-with no head, `run` asks once whether to look for a drafter on Hugging Face, and
-`pulldraft` looks whenever asked. The search (0.5.1 and up) knows the model by its
-own header, takes a drafter trained for that exact model, and offers the choice
-when several fit:
+A model carrying an MTP head drafts for itself. For a model without one, `run`
+asks once whether to look for a drafter on Hugging Face, and `pulldraft` looks
+when asked. The search identifies the model from its own header, takes a drafter
+trained for that exact model, and offers a choice when several fit:
 
 - an EAGLE-3, DFlash, DSpark or plain draft model published for it;
-- Gemma 4's assistant drafter, which Google publishes for each of its models;
+- Gemma 4's assistant drafter, published by Google for each Gemma 4 model;
 - the MTP head out of a full build that carries one (an `-MTP` GGUF): only the
-  head's own layer is fetched (258 MB for a 9B), the embedding and output are
-  copied from the model on disk, and a build without its head gets one back;
+  head's own layer is fetched (258 MB for a 9B); the embedding and output are
+  copied from the model on disk;
 - for a fine-tune with nothing under its own name, the drafters of the model it
-  was tuned from, marked as such; they share its vocabulary but accept fewer tokens.
+  was tuned from, marked as such. They share its vocabulary and accept fewer
+  tokens.
 
-Each is checked against the weights before anything downloads, one sidecar serves
-every build of its model, and `pulldraft MODEL hf.co/ORG/REPO` names one instead
-of searching. Gemma 4 E4B generates 1.2 to 2 times as fast with its assistant
-drafter. Anything else drafts by n-gram lookup, which speeds up text the
-conversation already holds.
+Each is checked against the weights before anything downloads. One sidecar
+serves every build of its model. `pulldraft MODEL hf.co/ORG/REPO` names a
+drafter instead of searching. A model with no drafter drafts by n-gram lookup
+(`LLMASH_SPEC_FALLBACK`), which only speeds up text already in the conversation.
 
 ## Commands
 
@@ -451,16 +472,16 @@ conversation already holds.
 |---|---|
 | `list` `ps` `show` `run` `pull` `cp` `stop` | as in Ollama |
 | `rm`, `remove` | remove a model by its name or any part of it |
-| `start` | start llmash in the background, with its tray icon (Windows) |
+| `start` | start llmash in the background with its tray icon (Windows) |
 | `serve` | run the server in this console; `--host`, `--port`, `--ctx`, `--kv`, `--gpu-budget`, `--verbose` |
 | `ctx` | the context a model runs at, up to 4x its trained length under YaRN; `--kv`, `--keep`, `--release` |
-| `pulldraft` | find and install a draft model for a model you have; `pulldraft MODEL REPO` takes one you name |
-| `rco convert` | assemble a custom build from a model already on disk |
-| `ablate`, `abliterate` | remove a model's refusal behaviour (uncensor it); `pull MODEL --ablate` does it on pull |
-| `models` | show where models are read from, or point llmash at a folder of them |
+| `pulldraft` | find and install a draft model for a model on the machine; `pulldraft MODEL REPO` takes a named one |
+| `rco convert` | assemble a custom build from a model on disk |
+| `ablate`, `abliterate` | remove a model's refusals; `pull MODEL --ablate` does it on pull |
+| `models` | list every folder models are read from; `set` points llmash at one; `ignore` drops a found one |
 | `doctor` | check the install, runtime, GPU, models and routes |
-| `update` | install the latest push to main (the `edge` build), or with `--stable` the latest release; `--force` to reinstall |
-| `launch` | point Claude Code, Codex, Droid and others at this server |
+| `update` | install the latest push to main (the `edge` build); `--stable` the latest release; `--force` reinstalls |
+| `launch` | point Claude Code, OpenCode, Hermes Agent, OpenClaw, Codex, Droid and others at this server |
 | `link` | expose the API over a Tailscale funnel, with a key |
 | `uninstall` | remove everything the installer created |
 
@@ -468,8 +489,8 @@ conversation already holds.
 
 ## Configuration
 
-Optional. `local.json` next to the program, or environment variables; the
-variable wins over the file.
+Optional. `local.json` beside the program, or environment variables; a variable
+wins over the file.
 
 | | |
 |---|---|
@@ -483,17 +504,18 @@ variable wins over the file.
 | `LLMASH_PARALLEL` | server slots (default 1) |
 | `LLMASH_PIN` | comma-separated models never evicted |
 | `LLMASH_FP4` | `1` or `0`: whether every card runs FP4, instead of asking nvidia-smi |
-| `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`) |
+| `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`; `none` for no drafting) |
 | `LLMASH_MTP_DRAFT` | tokens an MTP head drafts per round (default 3) |
 | `LLMASH_PREFER_DFLASH` | draft with a DFlash drafter beside the model even when it has an MTP head |
 | `LLMASH_TUNE_OFF` | disable individual tuning: `cache-reuse,cache-ram,batch,prio` |
 | `LLMASH_RCO_THREADS` | cores a custom build may quantize on (default: all but one) |
 
-`local.json` takes the same things by name, plus a few per model: `ctx_override`
-and `ctx_max`, `fit` for a model's cache type, `pin`, `launch_extra` for extra
-`llama-server` flags by name fragment, `no_mmproj`, `runtime` for another
-`llama-server`, `extra_roots` for further folders to read, and `gguf_dir` for
-where pulled GGUFs go. `llmash serve --help` lists the rest.
+`local.json` takes the same keys, plus per-model ones: `ctx_override`,
+`ctx_max`, `fit` (a model's cache type), `pin`, `launch_extra` (extra
+`llama-server` flags by name fragment), `no_mmproj`, `runtime` (another
+`llama-server` by name fragment), `extra_roots` and `ignore_roots` (folders to
+read, and found folders not to), and `gguf_dir` (where pulled GGUFs go).
+`llmash serve --help` lists the rest.
 
 ## Building
 
@@ -506,8 +528,8 @@ python build.py --publish TAG   # both, with both test runs, uploaded to release
 ```
 
 Linux: `cpp/build-linux.sh` in the container from `cpp/Dockerfile.test`, and
-`cpp/run-tests.sh` for the tests. `python bench/bench.py --help` reproduces the
-speed numbers and `python bench/charts.py` redraws the charts.
+`cpp/run-tests.sh` for the tests. `bench/bench.py` measures a build on a
+provider and `bench/charts.py` redraws the charts and tables.
 
 ## License
 
