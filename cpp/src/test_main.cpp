@@ -288,8 +288,9 @@ int main() {
     }
 
     fs::remove_all(dir);
-    check(kv_type_problem("q8_0").empty() && kv_type_problem("F16").empty(), "the cache types llama.cpp takes pass");
-    check(kv_type_problem("q16_0").find("q16_0 is not a cache type; the types are f16, bf16, q8_0") == 0, "a made-up cache type is named with the list");
+    check(kv_type_problem("q8_0").empty() && kv_type_problem("F16").empty() && kv_type_problem("auto").empty() &&
+          kv_type_problem("f8_e4m3").empty(), "the cache types llama.cpp takes pass");
+    check(kv_type_problem("q16_0").find("q16_0 is not a cache type; the types are auto, f16, bf16, q8_0, f8_e4m3") == 0, "a made-up cache type is named with the list");
     {
         Config            cfg;
         const std::string why = explain_load_failure("error while handling argument \"--cache-type-k\": Unsupported cache type: q16_0\n\nusage:\n-ctk, --cache-type-k TYPE\nto show complete usage, run with -h\n", cfg);
