@@ -378,7 +378,7 @@ std::string runtime_dir(const Config & cfg) {
 } // namespace
 
 std::string kv_type_problem(const std::string & s) {
-    static const char * types[] = {"f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "f32"};
+    static const char * types[] = {"auto", "f16", "bf16", "q8_0", "f8_e4m3", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "f32"};
     const std::string   l       = lower(s);
     for (const char * t : types) {
         if (l == t) {
@@ -892,8 +892,12 @@ std::vector<std::string> Instance::args() {
 
     const int parallel = cfg_->parallel > 0 ? cfg_->parallel : 1;
     const std::string kv = kv_type.empty() ? cfg_->kv_type : kv_type;
-    a.insert(a.end(), {"-c", std::to_string(ctx * parallel), "--jinja", "--no-webui", "-fa", "on", "--cache-type-k",
-                       kv, "--cache-type-v", kv, "--parallel", std::to_string(parallel)});
+    a.insert(a.end(), {"-c", std::to_string(ctx * parallel), "--jinja", "--no-webui", "-fa", "on", "--parallel",
+                       std::to_string(parallel)});
+    // auto is the runtime's own default: FP8 for a model that carries its cache's scales (as vLLM does), else f16
+    if (lower(kv) != "auto") {
+        a.insert(a.end(), {"--cache-type-k", kv, "--cache-type-v", kv});
+    }
     if (!kv_on_gpu) {
         a.push_back("--no-kv-offload");  // the cache stays in system RAM, the weights on the card
     }

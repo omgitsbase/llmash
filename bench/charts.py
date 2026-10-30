@@ -16,6 +16,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.ticker  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -25,9 +26,9 @@ PROVIDERS = ("llmash", "Ollama", "vLLM")
 
 THEMES = {
     "light": {"surface": "#ffffff", "text": "#1f2328", "muted": "#59636e", "grid": "#d1d9e0",
-              "llmash": "#2a78d6", "Ollama": "#eb6834", "vLLM": "#1baf7a", "other": "#8c959f"},
+              "llmash": "#2a78d6", "Ollama": "#eb6834", "vLLM": "#1baf7a", "other": "#8c959f", "fill": 0.22},
     "dark": {"surface": "#0d1117", "text": "#e6edf3", "muted": "#9198a1", "grid": "#3d444d",
-             "llmash": "#3987e5", "Ollama": "#d95926", "vLLM": "#199e70", "other": "#6e7681"},
+             "llmash": "#3987e5", "Ollama": "#d95926", "vLLM": "#199e70", "other": "#6e7681", "fill": 0.32},
 }
 
 
@@ -210,6 +211,127 @@ def batch(theme):
         plt.close(fig)
 
 
+def scaling_levels(rs):
+    return sorted({r["concurrency"] for r in rs})
+
+
+def scaling_series(rs):
+    """(provider, build) -> {streams: tokens per second}: the shared model's series first, an extra one (llmash on a
+    file only it runs) after them."""
+    keys = list(dict.fromkeys((r["provider"], r["build"]) for r in sorted(rs, key=lambda r: bool(r.get("extra") or r.get("table_only")))))
+    return {k: dict(sorted((r["concurrency"], r["throughput"]) for r in rs if (r["provider"], r["build"]) == k))
+            for k in keys}
+
+
+def scaling(theme):
+    """Per model: tokens per second of all streams together against the streams at once, every provider on the same
+    file, the gap between llmash and vLLM filled and llmash's ratio to each provider in rows under the axis. An extra
+    dashed llmash line is a smaller file the others cannot run. The levels sit evenly along the axis, and each chart
+    scales to its own fastest point."""
+    path = HERE / "scaling.json"
+    if not path.exists():
+        return
+    t = THEMES[theme]
+    style(t)
+    rows = json.loads(path.read_text("utf-8"))
+    for m in dict.fromkeys(r["label"] for r in rows):
+        # a table-only row (llmash on another provider's copy of the file) stays off the chart
+        rs = [r for r in rows if r["label"] == m and not r.get("errors") and r.get("throughput") and not r.get("table_only")]
+        levels = scaling_levels(rs)
+        pos = {c: i for i, c in enumerate(levels)}
+        series = scaling_series(rs)
+        main = {p: next((v for (q, _), v in series.items() if q == p), {}) for p in PROVIDERS}
+        size = {(r["provider"], r["build"]): r.get("size_gb") for r in rs}
+        extra = {(r["provider"], r["build"]) for r in rs if r.get("extra")}
+        ymax = max(r["throughput"] for r in rs)
+        fig, ax = plt.subplots(figsize=(9.6, 5.8))
+        fig.subplots_adjust(left=0.14, right=0.83, top=0.87, bottom=0.2)
+        both = [c for c in levels if c in main["llmash"] and c in main["vLLM"]]
+        xs = [pos[c] for c in both]
+        lo, hi = [main["vLLM"][c] for c in both], [main["llmash"][c] for c in both]
+        ax.fill_between(xs, lo, hi, where=[h >= v for h, v in zip(hi, lo)], interpolate=True, color=t["llmash"],
+                        alpha=t["fill"], linewidth=0, zorder=1)
+        ax.fill_between(xs, lo, hi, where=[h < v for h, v in zip(hi, lo)], interpolate=True, color=t["vLLM"],
+                        alpha=t["fill"], linewidth=0, zorder=1)
+        # llmash's speed over each of the others at every level, on the same checkpoint, in rows under the axis
+        for k, p in enumerate(p for p in ("vLLM", "Ollama") if main[p]):
+            y = -0.13 - 0.065 * k
+            ax.text(-0.015, y, f"llmash vs {p}", transform=ax.transAxes, ha="right", va="center", fontsize=9,
+                    color=t["muted"])
+            for c in levels:
+                if c in main["llmash"] and c in main[p]:
+                    r = main["llmash"][c] / main[p][c]
+                    ax.text(pos[c], y, f"{r:.1f}x", transform=ax.get_xaxis_transform(), ha="center", va="center",
+                            fontsize=10, fontweight="bold", color=t["llmash"] if r >= 1 else t[p])
+        # the lines, with the provider, its last value and the file's build and size at each line's end; the end
+        # labels are spread apart where lines end close together
+        ends = []
+        for (p, build), pts in series.items():
+            px, py = [pos[c] for c in pts], list(pts.values())
+            dashed = (p, build) in extra
+            ax.plot(px, py, color=t[p], linewidth=3.0 if p == "llmash" and not dashed else 2.0,
+                    linestyle=(0, (4, 3)) if dashed else "-", marker="o", markersize=5.5 if p == "llmash" else 4.5,
+                    zorder=3 if p == "llmash" else 2)
+            ends.append([py[-1], px[-1], p, build, size.get((p, build))])
+        ends.sort(key=lambda e: e[0])
+        gap = ymax * 0.1
+        for i, e in enumerate(ends):
+            e.append(e[0] if i == 0 else max(e[0], ends[i - 1][-1] + gap))
+        for v, x, p, build, gb, ly in ends:
+            ax.text(x + 0.16, ly, f"{p}  {v:,.0f}", va="center", fontsize=10.5, fontweight="bold", color=t[p],
+                    clip_on=False)
+            note = build + (f"  ·  {gb:.1f} GB" if gb else "")
+            ax.text(x + 0.16, ly - ymax * 0.042, note, va="center", fontsize=8.5, color=t["muted"], clip_on=False)
+        ax.set_xticks(range(len(levels)))
+        ax.set_xticklabels([str(c) for c in levels])
+        ax.set_xlim(-0.25, len(levels) - 0.75)
+        ax.set_ylim(0, ymax * 1.08)
+        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+        ax.set_xlabel("streams at once", fontsize=9.5, labelpad=48)
+        ax.set_ylabel("tokens per second, all streams", fontsize=9.5)
+        ax.set_title(m, loc="left", fontsize=13, fontweight="bold", color=t["text"], pad=22)
+        ax.text(0, 1.015, next((r["note"] for r in rs if r.get("note")), ""), transform=ax.transAxes, fontsize=9,
+                color=t["muted"], va="bottom")
+        ax.grid(axis="y", color=t["grid"], linewidth=0.5, alpha=0.6)
+        ax.set_axisbelow(True)
+        for s in ("top", "right", "left"):
+            ax.spines[s].set_visible(False)
+        ax.tick_params(axis="both", length=0)
+        fig.savefig(DOCS / f"scale-{slug(m)}-{theme}.svg", transparent=True)
+        plt.close(fig)
+
+
+def scaling_tables():
+    """A chart and a table per model between the SCALING markers: tokens per second of all streams at each level on
+    each provider, and llmash's over the others' on the same checkpoint."""
+    path = HERE / "scaling.json"
+    if not path.exists():
+        return ""
+    rows = json.loads(path.read_text("utf-8"))
+    parts = []
+    for m in dict.fromkeys(r["label"] for r in rows):
+        rs = [r for r in rows if r["label"] == m and not r.get("errors") and r.get("throughput")]
+        levels = scaling_levels(rs)
+        series = scaling_series(rs)
+        main = {p: next((v for (q, _), v in series.items() if q == p), {}) for p in PROVIDERS}
+        lines = [f"#### {m}", "",
+                 picture(f"scale-{slug(m)}", f"{m}: tokens per second against streams at once on llmash, vLLM and Ollama"),
+                 "", "| provider | file | weights | " + " | ".join(str(c) for c in levels) + " |",
+                 "|---|---|--:|" + "--:|" * len(levels)]
+        for (p, build), pts in series.items():
+            r0 = next(r for r in rs if (r["provider"], r["build"]) == (p, build))
+            cells = " | ".join(f"{pts[c]:,.0f}" if c in pts else "-" for c in levels)
+            gb = f"{r0['size_gb']:.1f} GB" if r0.get("size_gb") else "-"
+            lines.append(f"| {p} | {r0['file']} | {gb} | {cells} |")
+        for p in ("vLLM", "Ollama"):
+            if main[p] and main["llmash"]:
+                cells = " | ".join(f"{main['llmash'][c] / main[p][c]:.2f}x"
+                                   if c in main[p] and c in main["llmash"] else "-" for c in levels)
+                lines.append(f"| llmash over {p}, same checkpoint | | | {cells} |")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
 def batch_tables():
     """A chart and a table per model between the BATCH markers: total tokens per second at each level."""
     path = HERE / "batch.json"
@@ -281,6 +403,8 @@ def readme_tables():
     s = replace_block(s, "<!-- MATH -->", "<!-- /MATH -->", "\n\n".join(parts))
     if "<!-- BATCH -->" in s:
         s = replace_block(s, "<!-- BATCH -->", "<!-- /BATCH -->", batch_tables())
+    if "<!-- SCALING -->" in s:
+        s = replace_block(s, "<!-- SCALING -->", "<!-- /SCALING -->", scaling_tables())
     readme.write_text(s, encoding="utf-8")
 
 
@@ -294,5 +418,6 @@ if __name__ == "__main__":
         if (HERE / "math_results.json").exists():
             math(theme)
         batch(theme)
+        scaling(theme)
     readme_tables()
     print("wrote", ", ".join(sorted(p.name for p in DOCS.glob("*.svg"))))

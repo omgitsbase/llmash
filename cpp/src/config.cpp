@@ -282,7 +282,7 @@ Config load_config() {
     c.ctx         = env_int("LLMASH_CTX", 8192);
     c.ctx_cap     = env_str("LLMASH_CTX").empty() ? 0 : c.ctx;
     c.parallel    = env_int("LLMASH_PARALLEL", 1);
-    c.kv_type     = env_str("LLMASH_KV", "f16");
+    c.kv_type     = env_str("LLMASH_KV", "auto");
     c.load_mode   = env_str("LLMASH_LOAD_MODE", "dio");
     c.keep_alive  = env_str("OLLAMA_KEEP_ALIVE", "15m");
 

@@ -140,11 +140,12 @@ double kv_type_scale(const std::string & kv_type) {
     }
     if (t == "f32") return 2.0;
     if (t == "q8_0") return 34.0 / 64.0;
+    if (t == "f8_e4m3") return 0.5;
     if (t == "q5_1") return 24.0 / 64.0;
     if (t == "q5_0") return 22.0 / 64.0;
     if (t == "q4_1") return 20.0 / 64.0;
     if (t == "q4_0" || t == "iq4_nl") return 18.0 / 64.0;
-    return 1.0;  // f16, bf16
+    return 1.0;  // f16, bf16, auto (f16 unless the model carries FP8 cache scales)
 }
 
 double GGUFInfo::kv_bytes_per_token() const {
