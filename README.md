@@ -121,8 +121,8 @@ the "Ollama's file" row of each table is llmash on that same file.
   stream generating; its points past one stream are the wave's tokens over its
   makespan.
 - RTX PRO 6000 Blackwell (96 GB), Windows 11, the card also driving the
-  display. llmash native, runtime build 777 (fork commit
-  [`5070592c8`](https://github.com/omgitsbase/llama.cpp/commit/5070592c8));
+  display. llmash native, runtime build 778 (fork commit
+  [`c667fd5e3`](https://github.com/omgitsbase/llama.cpp/commit/c667fd5e3));
   vLLM (`vllm/vllm-openai` 0.32.0) and Ollama (`ollama/ollama` 0.40.11) in
   their Linux images under WSL2, on the same driver. llmash measured on
   2026-10-30, vLLM and Ollama on 2026-10-29, one wave per point; repeated waves
@@ -139,12 +139,12 @@ the "Ollama's file" row of each table is llmash on that same file.
 
 | provider | file | weights | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|--:|--:|--:|--:|--:|--:|--:|
-| llmash | unsloth/gemma-4-E4B-it-NVFP4, every weight's bytes kept | 7.3 GB | 410 | 884 | 1,744 | 3,673 | 6,545 | 11,036 |
+| llmash | unsloth/gemma-4-E4B-it-NVFP4, every weight's bytes kept | 7.3 GB | 400 | 880 | 1,760 | 3,608 | 6,602 | 11,199 |
 | vLLM | unsloth/gemma-4-E4B-it-NVFP4, the checkpoint | 7.3 GB | 335 | 702 | 1,338 | 2,690 | 5,446 | 9,207 |
 | Ollama | unsloth/gemma-4-E4B-it-NVFP4, the FP8 layers as Q8_0 | 7.4 GB | 211 | 299 | 382 | 449 | 467 | 473 |
-| llmash | Ollama's copy: the FP8 layers as Q8_0 | 7.4 GB | 404 | 821 | 1,488 | 3,047 | 5,229 | 8,292 |
-| llmash over vLLM, same checkpoint | | | 1.23x | 1.26x | 1.30x | 1.37x | 1.20x | 1.20x |
-| llmash over Ollama, same checkpoint | | | 1.95x | 2.96x | 4.56x | 8.18x | 14.00x | 23.32x |
+| llmash | Ollama's copy: the FP8 layers as Q8_0 | 7.4 GB | 410 | 770 | 1,599 | 3,049 | 5,529 | 8,680 |
+| llmash over vLLM, same checkpoint | | | 1.19x | 1.25x | 1.32x | 1.34x | 1.21x | 1.22x |
+| llmash over Ollama, same checkpoint | | | 1.90x | 2.94x | 4.60x | 8.03x | 14.12x | 23.66x |
 
 #### Qwen3.6 35B-A3B
 
@@ -155,12 +155,12 @@ the "Ollama's file" row of each table is llmash on that same file.
 
 | provider | file | weights | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|--:|--:|--:|--:|--:|--:|--:|
-| llmash | nvidia/Qwen3.6-35B-A3B-NVFP4, every weight's bytes kept | 22.6 GB | 510 | 774 | 1,214 | 1,936 | 2,985 | 4,103 |
+| llmash | nvidia/Qwen3.6-35B-A3B-NVFP4, every weight's bytes kept | 22.6 GB | 530 | 823 | 1,276 | 2,053 | 3,092 | 4,074 |
 | vLLM | nvidia/Qwen3.6-35B-A3B-NVFP4, the checkpoint | 22.6 GB | 377 | 664 | 1,161 | 1,910 | 2,616 | 3,511 |
 | Ollama | nvidia/Qwen3.6-35B-A3B-NVFP4, the FP8 layers as Q8_0 | 22.6 GB | 189 | 181 | 181 | 183 | 197 | 197 |
-| llmash | Ollama's copy: the FP8 layers as Q8_0 | 22.6 GB | 539 | 762 | 1,167 | 1,814 | 2,722 | 3,536 |
-| llmash over vLLM, same checkpoint | | | 1.35x | 1.16x | 1.05x | 1.01x | 1.14x | 1.17x |
-| llmash over Ollama, same checkpoint | | | 2.70x | 4.27x | 6.72x | 10.60x | 15.12x | 20.86x |
+| llmash | Ollama's copy: the FP8 layers as Q8_0 | 22.6 GB | 576 | 813 | 1,227 | 1,920 | 2,776 | 3,625 |
+| llmash over vLLM, same checkpoint | | | 1.41x | 1.24x | 1.10x | 1.07x | 1.18x | 1.16x |
+| llmash over Ollama, same checkpoint | | | 2.81x | 4.54x | 7.06x | 11.23x | 15.65x | 20.71x |
 
 <!-- /SCALING -->
 
@@ -357,7 +357,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 777 is commit `5070592c8`. Changes from upstream:
+`llmash`; runtime build 778 is commit `c667fd5e3`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -367,11 +367,13 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
   cache a checkpoint declares (`LLMASH_KV=auto`, the default).
 - Recurrent state in BF16 for the delta-net and RWKV models, as vLLM keeps it.
 - Draft head: an MTP head drafts through the 131,072 most frequent rows of the
-  LM head, requantized to Q4_K at load. Verification reads the full head.
+  LM head, requantized to Q4_K at load. Verification reads the full head. An MTP
+  block stored in BF16 beside a quantized model loads as Q8_0, half the bytes
+  per draft step; only drafts read it.
 - Fused recurrent layers (Qwen3.5, 3.6, 3.8 and the Next models): the input
   projection runs the causal convolution, its SiLU and the state snapshots in
-  its own store; the gating projections run as one launch; the gated norm is
-  quantized straight into the output projection's input.
+  its own store; the gating projections run as one launch at any verify width;
+  the gated norm is quantized straight into the output projection's input.
 - Fused mixture-of-experts tails: the expert matvec applies the router weights
   as it stores; a residual add rides the output projection it follows.
 - Mixture-of-experts layers over several streams: a shared expert shaped like
@@ -381,6 +383,9 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
   reuses the sort.
 - Small weights over a few sequences' rows (a router, a gating projection)
   split their K across the SMs and sum the parts in a fixed order.
+- Vector or tile kernel by measurement: on NVIDIA Ada and later a quantized
+  matrix over 6 to 8 columns goes to the tile kernel where that is faster for
+  its type (Q4_K to Q6_K, MXFP4, NVFP4, IQ2_S, IQ4_XS and Q4_0).
 - NVFP4 under speculation: the second-level scales, per expert or per tensor,
   ride the matvecs of a verify batch as they do for one token, so the expert
   gate and up still fuse, and a float gate and up pair runs as one launch.
@@ -395,8 +400,11 @@ recurrent state (wikitext-2 perplexity of Qwen3.6 35B-A3B 5.8651 against 5.8716
 with F32 state) and the FP8 cache where a checkpoint declares one. Build 777
 moves the numbers slightly: a shared expert goes through the expert kernels'
 quantization and small products sum in another order (perplexity 5.8791, 5.8751
-with the shared expert computed apart). Each release's notes list what it was
-checked with.
+with the shared expert computed apart). Build 778 changes the drafts: the MTP
+block in Q8_0 proposes slightly different tokens, and a greedy reply can then
+part at a near tie (acceptance 0.653 against 0.658 with the block in BF16, over
+eight greedy replies); perplexity is unchanged at 5.8791. Each release's notes
+list what it was checked with.
 
 ## Models and pulling
 
