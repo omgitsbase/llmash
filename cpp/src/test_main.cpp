@@ -296,6 +296,14 @@ int main() {
         const std::string why = explain_load_failure("error while handling argument \"--cache-type-k\": Unsupported cache type: q16_0\n\nusage:\n-ctk, --cache-type-k TYPE\nto show complete usage, run with -h\n", cfg);
         check(why == "llama-server refused an argument: error while handling argument \"--cache-type-k\": Unsupported cache type: q16_0", "a refused argument is reported in the runtime's own words");
     }
+    {
+        GGUFInfo own;
+        own.has_sampling_temp = true;
+        GGUFInfo none;
+        check(default_temp_for(own, "{\"temperature\":0.7}") < 0.0 && default_temp_for(none, "{\"temperature\":0.6}") == 0.6 &&
+              default_temp_for(none, "") == 1.0 && default_temp_for(none, "{\"top_k\":20}") == 1.0,
+              "a default temperature: the GGUF's, else the params layer's, else 1.0");
+    }
     std::printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");
     return failures == 0 ? 0 : 1;
 }

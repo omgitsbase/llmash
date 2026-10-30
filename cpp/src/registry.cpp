@@ -226,6 +226,19 @@ std::string find_projector_for(const std::string & path) {
 
 } // namespace
 
+// a request that names no temperature gets the model's: its GGUF's (generation_config.json, which the runtime reads
+// itself, as vLLM does), else the store's params layer, else vLLM's neutral 1.0 rather than llama.cpp's 0.8
+double default_temp_for(const GGUFInfo & g, const std::string & params_raw) {
+    if (g.has_sampling_temp) {
+        return -1.0;
+    }
+    const json j = json::parse(params_raw, nullptr, false);
+    if (j.is_object() && j.contains("temperature") && j["temperature"].is_number()) {
+        return std::max(0.0, j["temperature"].get<double>());
+    }
+    return 1.0;
+}
+
 // A sharded model weighs all its shards, not the first one it is listed by.
 uint64_t model_bytes(const std::string & path) {
     std::error_code ec;
@@ -461,6 +474,7 @@ void Registry::scan_library(const std::string & dir, std::vector<Model> & out,
         mo.kv_bytes_tok = g.kv_bytes_per_token();
         mo.state_bytes  = g.state_bytes();
         mo.input_bytes  = input_layer_bytes(path, g.input_bytes);
+        mo.default_temp = default_temp_for(g, "");
         mo.projector    = find_projector_for(path);
         mo.caps         = caps_for(g, mo.projector, dir);
         mo.classifier   = classifier_kind(path, g);
@@ -593,11 +607,13 @@ void Registry::scan_ollama_store(const std::string & root, std::vector<Model> & 
             mo.tmpl = g.chat_template;
         }
         mo.system       = system_blob.empty() ? "" : read_text_file(blobs / system_blob);
+        std::string params_raw;
         if (!params_blob.empty()) {
-            const std::string raw = read_text_file(blobs / params_blob);
-            mo.params_text        = params_lines(raw);
-            mo.num_ctx            = params_num_ctx(raw);
+            params_raw            = read_text_file(blobs / params_blob);
+            mo.params_text        = params_lines(params_raw);
+            mo.num_ctx            = params_num_ctx(params_raw);
         }
+        mo.default_temp = default_temp_for(g, params_raw);
         mo.modified = mtime_unix(it->path());
         mo.ctx_train    = static_cast<int>(g.ctx_train);
         mo.experts      = g.experts;

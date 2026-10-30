@@ -329,6 +329,9 @@ GGUFInfo read_gguf(const std::string & path) {
             info.has_vision_encoder = r.num_any(type) != 0;
         } else if (key == "clip.has_audio_encoder" && type == T_BOOL) {
             info.has_audio_encoder = r.num_any(type) != 0;
+        } else if (key == "general.sampling.temp") {
+            info.has_sampling_temp = true;
+            r.skip_value(type);
         } else {
             r.skip_value(type);
         }

@@ -898,6 +898,12 @@ std::vector<std::string> Instance::args() {
     if (lower(kv) != "auto") {
         a.insert(a.end(), {"--cache-type-k", kv, "--cache-type-v", kv});
     }
+    // a request that names no temperature: the model's own (Model::default_temp)
+    if (!foreign && model.default_temp >= 0.0) {
+        std::ostringstream t;
+        t << model.default_temp;
+        a.insert(a.end(), {"--temp", t.str()});
+    }
     if (!kv_on_gpu) {
         a.push_back("--no-kv-offload");  // the cache stays in system RAM, the weights on the card
     }

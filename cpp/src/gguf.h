@@ -26,6 +26,7 @@ struct GGUFInfo {
     int         experts      = 0;  // <arch>.expert_count
     int         experts_used = 0;  // <arch>.expert_used_count
     bool        has_pooling  = false; // an embedding model
+    bool        has_sampling_temp = false; // general.sampling.temp: the model's own temperature (generation_config.json)
 
     // The tokenizer's special ids, -1 when the header names none.
     int bos_id = -1, eos_id = -1, sep_id = -1, cls_id = -1, mask_id = -1, pad_id = -1;

@@ -36,6 +36,9 @@ struct Model {
     std::string system;      // the store's system layer
     std::string params_text; // the store's params layer, "key value" per line
     int         num_ctx = 0;  // the Modelfile's
+    // the temperature a request without one gets: < 0 when the GGUF carries the model's own (general.sampling.temp,
+    // the runtime reads it), else the store's params layer, else 1.0, as vLLM does
+    double      default_temp = -1.0;
     double      modified = 0;
     int         ctx_train = 0;
     int         experts = 0;
@@ -44,6 +47,9 @@ struct Model {
     double      state_bytes  = 0;   // per-sequence state that does not grow with the context
     std::vector<std::string> caps;
 };
+
+// Model::default_temp: -1 when the GGUF carries the model's own temperature, else the params layer's, else 1.0
+double default_temp_for(const GGUFInfo & g, const std::string & params_raw);
 
 // The folders read, and whether a path came from one of them.
 class Registry {
