@@ -121,8 +121,8 @@ the "Ollama's file" row of each table is llmash on that same file.
   stream generating; its points past one stream are the wave's tokens over its
   makespan.
 - RTX PRO 6000 Blackwell (96 GB), Windows 11, the card also driving the
-  display. llmash native, runtime build 776 (fork commit
-  [`b5985560d`](https://github.com/omgitsbase/llama.cpp/commit/b5985560d));
+  display. llmash native, runtime build 777 (fork commit
+  [`5070592c8`](https://github.com/omgitsbase/llama.cpp/commit/5070592c8));
   vLLM (`vllm/vllm-openai` 0.32.0) and Ollama (`ollama/ollama` 0.40.11) in
   their Linux images under WSL2, on the same driver. llmash measured on
   2026-10-30, vLLM and Ollama on 2026-10-29, one wave per point; repeated waves
@@ -139,12 +139,12 @@ the "Ollama's file" row of each table is llmash on that same file.
 
 | provider | file | weights | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|--:|--:|--:|--:|--:|--:|--:|
-| llmash | unsloth/gemma-4-E4B-it-NVFP4, every weight's bytes kept | 7.3 GB | 400 | 920 | 1,741 | 3,632 | 6,738 | 11,397 |
+| llmash | unsloth/gemma-4-E4B-it-NVFP4, every weight's bytes kept | 7.3 GB | 410 | 884 | 1,744 | 3,673 | 6,545 | 11,036 |
 | vLLM | unsloth/gemma-4-E4B-it-NVFP4, the checkpoint | 7.3 GB | 335 | 702 | 1,338 | 2,690 | 5,446 | 9,207 |
 | Ollama | unsloth/gemma-4-E4B-it-NVFP4, the FP8 layers as Q8_0 | 7.4 GB | 211 | 299 | 382 | 449 | 467 | 473 |
-| llmash | Ollama's copy: the FP8 layers as Q8_0 | 7.4 GB | 419 | 791 | 1,507 | 3,154 | 5,595 | 8,710 |
-| llmash over vLLM, same checkpoint | | | 1.20x | 1.31x | 1.30x | 1.35x | 1.24x | 1.24x |
-| llmash over Ollama, same checkpoint | | | 1.90x | 3.08x | 4.55x | 8.09x | 14.42x | 24.08x |
+| llmash | Ollama's copy: the FP8 layers as Q8_0 | 7.4 GB | 404 | 821 | 1,488 | 3,047 | 5,229 | 8,292 |
+| llmash over vLLM, same checkpoint | | | 1.23x | 1.26x | 1.30x | 1.37x | 1.20x | 1.20x |
+| llmash over Ollama, same checkpoint | | | 1.95x | 2.96x | 4.56x | 8.18x | 14.00x | 23.32x |
 
 #### Qwen3.6 35B-A3B
 
@@ -155,12 +155,12 @@ the "Ollama's file" row of each table is llmash on that same file.
 
 | provider | file | weights | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|--:|--:|--:|--:|--:|--:|--:|
-| llmash | nvidia/Qwen3.6-35B-A3B-NVFP4, every weight's bytes kept | 22.6 GB | 521 | 756 | 1,062 | 1,775 | 2,764 | 3,863 |
+| llmash | nvidia/Qwen3.6-35B-A3B-NVFP4, every weight's bytes kept | 22.6 GB | 510 | 774 | 1,214 | 1,936 | 2,985 | 4,103 |
 | vLLM | nvidia/Qwen3.6-35B-A3B-NVFP4, the checkpoint | 22.6 GB | 377 | 664 | 1,161 | 1,910 | 2,616 | 3,511 |
 | Ollama | nvidia/Qwen3.6-35B-A3B-NVFP4, the FP8 layers as Q8_0 | 22.6 GB | 189 | 181 | 181 | 183 | 197 | 197 |
-| llmash | Ollama's copy: the FP8 layers as Q8_0 | 22.6 GB | 564 | 761 | 1,007 | 1,662 | 2,562 | 3,369 |
-| llmash over vLLM, same checkpoint | | | 1.38x | 1.14x | 0.92x | 0.93x | 1.06x | 1.10x |
-| llmash over Ollama, same checkpoint | | | 2.76x | 4.17x | 5.88x | 9.71x | 13.99x | 19.63x |
+| llmash | Ollama's copy: the FP8 layers as Q8_0 | 22.6 GB | 539 | 762 | 1,167 | 1,814 | 2,722 | 3,536 |
+| llmash over vLLM, same checkpoint | | | 1.35x | 1.16x | 1.05x | 1.01x | 1.14x | 1.17x |
+| llmash over Ollama, same checkpoint | | | 2.70x | 4.27x | 6.72x | 10.60x | 15.12x | 20.86x |
 
 <!-- /SCALING -->
 
@@ -357,7 +357,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 776 is commit `b5985560d`. Changes from upstream:
+`llmash`; runtime build 777 is commit `5070592c8`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -374,6 +374,13 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
   quantized straight into the output projection's input.
 - Fused mixture-of-experts tails: the expert matvec applies the router weights
   as it stores; a residual add rides the output projection it follows.
+- Mixture-of-experts layers over several streams: a shared expert shaped like
+  the routed ones is loaded as one more expert slot (no extra memory) and runs
+  in the expert kernels; gate and up run as one launch over one sort of the
+  expert ids and one quantization of the activations, and the down projection
+  reuses the sort.
+- Small weights over a few sequences' rows (a router, a gating projection)
+  split their K across the SMs and sum the parts in a fixed order.
 - NVFP4 under speculation: the second-level scales, per expert or per tensor,
   ride the matvecs of a verify batch as they do for one token, so the expert
   gate and up still fuse, and a float gate and up pair runs as one launch.
@@ -385,8 +392,11 @@ the previous one on dense, mixture-of-experts and delta-net models, across
 NVFP4, 3-bit and 4-bit builds, with MTP and n-gram drafting, and on 1, 2 and 3
 GPUs under layer split. Build 776 changes the text on purpose: the BF16
 recurrent state (wikitext-2 perplexity of Qwen3.6 35B-A3B 5.8651 against 5.8716
-with F32 state) and the FP8 cache where a checkpoint declares one. Its release
-notes list what it was checked with.
+with F32 state) and the FP8 cache where a checkpoint declares one. Build 777
+moves the numbers slightly: a shared expert goes through the expert kernels'
+quantization and small products sum in another order (perplexity 5.8791, 5.8751
+with the shared expert computed apart). Each release's notes list what it was
+checked with.
 
 ## Models and pulling
 

@@ -7,12 +7,12 @@
   "size_gb": 7.35,
   "note": "all three on unsloth/gemma-4-E4B-it-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 1,
-  "throughput": 400.4166666666667,
+  "throughput": 410.25,
   "basis": "steady",
-  "steady_seconds": 12.0,
-  "makespan_s": 12.99,
-  "makespan_tok_s": 405.8,
-  "tokens": 5271,
+  "steady_seconds": 16.0,
+  "makespan_s": 16.47,
+  "makespan_tok_s": 410.0,
+  "tokens": 6752,
   "finish": {
    "stop": 1
   },
@@ -20,7 +20,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:49",
+  "date": "2026-10-30 11:30",
   "run": "sc_e4b_llmash"
  },
  {
@@ -31,12 +31,12 @@
   "size_gb": 7.35,
   "note": "all three on unsloth/gemma-4-E4B-it-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 2,
-  "throughput": 920.2727272727273,
+  "throughput": 884.2222222222222,
   "basis": "steady",
-  "steady_seconds": 11.0,
-  "makespan_s": 12.51,
-  "makespan_tok_s": 881.6,
-  "tokens": 11033,
+  "steady_seconds": 9.0,
+  "makespan_s": 10.95,
+  "makespan_tok_s": 812.2,
+  "tokens": 8896,
   "finish": {
    "stop": 2
   },
@@ -44,7 +44,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:50",
+  "date": "2026-10-30 11:30",
   "run": "sc_e4b_llmash"
  },
  {
@@ -55,12 +55,12 @@
   "size_gb": 7.35,
   "note": "all three on unsloth/gemma-4-E4B-it-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 4,
-  "throughput": 1741.0,
+  "throughput": 1744.2,
   "basis": "steady",
   "steady_seconds": 10.0,
-  "makespan_s": 16.76,
-  "makespan_tok_s": 1443.8,
-  "tokens": 24194,
+  "makespan_s": 12.19,
+  "makespan_tok_s": 1624.3,
+  "tokens": 19798,
   "finish": {
    "stop": 4
   },
@@ -68,7 +68,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:50",
+  "date": "2026-10-30 11:30",
   "run": "sc_e4b_llmash"
  },
  {
@@ -79,12 +79,12 @@
   "size_gb": 7.35,
   "note": "all three on unsloth/gemma-4-E4B-it-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 8,
-  "throughput": 3632.375,
+  "throughput": 3672.75,
   "basis": "steady",
   "steady_seconds": 8.0,
-  "makespan_s": 15.12,
-  "makespan_tok_s": 2886.9,
-  "tokens": 43663,
+  "makespan_s": 16.2,
+  "makespan_tok_s": 2861.8,
+  "tokens": 46362,
   "finish": {
    "stop": 8
   },
@@ -92,7 +92,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:50",
+  "date": "2026-10-30 11:31",
   "run": "sc_e4b_llmash"
  },
  {
@@ -103,21 +103,20 @@
   "size_gb": 7.35,
   "note": "all three on unsloth/gemma-4-E4B-it-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 16,
-  "throughput": 6738.25,
+  "throughput": 6545.125,
   "basis": "steady",
   "steady_seconds": 8.0,
-  "makespan_s": 20.08,
-  "makespan_tok_s": 4173.7,
-  "tokens": 83805,
+  "makespan_s": 18.81,
+  "makespan_tok_s": 4506.2,
+  "tokens": 84765,
   "finish": {
-   "stop": 15,
-   "length": 1
+   "stop": 16
   },
   "errors": 0,
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:51",
+  "date": "2026-10-30 11:31",
   "run": "sc_e4b_llmash"
  },
  {
@@ -128,12 +127,12 @@
   "size_gb": 7.35,
   "note": "all three on unsloth/gemma-4-E4B-it-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 32,
-  "throughput": 11397.1,
+  "throughput": 11035.5,
   "basis": "steady",
   "steady_seconds": 10.0,
-  "makespan_s": 21.98,
-  "makespan_tok_s": 8256.9,
-  "tokens": 181525,
+  "makespan_s": 24.07,
+  "makespan_tok_s": 7426.6,
+  "tokens": 178792,
   "finish": {
    "stop": 31,
    "length": 1
@@ -142,7 +141,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:51",
+  "date": "2026-10-30 11:32",
   "run": "sc_e4b_llmash"
  },
  {
@@ -433,11 +432,11 @@
   "size_gb": 7.43,
   "table_only": true,
   "concurrency": 1,
-  "throughput": 418.7368421052632,
+  "throughput": 404.15,
   "basis": "steady",
-  "steady_seconds": 19.0,
-  "makespan_s": 19.58,
-  "makespan_tok_s": 418.4,
+  "steady_seconds": 20.0,
+  "makespan_s": 20.29,
+  "makespan_tok_s": 403.7,
   "tokens": 8192,
   "finish": {
    "length": 1
@@ -446,7 +445,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:52",
+  "date": "2026-10-30 11:32",
   "run": "sc_e4b_llmash_olfile"
  },
  {
@@ -457,12 +456,12 @@
   "size_gb": 7.43,
   "table_only": true,
   "concurrency": 2,
-  "throughput": 791.0588235294117,
+  "throughput": 821.2222222222222,
   "basis": "steady",
-  "steady_seconds": 17.0,
-  "makespan_s": 20.27,
-  "makespan_tok_s": 747.7,
-  "tokens": 15157,
+  "steady_seconds": 9.0,
+  "makespan_s": 11.76,
+  "makespan_tok_s": 740.4,
+  "tokens": 8710,
   "finish": {
    "stop": 2
   },
@@ -470,7 +469,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:52",
+  "date": "2026-10-30 11:32",
   "run": "sc_e4b_llmash_olfile"
  },
  {
@@ -481,12 +480,12 @@
   "size_gb": 7.43,
   "table_only": true,
   "concurrency": 4,
-  "throughput": 1506.7,
+  "throughput": 1487.909090909091,
   "basis": "steady",
-  "steady_seconds": 10.0,
-  "makespan_s": 18.61,
-  "makespan_tok_s": 1099.0,
-  "tokens": 20451,
+  "steady_seconds": 11.0,
+  "makespan_s": 18.11,
+  "makespan_tok_s": 1280.8,
+  "tokens": 23200,
   "finish": {
    "stop": 4
   },
@@ -494,7 +493,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:52",
+  "date": "2026-10-30 11:33",
   "run": "sc_e4b_llmash_olfile"
  },
  {
@@ -505,12 +504,12 @@
   "size_gb": 7.43,
   "table_only": true,
   "concurrency": 8,
-  "throughput": 3154.125,
+  "throughput": 3046.6363636363635,
   "basis": "steady",
-  "steady_seconds": 8.0,
-  "makespan_s": 18.77,
-  "makespan_tok_s": 2180.0,
-  "tokens": 40929,
+  "steady_seconds": 11.0,
+  "makespan_s": 17.61,
+  "makespan_tok_s": 2316.2,
+  "tokens": 40777,
   "finish": {
    "stop": 8
   },
@@ -518,7 +517,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:53",
+  "date": "2026-10-30 11:33",
   "run": "sc_e4b_llmash_olfile"
  },
  {
@@ -529,21 +528,20 @@
   "size_gb": 7.43,
   "table_only": true,
   "concurrency": 16,
-  "throughput": 5595.1,
+  "throughput": 5229.25,
   "basis": "steady",
-  "steady_seconds": 10.0,
-  "makespan_s": 23.64,
-  "makespan_tok_s": 4070.1,
-  "tokens": 96213,
+  "steady_seconds": 12.0,
+  "makespan_s": 22.5,
+  "makespan_tok_s": 3745.8,
+  "tokens": 84272,
   "finish": {
-   "stop": 15,
-   "length": 1
+   "stop": 16
   },
   "errors": 0,
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:53",
+  "date": "2026-10-30 11:33",
   "run": "sc_e4b_llmash_olfile"
  },
  {
@@ -554,12 +552,12 @@
   "size_gb": 7.43,
   "table_only": true,
   "concurrency": 32,
-  "throughput": 8709.916666666666,
+  "throughput": 8291.785714285714,
   "basis": "steady",
-  "steady_seconds": 12.0,
-  "makespan_s": 29.66,
-  "makespan_tok_s": 5644.6,
-  "tokens": 167397,
+  "steady_seconds": 14.0,
+  "makespan_s": 28.87,
+  "makespan_tok_s": 5657.1,
+  "tokens": 163326,
   "finish": {
    "stop": 31,
    "length": 1
@@ -568,7 +566,7 @@
   "repetition": 0,
   "draft": "B:/bench/gguf/gemma-4-E4B-it-assistant-BF16.gguf",
   "k": 3,
-  "date": "2026-10-30 02:54",
+  "date": "2026-10-30 11:34",
   "run": "sc_e4b_llmash_olfile"
  },
  {
@@ -579,11 +577,11 @@
   "size_gb": 22.57,
   "note": "all three on nvidia/Qwen3.6-35B-A3B-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 1,
-  "throughput": 520.8,
+  "throughput": 509.8125,
   "basis": "steady",
-  "steady_seconds": 15.0,
-  "makespan_s": 15.95,
-  "makespan_tok_s": 513.7,
+  "steady_seconds": 16.0,
+  "makespan_s": 16.13,
+  "makespan_tok_s": 508.0,
   "tokens": 8192,
   "finish": {
    "length": 1
@@ -592,7 +590,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:40",
+  "date": "2026-10-30 11:21",
   "run": "sc_a3b_llmash"
  },
  {
@@ -603,11 +601,11 @@
   "size_gb": 22.57,
   "note": "all three on nvidia/Qwen3.6-35B-A3B-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 2,
-  "throughput": 756.2857142857143,
+  "throughput": 773.8,
   "basis": "steady",
-  "steady_seconds": 21.0,
-  "makespan_s": 22.08,
-  "makespan_tok_s": 742.0,
+  "steady_seconds": 20.0,
+  "makespan_s": 21.53,
+  "makespan_tok_s": 760.9,
   "tokens": 16384,
   "finish": {
    "length": 2
@@ -616,7 +614,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:41",
+  "date": "2026-10-30 11:22",
   "run": "sc_a3b_llmash"
  },
  {
@@ -627,11 +625,11 @@
   "size_gb": 22.57,
   "note": "all three on nvidia/Qwen3.6-35B-A3B-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 4,
-  "throughput": 1062.4333333333334,
+  "throughput": 1214.1923076923076,
   "basis": "steady",
-  "steady_seconds": 30.0,
-  "makespan_s": 31.7,
-  "makespan_tok_s": 1033.6,
+  "steady_seconds": 26.0,
+  "makespan_s": 27.66,
+  "makespan_tok_s": 1184.6,
   "tokens": 32768,
   "finish": {
    "length": 4
@@ -640,7 +638,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:41",
+  "date": "2026-10-30 11:22",
   "run": "sc_a3b_llmash"
  },
  {
@@ -651,11 +649,11 @@
   "size_gb": 22.57,
   "note": "all three on nvidia/Qwen3.6-35B-A3B-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 8,
-  "throughput": 1774.5833333333333,
+  "throughput": 1936.25,
   "basis": "steady",
-  "steady_seconds": 36.0,
-  "makespan_s": 38.42,
-  "makespan_tok_s": 1705.7,
+  "steady_seconds": 32.0,
+  "makespan_s": 35.52,
+  "makespan_tok_s": 1844.8,
   "tokens": 65536,
   "finish": {
    "length": 8
@@ -664,7 +662,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:42",
+  "date": "2026-10-30 11:23",
   "run": "sc_a3b_llmash"
  },
  {
@@ -675,11 +673,11 @@
   "size_gb": 22.57,
   "note": "all three on nvidia/Qwen3.6-35B-A3B-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 16,
-  "throughput": 2763.8478260869565,
+  "throughput": 2985.3571428571427,
   "basis": "steady",
-  "steady_seconds": 46.0,
-  "makespan_s": 49.47,
-  "makespan_tok_s": 2649.6,
+  "steady_seconds": 42.0,
+  "makespan_s": 46.05,
+  "makespan_tok_s": 2846.2,
   "tokens": 131072,
   "finish": {
    "length": 16
@@ -688,7 +686,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:43",
+  "date": "2026-10-30 11:24",
   "run": "sc_a3b_llmash"
  },
  {
@@ -699,11 +697,11 @@
   "size_gb": 22.57,
   "note": "all three on nvidia/Qwen3.6-35B-A3B-NVFP4  ·  steady decode, thinking on, 8,192-token budget",
   "concurrency": 32,
-  "throughput": 3862.9538461538464,
+  "throughput": 4103.426229508197,
   "basis": "steady",
-  "steady_seconds": 65.0,
-  "makespan_s": 71.84,
-  "makespan_tok_s": 3648.8,
+  "steady_seconds": 61.0,
+  "makespan_s": 67.2,
+  "makespan_tok_s": 3901.2,
   "tokens": 262144,
   "finish": {
    "length": 32
@@ -712,7 +710,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:44",
+  "date": "2026-10-30 11:25",
   "run": "sc_a3b_llmash"
  },
  {
@@ -999,11 +997,11 @@
   "size_gb": 22.65,
   "table_only": true,
   "concurrency": 1,
-  "throughput": 564.5,
+  "throughput": 538.6,
   "basis": "steady",
-  "steady_seconds": 14.0,
-  "makespan_s": 14.61,
-  "makespan_tok_s": 560.7,
+  "steady_seconds": 15.0,
+  "makespan_s": 15.31,
+  "makespan_tok_s": 535.0,
   "tokens": 8192,
   "finish": {
    "length": 1
@@ -1012,7 +1010,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:45",
+  "date": "2026-10-30 11:26",
   "run": "sc_a3b_llmash_olfile"
  },
  {
@@ -1023,11 +1021,11 @@
   "size_gb": 22.65,
   "table_only": true,
   "concurrency": 2,
-  "throughput": 760.5714285714286,
+  "throughput": 761.8571428571429,
   "basis": "steady",
   "steady_seconds": 21.0,
-  "makespan_s": 21.87,
-  "makespan_tok_s": 749.1,
+  "makespan_s": 21.79,
+  "makespan_tok_s": 751.9,
   "tokens": 16384,
   "finish": {
    "length": 2
@@ -1036,7 +1034,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:45",
+  "date": "2026-10-30 11:26",
   "run": "sc_a3b_llmash_olfile"
  },
  {
@@ -1047,11 +1045,11 @@
   "size_gb": 22.65,
   "table_only": true,
   "concurrency": 4,
-  "throughput": 1007.3870967741935,
+  "throughput": 1167.0740740740741,
   "basis": "steady",
-  "steady_seconds": 31.0,
-  "makespan_s": 33.33,
-  "makespan_tok_s": 983.1,
+  "steady_seconds": 27.0,
+  "makespan_s": 28.65,
+  "makespan_tok_s": 1143.8,
   "tokens": 32768,
   "finish": {
    "length": 4
@@ -1060,7 +1058,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:46",
+  "date": "2026-10-30 11:26",
   "run": "sc_a3b_llmash_olfile"
  },
  {
@@ -1071,11 +1069,11 @@
   "size_gb": 22.65,
   "table_only": true,
   "concurrency": 8,
-  "throughput": 1661.578947368421,
+  "throughput": 1813.6571428571428,
   "basis": "steady",
-  "steady_seconds": 38.0,
-  "makespan_s": 40.81,
-  "makespan_tok_s": 1606.0,
+  "steady_seconds": 35.0,
+  "makespan_s": 37.27,
+  "makespan_tok_s": 1758.5,
   "tokens": 65536,
   "finish": {
    "length": 8
@@ -1084,7 +1082,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:46",
+  "date": "2026-10-30 11:27",
   "run": "sc_a3b_llmash_olfile"
  },
  {
@@ -1095,11 +1093,11 @@
   "size_gb": 22.65,
   "table_only": true,
   "concurrency": 16,
-  "throughput": 2561.94,
+  "throughput": 2722.391304347826,
   "basis": "steady",
-  "steady_seconds": 50.0,
-  "makespan_s": 53.37,
-  "makespan_tok_s": 2455.7,
+  "steady_seconds": 46.0,
+  "makespan_s": 50.68,
+  "makespan_tok_s": 2586.5,
   "tokens": 131072,
   "finish": {
    "length": 16
@@ -1108,7 +1106,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:47",
+  "date": "2026-10-30 11:28",
   "run": "sc_a3b_llmash_olfile"
  },
  {
@@ -1119,11 +1117,11 @@
   "size_gb": 22.65,
   "table_only": true,
   "concurrency": 32,
-  "throughput": 3368.891891891892,
+  "throughput": 3535.774647887324,
   "basis": "steady",
-  "steady_seconds": 74.0,
-  "makespan_s": 81.37,
-  "makespan_tok_s": 3221.5,
+  "steady_seconds": 71.0,
+  "makespan_s": 77.57,
+  "makespan_tok_s": 3379.6,
   "tokens": 262144,
   "finish": {
    "length": 32
@@ -1132,7 +1130,7 @@
   "repetition": 0,
   "draft": "own mtp",
   "k": 3,
-  "date": "2026-10-30 02:49",
+  "date": "2026-10-30 11:29",
   "run": "sc_a3b_llmash_olfile"
  }
 ]
