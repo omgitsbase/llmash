@@ -104,7 +104,7 @@ the "Ollama's file" row of each table is llmash on that same file.
 - Cache: both checkpoints declare an FP8 cache. llmash and vLLM keep it in FP8
   with the checkpoint's scales (1.0 for nvidia's, which ships none), Ollama in
   f16, its default.
-- Workload: ninfer's decode saturation suite. C requests of
+- Workload: a decode saturation suite. C requests of
   `long_decode_aime26_15` released together, thinking on, an 8,192-token
   budget, distinct seeds, temperature 0.6, top-p 0.95, top-k 20, presence
   penalty 1.0, no prefix reuse.
