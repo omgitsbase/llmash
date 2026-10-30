@@ -89,8 +89,9 @@ def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0):
 
 
 # Three formats per model, each on every provider that runs it, the providers in one order on every chart. The 3-bit
-# builds are llmash's own and run nowhere else; in the 8-bit group llmash runs Ollama's own Q8_0 file.
-TIERS = (("3-bit", "RCO 3-bit, llmash only"), ("NVFP4", "NVFP4"), ("8-bit", "8-bit"))
+# builds are llmash's own and run nowhere else; in the NVFP4 group every provider runs one checkpoint, and in the
+# 8-bit group llmash runs Ollama's own Q8_0 file.
+TIERS = (("3-bit", "RCO 3-bit, llmash only"), ("NVFP4", "NVFP4, one checkpoint"), ("8-bit", "8-bit, one file"))
 
 
 def provider_rows(runs, m):

@@ -166,42 +166,50 @@ the "Ollama's file" row of each table is llmash on that same file.
 
 ### One stream at a time
 
-One RTX PRO 6000 Blackwell (96 GB), Linux, one request at a time.
+One RTX PRO 6000 Blackwell (96 GB), one request at a time.
 `bench/bench.py` sends three workloads (conversation, coding, thinking), three
-prompts each, greedy, 600 tokens, streamed. Speed is tokens per second from the
-first streamed token to the last, the median of the three prompts; a bar is the
-mean of the three workloads. llmash 0.5.7 (runtime build 770) and Ollama
-0.40.11 were measured on 2026-10-26, vLLM (`vllm/vllm-openai:latest` as of
-2026-09-27) on 2026-09-27 on the same card, its checkpoints unchanged since.
-The Gemma 4 E4B rows of llmash were measured again on 2026-10-27 with the
-runtime from fork commit
-[`669eae10d`](https://github.com/omgitsbase/llama.cpp/commit/669eae10d), now
-in runtime build 776: Gemma's assistant drafts a whole round as one graph,
-and its per-layer tables sit in pinned host memory the card reads in place
-instead of in VRAM.
-One run per row, no concurrent load, temperature 0 only, and the card also
-drives the display.
+prompts each, greedy (temperature 0: every provider takes the most likely token
+at each step), 600 tokens, streamed. Speed is tokens per second from the first
+streamed token to the last, the median of the three prompts; a bar is the mean
+of the three workloads. No concurrent load, and the card also drives the
+display.
 
 Three formats per model:
 
-- 8-bit: llmash and Ollama run the same file, Ollama's own `q8_0` pull. Ollama's
-  runner is upstream llama.cpp's server, so these rows are also this fork
-  against upstream under Ollama's flags. vLLM runs the FP8 checkpoint.
-- NVFP4: llmash runs an NVFP4 GGUF, vLLM an NVFP4 checkpoint. Different files;
-  the GGUF is smaller (17.1 against 21.0 GB on the 27B), and a single stream is
-  limited by the bytes read per token.
+- NVFP4, one checkpoint: every provider runs the checkpoint the batching charts
+  use (`unsloth/gemma-4-E4B-it-NVFP4`, `nvidia/Qwen3.8-27B-NVFP4`,
+  `nvidia/Qwen3.6-35B-A3B-NVFP4`): vLLM the checkpoint, llmash a GGUF of it with
+  every weight's bytes kept, Ollama a GGUF of it with the FP8 layers as Q8_0.
+  llmash 0.5.10 (runtime build 779), native on Windows, and vLLM 0.32.0, in its
+  Linux image under WSL2, were measured on 2026-10-30 in alternation with both
+  servers up, three runs each; a row is their mean. Ollama 0.40.11 in its Linux
+  image, one run, the same day.
+- 8-bit, one file: llmash and Ollama run Ollama's own `q8_0` pull, measured on
+  Linux on 2026-10-26 with llmash 0.5.7 (runtime build 770); Gemma 4 E4B's
+  llmash row on 2026-10-27 with the runtime from fork commit
+  [`669eae10d`](https://github.com/omgitsbase/llama.cpp/commit/669eae10d), now
+  in runtime build 776 (Gemma's assistant drafts a whole round as one graph, and
+  its per-layer tables sit in pinned host memory the card reads in place).
+  Ollama's runner is upstream llama.cpp's server, so these rows are also this
+  fork against upstream under Ollama's flags. vLLM's FP8 checkpoints are not
+  here: neither other provider runs them.
 - RCO-3: llmash's own 3-bit build, assembled by `pull`
-  ([Custom builds](#custom-builds)).
+  ([Custom builds](#custom-builds)), measured with the 8-bit rows.
   `llmash pull hf.co/bartowski/google_gemma-4-E4B-it-GGUF --quant RCO-3`
   reproduces the Gemma 4 E4B file.
+
+On Gemma 4 E4B's checkpoint vLLM is ahead at one stream on these short greedy
+replies: 2% over the three workloads, 7% on conversation, level on coding,
+with the same draft acceptance. On the batching suite's long sampled replies
+llmash leads at one stream as at every other level.
 
 Drafting, from each provider's flags and logs:
 
 | provider | Qwen3.8 27B, Qwen3.6 35B-A3B | Gemma 4 E4B |
 |---|---|---|
-| llmash | the file's MTP head, 3 tokens a round | Google's assistant drafter, 3 tokens a round |
-| Ollama | the file's MTP head, 4 tokens a round (`--spec-type draft-mtp --spec-draft-n-max 4`) | none; the `q8_0` tag ships no drafter |
+| llmash | the file's MTP head, 3 tokens a round | Google's assistant drafter (BF16, through its centroid head), 3 tokens a round |
 | vLLM | the file's MTP head, 3 tokens a round (`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'`) | the assistant drafter, 3 tokens a round (`gemma4_mtp`) |
+| Ollama | the file's MTP head as its tags set it (`--spec-type draft-mtp`): 4 tokens a round on the 27B, 2 on the 35B-A3B's NVFP4 copy, 4 on its `q8_0` | its copy of the assistant, 3 tokens, on the NVFP4 copy; none on the `q8_0` tag, which ships no drafter |
 
 The runtime alone: Gemma 4 E4B's `q8_0` on llmash with no drafter of any kind
 does 192 tokens a second; Ollama does 126 on the same file; llmash with the
@@ -209,16 +217,17 @@ assistant drafter does 391.
 
 Other settings are each provider's defaults: Ollama `-c 262144 -b 512 -ub 512`,
 llmash `-c 8192 -b 4096 -ub 2048` plus what it picks per model, vLLM
-`--max-model-len 8192`. Ollama applies its own chat template, so its replies
-differ in length from llmash's (Gemma 4 E4B conversation: 410 to 459 tokens
-against 255 to 324); every reply's token count is in `bench/providers.json`.
-Acceptance rates were not recorded.
+`--max-model-len 8192` (and `--max-num-seqs 1` for the NVFP4 rows). Gemma 4 E4B
+answers without thinking on llmash and vLLM, the default of both. Ollama applies
+its own chat template, so its replies differ in length from llmash's (Gemma 4
+E4B conversation: 410 to 459 tokens against 255 to 324); every reply's token
+count is in `bench/providers.json`. Draft acceptance on Gemma 4 E4B's checkpoint was 0.56 on llmash and on vLLM.
 
 Perplexity: wikitext-2 as raw text, 2048-token windows, 123k tokens,
-`llama-perplexity` from build 770, for every GGUF row and for the model's own
-BF16 weights. Only the gap to BF16 means anything, and a gap under about 1% is
-within the measurement's error. vLLM's checkpoints are not
-GGUFs and have none.
+`llama-perplexity` from build 770 (from build 779 for the NVFP4 rows), for every
+GGUF row and for the model's own BF16 weights. Only the gap to BF16 means
+anything, and a gap under about 1% is within the measurement's error. vLLM's
+checkpoints are not GGUFs and have none.
 
 <!-- PROVIDERS -->
 
@@ -232,10 +241,11 @@ GGUFs and have none.
 | format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
 |---|---|---|--:|--:|--:|--:|--:|--:|
 | RCO 3-bit, llmash only | llmash | assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16 | 2.9 GB | 51.95 | +10.7% | 322 | 477 | 556 |
-| NVFP4 | llmash | FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF | 5.2 GB | 60.95 | +29.9% | 346 | 500 | 581 |
-| NVFP4 | vLLM | unsloth/gemma-4-E4B-it-NVFP4 | 7.2 GB | - | - | 191 | 251 | 281 |
-| 8-bit | llmash | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 278 | 421 | 474 |
-| 8-bit | Ollama | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 121 | 127 | 128 |
+| NVFP4, one checkpoint | llmash | unsloth/gemma-4-E4B-it-NVFP4, every weight's bytes kept | 7.3 GB | 46.43 | -1.0% | 297 | 476 | 494 |
+| NVFP4, one checkpoint | Ollama | unsloth/gemma-4-E4B-it-NVFP4, the FP8 layers as Q8_0 | 7.4 GB | 46.53 | -0.8% | 198 | 257 | 256 |
+| NVFP4, one checkpoint | vLLM | unsloth/gemma-4-E4B-it-NVFP4, the checkpoint | 7.3 GB | - | - | 320 | 473 | 501 |
+| 8-bit, one file | llmash | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 278 | 421 | 474 |
+| 8-bit, one file | Ollama | Ollama's gemma4:e4b-it-q8_0 | 8.0 GB | 47.44 | +1.1% | 121 | 127 | 128 |
 
 The model's own BF16 weights measure 46.92 on the same text with the same runtime.
 
@@ -250,11 +260,11 @@ The model's own BF16 weights measure 46.92 on the same text with the same runtim
 |---|---|---|--:|--:|--:|--:|--:|--:|
 | RCO 3-bit, llmash only | llmash | assembled here by pull from unsloth/Qwen3.8-27B-GGUF | 10.3 GB | 6.40 | +8.0% | 178 | 187 | 197 |
 | RCO 3-bit, llmash only | llmash | ISTA-DASLab's Qwen3.8-27B GSQ-RCO IQ3_S | 11.9 GB | 5.90 | -0.4% | 184 | 172 | 192 |
-| NVFP4 | llmash | cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF | 17.1 GB | 5.92 | -0.2% | 159 | 157 | 185 |
-| NVFP4 | vLLM | nvidia/Qwen3.8-27B-NVFP4 | 21.0 GB | - | - | 111 | 115 | 125 |
-| 8-bit | llmash | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 109 | 102 | 124 |
-| 8-bit | Ollama | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 73 | 95 | 102 |
-| 8-bit | vLLM | Qwen/Qwen3.8-27B-FP8 | 29.9 GB | - | - | 88 | 94 | 95 |
+| NVFP4, one checkpoint | llmash | nvidia/Qwen3.8-27B-NVFP4, every weight's bytes kept | 21.0 GB | 5.98 | +1.0% | 129 | 135 | 150 |
+| NVFP4, one checkpoint | Ollama | nvidia/Qwen3.8-27B-NVFP4, the FP8 layers as Q8_0 | 21.5 GB | 5.99 | +1.2% | 92 | 117 | 132 |
+| NVFP4, one checkpoint | vLLM | nvidia/Qwen3.8-27B-NVFP4, the checkpoint | 21.0 GB | - | - | 118 | 119 | 135 |
+| 8-bit, one file | llmash | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 109 | 102 | 124 |
+| 8-bit, one file | Ollama | Ollama's qwen3.8:27b-mtp-q8_0 | 29.1 GB | 5.93 | +0.0% | 73 | 95 | 102 |
 
 The model's own BF16 weights measure 5.93 on the same text with the same runtime.
 
@@ -268,11 +278,11 @@ The model's own BF16 weights measure 5.93 on the same text with the same runtime
 | format | provider | file | weights | perplexity | vs BF16 | conversation | coding | thinking |
 |---|---|---|--:|--:|--:|--:|--:|--:|
 | RCO 3-bit, llmash only | llmash | assembled here by pull from unsloth/Qwen3.6-35B-A3B-GGUF | 13.4 GB | 5.90 | +4.0% | 622 | 707 | 733 |
-| NVFP4 | llmash | michaelw9999/Qwen3.6-35B-A3B-NVFP4-MTP-GGUF (HQ) | 20.5 GB | 5.78 | +1.8% | 455 | 520 | 551 |
-| NVFP4 | vLLM | nvidia/Qwen3.6-35B-A3B-NVFP4 | 22.5 GB | - | - | 252 | 270 | 287 |
-| 8-bit | llmash | Ollama's qwen3.6:35b-a3b-mtp-q8_0 | 37.8 GB | 5.66 | -0.3% | 417 | 448 | 515 |
-| 8-bit | Ollama | Ollama's qwen3.6:35b-a3b-mtp-q8_0 | 37.8 GB | 5.66 | -0.3% | 162 | 185 | 181 |
-| 8-bit | vLLM | Qwen/Qwen3.6-35B-A3B-FP8 | 36.6 GB | - | - | 223 | 252 | 270 |
+| NVFP4, one checkpoint | llmash | nvidia/Qwen3.6-35B-A3B-NVFP4, every weight's bytes kept | 22.6 GB | 5.88 | +3.7% | 490 | 501 | 544 |
+| NVFP4, one checkpoint | Ollama | nvidia/Qwen3.6-35B-A3B-NVFP4, the FP8 layers as Q8_0 | 22.6 GB | 5.86 | +3.3% | 161 | 168 | 184 |
+| NVFP4, one checkpoint | vLLM | nvidia/Qwen3.6-35B-A3B-NVFP4, the checkpoint | 22.6 GB | - | - | 399 | 446 | 461 |
+| 8-bit, one file | llmash | Ollama's qwen3.6:35b-a3b-mtp-q8_0 | 37.8 GB | 5.66 | -0.3% | 417 | 448 | 515 |
+| 8-bit, one file | Ollama | Ollama's qwen3.6:35b-a3b-mtp-q8_0 | 37.8 GB | 5.66 | -0.3% | 162 | 185 | 181 |
 
 The model's own BF16 weights measure 5.67 on the same text with the same runtime.
 
@@ -357,7 +367,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 778 is commit `c667fd5e3`. Changes from upstream:
+`llmash`; runtime build 779 is commit `1d66e6af3`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -369,7 +379,8 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
 - Draft head: an MTP head drafts through the 131,072 most frequent rows of the
   LM head, requantized to Q4_K at load. Verification reads the full head. An MTP
   block stored in BF16 beside a quantized model loads as Q8_0, half the bytes
-  per draft step; only drafts read it.
+  per draft step; only drafts read it. Gemma 4's assistant drafts through the
+  checkpoint's centroid head, as vLLM runs it.
 - Fused recurrent layers (Qwen3.5, 3.6, 3.8 and the Next models): the input
   projection runs the causal convolution, its SiLU and the state snapshots in
   its own store; the gating projections run as one launch at any verify width;
@@ -403,8 +414,10 @@ quantization and small products sum in another order (perplexity 5.8791, 5.8751
 with the shared expert computed apart). Build 778 changes the drafts: the MTP
 block in Q8_0 proposes slightly different tokens, and a greedy reply can then
 part at a near tie (acceptance 0.653 against 0.658 with the block in BF16, over
-eight greedy replies); perplexity is unchanged at 5.8791. Each release's notes
-list what it was checked with.
+eight greedy replies); perplexity is unchanged at 5.8791. Build 779 drafts
+Gemma 4's assistant through its centroid head, which proposes slightly
+different tokens (acceptance unchanged), and keeps a draft's length to the end
+of a capped reply. Each release's notes list what it was checked with.
 
 ## Models and pulling
 
