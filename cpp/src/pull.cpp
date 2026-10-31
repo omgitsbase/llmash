@@ -4285,7 +4285,8 @@ void handle_quants(const httplib::Request & req, httplib::Response & res, Config
     json out = api_quants(req.get_param_value("repo"));
     // the picker offers an NVFP4 build as the medium one when every card here runs FP4 natively, on a runtime
     // whose mixture-of-experts verify takes NVFP4 (build 143 on), and MXFP4 on any other machine; a repo holding
-    // none borrows one of the same model, and that format takes the other's place in the list
+    // none borrows one of the same model, and that format takes the other's place in the list, the other format
+    // standing in when no repository has the model in this one
     if (!out.contains("error")) {
         const bool fp4 = gpus_all_blackwell() && runtime_build(cfg) >= 143;
         out["fp4"]     = fp4;
@@ -4302,8 +4303,8 @@ void handle_quants(const httplib::Request & req, httplib::Response & res, Config
         if (!has(want)) {
             const std::string      model = out.value("from", "").empty() ? out.value("repo", "") : out.value("from", "");
             std::vector<QuantInfo> found = fp4_builds(model, upper(want));
-            // Blackwell runs MXFP4 natively as well, so a model with no NVFP4 build anywhere offers its MXFP4 one
-            if (found.empty() && fp4 && !has(other)) {
+            // every card runs both formats, so a model with no build in this card's format offers the other one
+            if (found.empty() && !has(other)) {
                 found = fp4_builds(model, upper(other));
             }
             for (const QuantInfo & q : found) {

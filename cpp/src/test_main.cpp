@@ -3,6 +3,7 @@
 #include "gguf.h"
 #include "registry.h"
 #include "cli_console.h"
+#include "ablate_view.h"
 #include "manager.h"
 #include "launch.h"
 
@@ -295,6 +296,61 @@ int main() {
         Config            cfg;
         const std::string why = explain_load_failure("error while handling argument \"--cache-type-k\": Unsupported cache type: q16_0\n\nusage:\n-ctk, --cache-type-k TYPE\nto show complete usage, run with -h\n", cfg);
         check(why == "llama-server refused an argument: error while handling argument \"--cache-type-k\": Unsupported cache type: q16_0", "a refused argument is reported in the runtime's own words");
+        const std::string cuda = explain_load_failure("load_tensors: done\r\nCUDA error: too many resources requested for launch\r\n"
+            "  current device: 0, in function ggml_cuda_op_foo at B:\\llama.cpp-src\\ggml\\src\\ggml-cuda\\foo.cu:42\r\n"
+            "  cudaGetLastError()\r\nB:\\llama.cpp-src\\ggml\\src\\ggml-cuda\\ggml-cuda.cu:110: CUDA error\r\n", cfg);
+        check(cuda.rfind("CUDA error: too many resources requested for launch in ggml_cuda_op_foo. ", 0) == 0,
+              "a failed CUDA call is reported by its error and function, not the abort line");
+        check(explain_load_failure("CUDA error: out of memory\n  current device: 0, in function alloc at x.cu:1\n", cfg).rfind("Not enough VRAM", 0) == 0,
+              "a CUDA out of memory still reads as not enough VRAM");
+    }
+    {
+        AblateView v;
+        v.model = "gemma-4-e4b";
+        v.feed("load");
+        v.feed("prompts direction=416+416 eval=104+104 trials=16 gen=48 longest=60 recurrent=0 load_s=4.1");
+        v.feed("capture done=312 total=832");
+        std::vector<std::string> r = v.rows(100, 0, 12.0, false);
+        check(r.size() == 6 && r[2].find("312/832 prompts") != std::string::npos, "the capture shows its count");
+        check(r[1].find("✓ load") != std::string::npos && r[3].find("· baseline") != std::string::npos,
+              "a stage done is ticked, one to come is dotted");
+        v.feed("direction layer=18 of=42 separation=3.41 capture_s=20.5");
+        v.feed("direction consistency g=0.71 (1=one pooled direction, 0=fully per-layer)");
+        v.feed("baseline refusals=97 of=104 seqs=64 ctx=4096 free_gib=40.1 base_s=6.0 prefill_s=0.4 gen_s=1.2 steps=48");
+        for (int i = 1; i <= 5; i++) {
+            const double k = 0.2 / i;
+            v.feed("trial i=" + std::to_string(i) + " n=16 refusals=3 of=104 kl=" + std::to_string(k) +
+                   " pruned=0 best_refusals=3 best_kl=" + std::to_string(i == 5 ? k : 0.04) + " elapsed=30.0");
+        }
+        r = v.rows(100, 0, 60.0, false);
+        check(r[2].find("layer 18 of 42") != std::string::npos && r[2].find("█") != std::string::npos,
+              "the direction row lights its layer on the strip");
+        check(r[4].find("pass 5/16") != std::string::npos && r[4].find("KL ") != std::string::npos &&
+              r[4].find("refusal") == std::string::npos, "the search row shows passes and KL, never the marker count");
+        v.feed("wrote path=x.ablation.gguf layers=42");
+        v.feed("done refusals=3 before=97 of=104 kl=0.0400 seconds=74.2 pruned=0");
+        r = v.rows(100, 0, 75.0, false);
+        check(r[0].find("✓ abliterated gemma-4-e4b") != std::string::npos && r[0].find("1m14s") != std::string::npos,
+              "the finished header takes the tool's own time");
+        check(r[5].find("✓ check") != std::string::npos, "every stage ticked at the end");
+        for (const std::string & line : v.rows(40, 0, 75.0, true)) {
+            int cols = 0;
+            for (size_t i = 0; i < line.size(); i++) {
+                const unsigned char c = static_cast<unsigned char>(line[i]);
+                if (c == 0x1b) {
+                    for (i += 2; i < line.size() && (line[i] < 0x40 || line[i] > 0x7e); i++) {
+                    }
+                    continue;
+                }
+                cols += (c & 0xc0) != 0x80;
+            }
+            check(cols <= 40, "a narrow terminal clips every row to its width");
+        }
+        if (std::getenv("LLMASH_SHOW_ABLATE_VIEW")) {
+            for (const std::string & line : v.rows(110, 3, 75.0, true)) {
+                std::printf("%s\n", line.c_str());
+            }
+        }
     }
     {
         GGUFInfo own;

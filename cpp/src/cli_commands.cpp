@@ -4,6 +4,7 @@
 #define _CRT_RAND_S
 
 #include "cli_commands.h"
+#include "ablate_view.h"
 #include "api_logic.h"
 #include "private_file.h"
 
@@ -23,6 +24,7 @@
 #include "manager.h"
 #include "gguf.h"
 #include "rco.h"
+#include "terminal.h"
 
 #include <subprocess.h>
 #ifdef _WIN32
@@ -51,6 +53,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -655,13 +658,6 @@ BuildChoice choose_build(ApiClient & api, const std::string & model, std::string
         // an FP4 build is never the large one: with nothing wider than medium there is no large row
         if (!is_fp4(plain[static_cast<size_t>(t.large)].name)) {
             add("large", plain[static_cast<size_t>(t.large)]);
-        }
-        // other cards get the MXFP4 build beside the medium one, where sm_120 cards get NVFP4 in its place
-        for (const QuantInfo & q : plain) {
-            if (!fp4 && upper(q.name).find("MXFP4") != std::string::npos) {
-                add("fp4", q);
-                break;
-            }
         }
     } else {
         for (const auto & q : plain) {
@@ -1280,12 +1276,19 @@ Tiers tiers_of(const std::vector<QuantInfo> & quants, bool fp4) {
             t.large = n - 1;
         }
     }
-    t.medium = fp4 ? find({"NVFP4"}) : -1;
-    // Blackwell runs MXFP4 natively too, so with no NVFP4 build it takes the slot
-    for (size_t i = 0; fp4 && t.medium < 0 && i < quants.size(); i++) {
-        if (upper(quants[i].name).rfind("MXFP4", 0) == 0) {
-            t.medium = static_cast<int>(i);
+    // the FP4 build is the medium one: NVFP4 on Blackwell, which runs it natively, MXFP4 on any other card; the
+    // other format takes the slot when the first has no build, since every card runs both
+    const auto fp4_build = [&](const char * prefix) {
+        for (size_t i = 0; i < quants.size(); i++) {
+            if (upper(quants[i].name).rfind(prefix, 0) == 0) {
+                return static_cast<int>(i);
+            }
         }
+        return -1;
+    };
+    t.medium = fp4_build(fp4 ? "NVFP4" : "MXFP4");
+    if (t.medium < 0) {
+        t.medium = fp4_build(fp4 ? "MXFP4" : "NVFP4");
     }
     if (t.medium < 0) {
         t.medium = find({"Q4_K_M", "UD-Q4_K_XL", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q5_K_S"});
@@ -2141,19 +2144,33 @@ bool fetch_ablate_dataset(const std::string & dataset, const std::string & split
     return true;
 }
 
-// The value right after "key=" on one of llama-ablate's progress lines (space-delimited), for turning its machine
-// output into friendly status.
-std::string ablate_field(const std::string & s, const char * key) {
-    const size_t p = s.find(key);
-    if (p == std::string::npos) {
-        return "";
+namespace {
+
+// the ablate view's rows for Progress, which redraws its states ten times a second
+struct AblateLive {
+    std::mutex            mu;
+    AblateView            view;
+    ProgClock::time_point t0 = ProgClock::now();
+};
+
+class AblateRow : public ProgState {
+public:
+    AblateRow(std::shared_ptr<AblateLive> live, size_t i) : live_(std::move(live)), i_(i) {}
+
+    std::string str() override {
+        std::lock_guard<std::mutex> lock(live_->mu);
+        const double elapsed = std::chrono::duration<double>(ProgClock::now() - live_->t0).count();
+        int          w       = terminal_columns();
+        const std::vector<std::string> rows = live_->view.rows(w > 0 ? w : 80, static_cast<int>(elapsed * 10), elapsed, true);
+        return i_ < rows.size() ? rows[i_] : "";
     }
-    size_t a = p + std::strlen(key), b = a;
-    while (b < s.size() && s[b] != ' ') {
-        b++;
-    }
-    return s.substr(a, b - a);
-}
+
+private:
+    std::shared_ptr<AblateLive> live_;
+    size_t                      i_;
+};
+
+}  // namespace
 
 // llmash ablate MODEL: fit an uncensoring control vector where ablation_path puts it. The sidecar is applied
 // automatically at load (see Instance::args), so this is the whole setup. Non-interactive callers (an LLM, ssh
@@ -2257,9 +2274,22 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
             api.call_json("POST", "/api/generate", &b, 60, r);
         }
 
-        std::printf("Abliterating %s: reading its refusal direction and fitting a vector to remove it.\n",
-                    name.c_str());
-        std::fflush(stdout);
+        // a person at a terminal watches it work; a pipe or an agent gets the plain status lines
+        const bool live = stderr_is_terminal() && !driven_by_agent();
+        if (!live) {
+            std::printf("Abliterating %s: reading its refusal direction and fitting a vector to remove it.\n",
+                        name.c_str());
+            std::fflush(stdout);
+        }
+        auto view        = std::make_shared<AblateLive>();
+        view->view.model = name;
+        std::unique_ptr<Progress> progress;
+        if (live) {
+            progress = std::make_unique<Progress>();
+            for (size_t i = 0; i < 6; i++) {
+                progress->add(std::make_shared<AblateRow>(view, i));
+            }
+        }
         // weights reach the card the way the server loads them (dio by default): a memory-mapped model bigger than
         // the machine's RAM, such as Flash Next's 75 GB on a 64 GB box, would otherwise fill RAM and stall it
         const std::vector<std::string> argv = {
@@ -2285,6 +2315,16 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
                 return;
             }
             const std::string s = line.substr(8);
+            {
+                std::lock_guard<std::mutex> lock(view->mu);
+                view->view.feed(s);
+            }
+            if (s.rfind("done ", 0) == 0) {
+                kl = ablate_field(s, "kl=");
+            }
+            if (live) {
+                return;
+            }
             if (s.rfind("capture ", 0) == 0) {
                 std::printf("\r  reading the refusal direction   %s/%s   ", ablate_field(s, "done=").c_str(),
                             ablate_field(s, "total=").c_str());
@@ -2295,10 +2335,17 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
                 std::fflush(stdout);
             } else if (s.rfind("done ", 0) == 0) {
                 // the tool's refusal count only checks how an answer opens, so it is not shown as a result
-                kl = ablate_field(s, "kl=");
                 std::printf("\r                                                      \r");  // clear the status line
             }
         });
+        if (progress) {
+            // a finished run stays on screen as its summary; a failed one makes way for the reason
+            if (rc == 0 && file_exists(out)) {
+                progress->stop();
+            } else {
+                progress->stop_and_clear();
+            }
+        }
         if (rc == 2) {
             std::fprintf(stderr,
                          "\n'%s' can't be abliterated: its refusal is woven into its competence, so removing it would\n"
@@ -2325,7 +2372,9 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
             }
             die("Error: ablation did not complete" + (all.empty() ? std::string() : ":\n" + all));
         }
-        if (!kl.empty()) {
+        if (live) {
+            std::printf("\n  %sKL: how far its answers to ordinary prompts moved (lower is less changed)%s\n", kDim, kReset);
+        } else if (!kl.empty()) {
             std::printf("  KL %s: how far its answers to ordinary prompts moved (lower is less changed)\n", kl.c_str());
         }
         std::printf("Done. '%s' is abliterated and will load that way automatically from now on.\n", name.c_str());

@@ -55,6 +55,7 @@ set(LLMASH_PORTABLE
     src/sha256.cpp
     src/table.cpp
     src/progress.cpp
+    src/ablate_view.cpp
     src/pull.cpp
     src/gguf_io.cpp
     src/rco.cpp

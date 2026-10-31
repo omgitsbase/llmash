@@ -433,6 +433,21 @@ std::string explain_load_failure(const std::string & raw, const Config & cfg) {
     if (has("no such file") || has("failed to open")) {
         return "The model file is missing from disk.";
     }
+    // a failed CUDA call: its own lines name the error and the function, where the abort after them names only the
+    // file the check sits in
+    if (const size_t at = low.find("cuda error: "); at != std::string::npos) {
+        const auto line_at = [&](size_t from) {
+            const size_t end = raw.find_first_of("\r\n", from);
+            return trim(raw.substr(from, end == std::string::npos ? std::string::npos : end - from));
+        };
+        std::string msg = line_at(at + 12);
+        if (const size_t fn = low.find("in function ", at); fn != std::string::npos) {
+            const std::string where = line_at(fn + 12);
+            msg += " in " + where.substr(0, where.find(' '));
+        }
+        return "CUDA error: " + msg + ". Run `llmash update`; if it still fails, report it with the card's name and "
+               "this model's log from the logs folder.";
+    }
     std::string        trimmed = trim(raw);
     std::vector<std::string> lines;
     std::istringstream        iss(trimmed);

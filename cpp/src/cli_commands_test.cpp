@@ -147,16 +147,20 @@ QuantInfo Q(const char * name, int64_t size) {
 
 void test_tiers_of() {
     {
-        // a server whose cards are all Blackwell takes an NVFP4 build as medium; any other keeps the 4-bit integer one
+        // the medium build is FP4: NVFP4 on an all-Blackwell server, MXFP4 elsewhere, each falling back to the other
         const std::vector<QuantInfo> qs{Q("IQ3_XXS", 3), Q("Q4_K_M", 5), Q("NVFP4", 6), Q("Q8_0", 9)};
         eq_str(qs[tiers_of(qs, true).medium].name, "NVFP4", "tiers medium on Blackwell is NVFP4");
-        eq_str(qs[tiers_of(qs, false).medium].name, "Q4_K_M", "tiers medium elsewhere stays Q4_K_M");
-        eq_str(qs[tiers_of(qs).medium].name, "Q4_K_M", "tiers medium by default stays Q4_K_M");
+        eq_str(qs[tiers_of(qs, false).medium].name, "NVFP4", "elsewhere NVFP4 stands in for a missing MXFP4");
         const std::vector<QuantInfo> no_fp4{Q("Q4_K_M", 5), Q("Q8_0", 9)};
-        eq_str(no_fp4[tiers_of(no_fp4, true).medium].name, "Q4_K_M", "tiers medium on Blackwell without NVFP4");
+        eq_str(no_fp4[tiers_of(no_fp4, true).medium].name, "Q4_K_M", "tiers medium on Blackwell without FP4");
+        eq_str(no_fp4[tiers_of(no_fp4, false).medium].name, "Q4_K_M", "tiers medium elsewhere without FP4");
+        eq_str(no_fp4[tiers_of(no_fp4).medium].name, "Q4_K_M", "tiers medium by default without FP4");
         const std::vector<QuantInfo> mx{Q("Q4_K_M", 5), Q("MXFP4_MOE", 6), Q("Q8_0", 9)};
         eq_str(mx[tiers_of(mx, true).medium].name, "MXFP4_MOE", "tiers medium on Blackwell falls back to MXFP4");
-        eq_str(mx[tiers_of(mx, false).medium].name, "Q4_K_M", "elsewhere MXFP4 keeps its own row");
+        eq_str(mx[tiers_of(mx, false).medium].name, "MXFP4_MOE", "tiers medium elsewhere is MXFP4");
+        const std::vector<QuantInfo> both{Q("Q4_K_M", 5), Q("MXFP4", 6), Q("NVFP4", 6), Q("Q8_0", 9)};
+        eq_str(both[tiers_of(both, true).medium].name, "NVFP4", "Blackwell prefers NVFP4 over MXFP4");
+        eq_str(both[tiers_of(both, false).medium].name, "MXFP4", "elsewhere MXFP4 over NVFP4");
         eq_str(gsq_desc("MiMo-V2.6-9B-gsq-rco-3p5-q4io"), "GSQ-RCO 3.5", "a GSQ-RCO file named by its width reads as one");
         eq_str(gsq_desc("IQ3_S"), "GSQ-RCO IQ3_S", "one named by its type keeps the type");
         eq_str(gsq_desc("Model-GSQ-RCO-3"), "GSQ-RCO 3", "a whole width");
@@ -180,7 +184,7 @@ void test_tiers_of() {
     }
     {
         // no candidate fits any window: the positional fallbacks
-        const std::vector<QuantInfo> qs{Q("F16", 1), Q("F32", 2), Q("MXFP4", 3)};
+        const std::vector<QuantInfo> qs{Q("F16", 1), Q("F32", 2), Q("BF16", 3)};
         const Tiers                  t = tiers_of(qs);
         eq_num(t.tiny, 0, "tiers tiny falls back to the first build");
         eq_num(t.medium, 1, "tiers medium falls back to the middle build");
