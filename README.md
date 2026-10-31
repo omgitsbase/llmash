@@ -367,7 +367,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 779 is commit `1d66e6af3`. Changes from upstream:
+`llmash`; runtime build 780 is commit `fb4bcdb78`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -417,7 +417,9 @@ part at a near tie (acceptance 0.653 against 0.658 with the block in BF16, over
 eight greedy replies); perplexity is unchanged at 5.8791. Build 779 drafts
 Gemma 4's assistant through its centroid head, which proposes slightly
 different tokens (acceptance unchanged), and keeps a draft's length to the end
-of a capped reply. Each release's notes list what it was checked with.
+of a capped reply. Build 780 runs on Turing cards (GTX 16, RTX 20), where one
+norm kernel needed more registers than its block could have. Each release's
+notes list what it was checked with.
 
 ## Models and pulling
 
