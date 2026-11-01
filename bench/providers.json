@@ -42,15 +42,15 @@
   "file": "Ollama's gemma4:e4b-it-q8_0",
   "model": "gemma4:e4b-it-q8_0",
   "workloads": {
-   "conversation": 278.2,
-   "coding": 421.2,
-   "thinking": 473.9
+   "conversation": 321.0,
+   "coding": 517.9,
+   "thinking": 545.7
   },
   "tokens": {
    "conversation": [
     255,
-    305,
-    296
+    303,
+    324
    ],
    "coding": [
     600,
@@ -59,46 +59,12 @@
    ],
    "thinking": [
     600,
-    513,
+    517,
     600
    ]
   },
   "measured": "2026-10-27",
   "ppl": 47.4405,
-  "ppl_ref": 46.9225
- },
- {
-  "provider": "llmash",
-  "label": "Gemma 4 E4B",
-  "tier": "3-bit",
-  "build": "RCO-3",
-  "size_gb": 2.88,
-  "file": "assembled here from bartowski/google_gemma-4-E4B-it-GGUF bf16",
-  "model": "google-gemma-4-e4b-it-l:rco-3",
-  "workloads": {
-   "conversation": 322.4,
-   "coding": 477.2,
-   "thinking": 556.5
-  },
-  "tokens": {
-   "conversation": [
-    308,
-    282,
-    340
-   ],
-   "coding": [
-    600,
-    600,
-    600
-   ],
-   "thinking": [
-    600,
-    539,
-    600
-   ]
-  },
-  "measured": "2026-10-27",
-  "ppl": 51.955,
   "ppl_ref": 46.9225
  },
  {
@@ -110,9 +76,9 @@
   "file": "unsloth/gemma-4-E4B-it-NVFP4, every weight's bytes kept",
   "model": "x",
   "workloads": {
-   "conversation": 296.8,
-   "coding": 476.0,
-   "thinking": 493.9
+   "conversation": 312.4,
+   "coding": 530.7,
+   "thinking": 561.2
   },
   "tokens": {
    "conversation": [
@@ -134,19 +100,19 @@
   "measured": "2026-10-30",
   "runs": [
    {
-    "conversation": 299.5,
-    "coding": 470.3,
-    "thinking": 494.4
+    "conversation": 311.6,
+    "coding": 531.1,
+    "thinking": 555.6
    },
    {
-    "conversation": 294.5,
-    "coding": 476.2,
-    "thinking": 481.7
+    "conversation": 316.1,
+    "coding": 524.2,
+    "thinking": 560.5
    },
    {
-    "conversation": 296.3,
-    "coding": 481.4,
-    "thinking": 505.5
+    "conversation": 309.5,
+    "coding": 536.7,
+    "thinking": 567.5
    }
   ],
   "ppl": 46.4319,
@@ -161,9 +127,9 @@
   "file": "unsloth/gemma-4-E4B-it-NVFP4, the checkpoint",
   "model": "m",
   "workloads": {
-   "conversation": 320.0,
-   "coding": 473.2,
-   "thinking": 500.7
+   "conversation": 306.8,
+   "coding": 451.5,
+   "thinking": 494.0
   },
   "tokens": {
    "conversation": [
@@ -185,19 +151,19 @@
   "measured": "2026-10-30",
   "runs": [
    {
-    "conversation": 317.6,
-    "coding": 478.1,
-    "thinking": 496.7
+    "conversation": 307.5,
+    "coding": 453.9,
+    "thinking": 494.3
    },
    {
-    "conversation": 324.5,
-    "coding": 480.8,
-    "thinking": 502.4
+    "conversation": 309.7,
+    "coding": 451.9,
+    "thinking": 496.8
    },
    {
-    "conversation": 317.9,
-    "coding": 460.6,
-    "thinking": 502.9
+    "conversation": 303.3,
+    "coding": 448.8,
+    "thinking": 491.0
    }
   ]
  },
@@ -237,6 +203,40 @@
  },
  {
   "provider": "llmash",
+  "label": "Gemma 4 E4B",
+  "tier": "NVFP4 GGUF",
+  "build": "NVFP4",
+  "size_gb": 5.19,
+  "file": "FreedomAISVR/Gemma-4-E4B-it-NVFP4-GGUF",
+  "model": "x",
+  "workloads": {
+   "conversation": 382.1,
+   "coding": 598.1,
+   "thinking": 654.4
+  },
+  "tokens": {
+   "conversation": [
+    259,
+    314,
+    381
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    552,
+    600
+   ]
+  },
+  "measured": "2026-11-01",
+  "ppl": 60.9506,
+  "ppl_ref": 46.9225
+ },
+ {
+  "provider": "llmash",
   "label": "Qwen3.8 27B",
   "tier": "8-bit",
   "build": "q8_0",
@@ -267,40 +267,6 @@
   },
   "measured": "2026-10-26",
   "ppl": 5.9264,
-  "ppl_ref": 5.9259
- },
- {
-  "provider": "llmash",
-  "label": "Qwen3.8 27B",
-  "tier": "3-bit",
-  "build": "RCO-3",
-  "size_gb": 10.27,
-  "file": "assembled here by pull from unsloth/Qwen3.8-27B-GGUF",
-  "model": "qwen3.8-27b:rco-3",
-  "workloads": {
-   "conversation": 178.2,
-   "coding": 186.7,
-   "thinking": 196.8
-  },
-  "tokens": {
-   "conversation": [
-    240,
-    600,
-    362
-   ],
-   "coding": [
-    600,
-    600,
-    600
-   ],
-   "thinking": [
-    600,
-    600,
-    600
-   ]
-  },
-  "measured": "2026-10-26",
-  "ppl": 6.3972,
   "ppl_ref": 5.9259
  },
  {
@@ -380,9 +346,9 @@
   "file": "nvidia/Qwen3.8-27B-NVFP4, every weight's bytes kept",
   "model": "x",
   "workloads": {
-   "conversation": 129.2,
-   "coding": 134.7,
-   "thinking": 150.3
+   "conversation": 141.4,
+   "coding": 156.4,
+   "thinking": 179.2
   },
   "tokens": {
    "conversation": [
@@ -404,19 +370,19 @@
   "measured": "2026-10-30",
   "runs": [
    {
-    "conversation": 131.8,
-    "coding": 128.1,
-    "thinking": 147.2
+    "conversation": 140.8,
+    "coding": 155.9,
+    "thinking": 179.5
    },
    {
-    "conversation": 124.9,
-    "coding": 135.8,
-    "thinking": 152.5
+    "conversation": 142.0,
+    "coding": 155.8,
+    "thinking": 178.7
    },
    {
-    "conversation": 130.9,
-    "coding": 140.2,
-    "thinking": 151.2
+    "conversation": 141.5,
+    "coding": 157.4,
+    "thinking": 179.4
    }
   ],
   "ppl": 5.9826,
@@ -431,9 +397,9 @@
   "file": "nvidia/Qwen3.8-27B-NVFP4, the checkpoint",
   "model": "m",
   "workloads": {
-   "conversation": 117.7,
-   "coding": 118.6,
-   "thinking": 135.0
+   "conversation": 123.9,
+   "coding": 127.9,
+   "thinking": 143.7
   },
   "tokens": {
    "conversation": [
@@ -455,19 +421,19 @@
   "measured": "2026-10-30",
   "runs": [
    {
-    "conversation": 115.0,
-    "coding": 117.3,
-    "thinking": 128.9
+    "conversation": 125.1,
+    "coding": 126.8,
+    "thinking": 143.8
    },
    {
-    "conversation": 115.5,
-    "coding": 119.1,
-    "thinking": 135.8
+    "conversation": 122.4,
+    "coding": 128.6,
+    "thinking": 144.1
    },
    {
-    "conversation": 122.7,
-    "coding": 119.3,
-    "thinking": 140.3
+    "conversation": 124.1,
+    "coding": 128.4,
+    "thinking": 143.2
    }
   ]
  },
@@ -503,6 +469,40 @@
   },
   "measured": "2026-10-30",
   "ppl": 5.9943,
+  "ppl_ref": 5.9259
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.8 27B",
+  "tier": "NVFP4 GGUF",
+  "build": "NVFP4",
+  "size_gb": 17.13,
+  "file": "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF",
+  "model": "x",
+  "workloads": {
+   "conversation": 157.1,
+   "coding": 168.2,
+   "thinking": 209.3
+  },
+  "tokens": {
+   "conversation": [
+    316,
+    564,
+    434
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    486,
+    600
+   ]
+  },
+  "measured": "2026-11-01",
+  "ppl": 5.9107,
   "ppl_ref": 5.9259
  },
  {
@@ -576,49 +576,15 @@
  {
   "provider": "llmash",
   "label": "Qwen3.6 35B-A3B",
-  "tier": "3-bit",
-  "build": "RCO-3",
-  "size_gb": 13.42,
-  "file": "assembled here by pull from unsloth/Qwen3.6-35B-A3B-GGUF",
-  "model": "qwen3.6-35b-a3b-ud-xl:rco-3",
-  "workloads": {
-   "conversation": 622.5,
-   "coding": 707.2,
-   "thinking": 733.3
-  },
-  "tokens": {
-   "conversation": [
-    600,
-    600,
-    600
-   ],
-   "coding": [
-    600,
-    600,
-    600
-   ],
-   "thinking": [
-    600,
-    600,
-    600
-   ]
-  },
-  "measured": "2026-10-26",
-  "ppl": 5.9005,
-  "ppl_ref": 5.672
- },
- {
-  "provider": "llmash",
-  "label": "Qwen3.6 35B-A3B",
   "tier": "NVFP4",
   "build": "NVFP4",
   "size_gb": 22.57,
   "file": "nvidia/Qwen3.6-35B-A3B-NVFP4, every weight's bytes kept",
   "model": "x",
   "workloads": {
-   "conversation": 489.8,
-   "coding": 501.3,
-   "thinking": 544.3
+   "conversation": 517.3,
+   "coding": 566.4,
+   "thinking": 627.9
   },
   "tokens": {
    "conversation": [
@@ -640,19 +606,19 @@
   "measured": "2026-10-30",
   "runs": [
    {
-    "conversation": 508.4,
-    "coding": 518.2,
-    "thinking": 566.3
+    "conversation": 511.8,
+    "coding": 570.9,
+    "thinking": 629.6
    },
    {
-    "conversation": 474.8,
-    "coding": 494.1,
-    "thinking": 536.1
+    "conversation": 525.5,
+    "coding": 563.1,
+    "thinking": 625.2
    },
    {
-    "conversation": 486.3,
-    "coding": 491.6,
-    "thinking": 530.5
+    "conversation": 514.6,
+    "coding": 565.1,
+    "thinking": 629.0
    }
   ],
   "ppl": 5.8791,
@@ -667,9 +633,9 @@
   "file": "nvidia/Qwen3.6-35B-A3B-NVFP4, the checkpoint",
   "model": "m",
   "workloads": {
-   "conversation": 399.4,
-   "coding": 445.6,
-   "thinking": 461.1
+   "conversation": 422.7,
+   "coding": 467.1,
+   "thinking": 513.9
   },
   "tokens": {
    "conversation": [
@@ -691,19 +657,19 @@
   "measured": "2026-10-30",
   "runs": [
    {
-    "conversation": 390.2,
-    "coding": 431.4,
-    "thinking": 465.1
+    "conversation": 414.1,
+    "coding": 471.6,
+    "thinking": 520.5
    },
    {
-    "conversation": 408.7,
-    "coding": 441.2,
-    "thinking": 459.8
+    "conversation": 430.7,
+    "coding": 471.6,
+    "thinking": 520.7
    },
    {
-    "conversation": 399.3,
-    "coding": 464.3,
-    "thinking": 458.3
+    "conversation": 423.3,
+    "coding": 458.2,
+    "thinking": 500.5
    }
   ]
  },
@@ -739,6 +705,40 @@
   },
   "measured": "2026-10-30",
   "ppl": 5.8573,
+  "ppl_ref": 5.672
+ },
+ {
+  "provider": "llmash",
+  "label": "Qwen3.6 35B-A3B",
+  "tier": "NVFP4 GGUF",
+  "build": "NVFP4",
+  "size_gb": 20.49,
+  "file": "michaelw9999/Qwen3.6-35B-A3B-NVFP4-MTP-GGUF (HQ)",
+  "model": "x",
+  "workloads": {
+   "conversation": 451.0,
+   "coding": 531.9,
+   "thinking": 526.6
+  },
+  "tokens": {
+   "conversation": [
+    600,
+    600,
+    600
+   ],
+   "coding": [
+    600,
+    600,
+    600
+   ],
+   "thinking": [
+    600,
+    600,
+    600
+   ]
+  },
+  "measured": "2026-11-01",
+  "ppl": 5.78,
   "ppl_ref": 5.672
  }
 ]

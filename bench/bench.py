@@ -20,7 +20,7 @@ import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 PROVIDERS = pathlib.Path(os.environ.get("LLMASH_BENCH_OUT", HERE / "providers.json"))
-FORMATS = ("3-bit", "4-bit", "NVFP4", "8-bit", "16-bit")
+FORMATS = ("3-bit", "4-bit", "NVFP4", "NVFP4 GGUF", "8-bit", "16-bit")
 
 # Three prompts per workload, one per repeat. Repeating a single prompt at
 # temperature 0 lets a self-speculating drafter replay its own previous output,

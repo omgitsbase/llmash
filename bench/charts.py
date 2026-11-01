@@ -88,16 +88,18 @@ def bars(rows, groups, t, xlabel, xmax, path, title, value_text, ticks_to=0):
     plt.close(fig)
 
 
-# Three formats per model, each on every provider that runs it, the providers in one order on every chart. The 3-bit
-# builds are llmash's own and run nowhere else; in the NVFP4 group every provider runs one checkpoint, and in the
-# 8-bit group llmash runs Ollama's own Q8_0 file.
-TIERS = (("3-bit", "RCO 3-bit, llmash only"), ("NVFP4", "NVFP4, one checkpoint"), ("8-bit", "8-bit, one file"))
+# The formats per model, each on every provider that runs it. The NVFP4 GGUF and 3-bit builds are the ones llmash
+# pulls and runs alone; in the NVFP4 group every provider runs one checkpoint, and in the 8-bit group llmash runs
+# Ollama's own Q8_0 file.
+TIERS = (("NVFP4 GGUF", "NVFP4 GGUF, llmash only"), ("3-bit", "GSQ-RCO 3-bit, llmash only"),
+         ("NVFP4", "NVFP4, one checkpoint"), ("8-bit", "8-bit, one file"))
 
 
 def provider_rows(runs, m):
+    # inside a band the fastest row is at the top
     for tier, name in TIERS:
-        rs = [r for p in PROVIDERS for r in sorted((r for r in runs if r["label"] == m and r["provider"] == p and
-                                                   r["tier"] == tier), key=lambda r: r["size_gb"] or 0)]
+        rs = sorted((r for r in runs if r["label"] == m and r["tier"] == tier and r["provider"] in PROVIDERS),
+                    key=mean_speed, reverse=True)
         if rs:
             yield name, rs
 
