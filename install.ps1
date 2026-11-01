@@ -395,6 +395,18 @@ foreach ($old in $elsewhere) {
     Write-Host ''
     Warn "llmash $v is already installed in $old"
     if (Ask "Remove it before installing here?") {
+        # the ablation vectors of models in an Ollama store live in the install's folder: they come along, so a
+        # move does not silently turn those models back into their plain selves
+        $oldAbl = Join-Path $old 'ablations'
+        if (Test-Path $oldAbl) {
+            $newAbl = Join-Path $Root 'ablations'
+            New-Item -ItemType Directory -Force $newAbl | Out-Null
+            Get-ChildItem $oldAbl -File | ForEach-Object {
+                $dst = Join-Path $newAbl $_.Name
+                if (-not (Test-Path $dst)) { Copy-Item $_.FullName $dst }
+            }
+            Say "kept its ablation vectors in $newAbl"
+        }
         $oldExe = Join-Path $old 'llmash.exe'
         if (Test-Path $oldExe) { $r = Native $oldExe @('uninstall'); $r.all | ForEach-Object { Say $_ } }
         Remove-Item $old -Recurse -Force -EA SilentlyContinue

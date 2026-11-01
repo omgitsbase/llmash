@@ -883,8 +883,13 @@ std::vector<std::string> drop_overridden(const std::vector<std::string> & tuned,
 }
 
 std::vector<std::string> Instance::args() {
-    // Another llama-server named for this model gets only the flags every build takes.
-    const std::string named   = runtime_for(*cfg_, model.name);
+    // Another llama-server named for this model gets only the flags every build takes. One that is gone (a folder
+    // an older setup made and a reinstall removed) leaves the model on the main runtime rather than unloadable.
+    std::string named = runtime_for(*cfg_, model.name);
+    if (!named.empty() && !file_exists(named)) {
+        log_line(model.name + ": its runtime " + named + " is not there any more, so it runs on the main runtime");
+        named.clear();
+    }
     const bool        foreign = !named.empty();
     if (foreign) {
         plain_args_ = true;
@@ -954,6 +959,16 @@ std::vector<std::string> Instance::args() {
         tune_note = tuning.why;
     }
     a.insert(a.end(), extra.begin(), extra.end());
+    // a control vector an older setup names in launch_extra and a reinstall removed would stop the load: it goes
+    for (size_t i = 0; i + 1 < a.size();) {
+        if (a[i] == "--control-vector" && !file_exists(a[i + 1])) {
+            log_line(model.name + ": its control vector " + a[i + 1] + " is not there any more, so it loads without it");
+            a.erase(a.begin() + static_cast<std::ptrdiff_t>(i), a.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+            continue;
+        }
+        i++;
+    }
+    const bool named_vector = std::find(a.begin(), a.end(), "--control-vector") != a.end();
 
     // An ablation (uncensoring) control vector sitting beside the model is applied automatically, so an ablated
     // model just works with no config: <stem>.ablation.gguf carries controlvector.mode=project and the runtime
@@ -961,7 +976,8 @@ std::vector<std::string> Instance::args() {
     // speculation. LLMASH_NO_ABLATE=1 turns it off for a session.
     if (env_int("LLMASH_NO_ABLATE", 0) == 0) {
         const std::string ablation = ablation_path(model.path, *cfg_);
-        if (file_exists(ablation)) {
+        // a vector launch_extra already names is the one this model was set up with; a second would ablate twice
+        if (file_exists(ablation) && !named_vector) {
             // only a runtime that projects applies it: llmash's carries llama-ablate beside its server since the
             // release that brought abliteration, and an upstream build would add the vector to the stream instead
             // of removing it, which damages every answer
@@ -975,6 +991,11 @@ std::vector<std::string> Instance::args() {
                 log_line(model.name + ": its ablation vector is not applied; " + a[0] +
                          " cannot apply one (no llama-ablate beside it) and would add it instead of removing it");
             }
+        } else if (lower(model.name).find("ablated") != std::string::npos && !named_vector && !file_exists(ablation)) {
+            // named for an ablation that is not there (a launch_extra vector counts): it loads as the plain model,
+            // which nothing else would say
+            log_line(model.name + ": named ablated, but no ablation vector was found for it, so it loads unablated; `llmash ablate " +
+                     model.name + "` makes one");
         }
     }
 

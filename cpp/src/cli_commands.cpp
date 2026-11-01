@@ -2208,8 +2208,8 @@ int cmd_ablate(const std::vector<std::string> & args, ApiClient & api, const Con
         if (const size_t p = ablate_bin.find("server"); p != std::string::npos) {
             ablate_bin.replace(p, 6, "ablate");
         }
-        // the runtime this model runs on: its own when local.json names one for it, else the main one
-        const std::string named  = runtime_for(cfg, m->name);
+        // the runtime this model runs on: its own when local.json names one that is still there, else the main one
+        const std::string named  = file_exists(runtime_for(cfg, m->name)) ? runtime_for(cfg, m->name) : std::string();
         const std::string server = named.empty() ? cfg.llama_bin : named;
         const std::string bin    = (fs::path(server).parent_path() / ablate_bin).string();
         if (!file_exists(bin)) {
