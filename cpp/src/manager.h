@@ -124,6 +124,9 @@ struct Tuning {
 
 // tune.go's autoTune: the flags to add and a one-line account of why.
 Tuning auto_tune(int ctx);
+
+// a second slot sharing the cache beside a configured single one (LLMASH_SIDE_SLOT)
+bool side_slot_enabled();
 // the micro-batch a context can afford, and the scratch it costs in GB
 int    ubatch_for(int ctx);
 double scratch_gb(int ctx);

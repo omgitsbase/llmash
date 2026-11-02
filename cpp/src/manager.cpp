@@ -912,8 +912,15 @@ std::vector<std::string> Instance::args() {
 
     const int parallel = cfg_->parallel > 0 ? cfg_->parallel : 1;
     const std::string kv = kv_type.empty() ? cfg_->kv_type : kv_type;
+    // One slot asked for: a second one shares its cache at the same size, so a side request (an agent's title or
+    // summary call) runs beside the conversation instead of pushing it out to be computed again. Each keeps its own
+    // window of the cache and reads only that, so replies are what one slot gives
+    const bool side_slot = parallel == 1 && !plain_args_ && side_slot_enabled();
     a.insert(a.end(), {"-c", std::to_string(ctx * parallel), "--jinja", "--no-webui", "-fa", "on", "--parallel",
-                       std::to_string(parallel)});
+                       std::to_string(side_slot ? 2 : parallel)});
+    if (side_slot) {
+        a.push_back("-kvu");
+    }
     // auto is the runtime's own default: FP8 for a model that carries its cache's scales (as vLLM does), else f16
     if (lower(kv) != "auto") {
         a.insert(a.end(), {"--cache-type-k", kv, "--cache-type-v", kv});
@@ -1429,7 +1436,8 @@ double Manager::fit_room(const Fit & f) const {
 // The largest context at or under `ctx` whose cache, at `kv_scale` of f16, fits.
 int Manager::fit_at(const Fit & f, int ctx, double kv_scale) const {
     const int    parallel = cfg_.parallel > 0 ? cfg_.parallel : 1;
-    const double fixed    = f.weights_gb * 1.05 + f.state_gb * parallel + f.compute_gb;
+    const int    n_states = parallel == 1 && side_slot_enabled() ? 2 : parallel;
+    const double fixed    = f.weights_gb * 1.05 + f.state_gb * n_states + f.compute_gb;
     const double per_tok  = f.per_tok_gb * kv_scale * parallel;
     const double room     = fit_room(f);
     if (per_tok <= 0 || fixed + scratch_gb(ctx) + per_tok * ctx <= room) {
@@ -1785,6 +1793,11 @@ int ubatch_in_use(int ctx) {
 
 double scratch_gb(int ctx) {
     return 0.5 + static_cast<double>(ubatch_in_use(ctx)) * ctx * 2.0 / static_cast<double>(1ull << 30);
+}
+
+// the second slot beside a single one (LLMASH_SIDE_SLOT=0 off), see Manager::launch_args
+bool side_slot_enabled() {
+    return env_int("LLMASH_SIDE_SLOT", 1) != 0;
 }
 
 Tuning auto_tune(int ctx) {

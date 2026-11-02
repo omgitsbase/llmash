@@ -164,6 +164,36 @@ the "Ollama's file" row of each table is llmash on that same file.
 
 <!-- /SCALING -->
 
+### A conversation and a side request
+
+An agent keeps one long conversation and makes short side calls between its
+turns (a title, a summary, a tool's sub-task). A model runs two slots that
+share one cache, so a side call no longer pushes the conversation out. Each
+request reads only its own run of the cache, so a reply is the one a server of
+one slot gives for the same history, and a short call beside a long
+conversation does not scan the conversation's cells.
+
+Qwen3.8 27B (GSQ-RCO 3-bit, its MTP head drafting 3 tokens), 262,144-token
+context, a 120,000-token conversation with a 30,000-token side call between
+its turns:
+
+| | 0.5.11 | 0.6.0 |
+|---|---:|---:|
+| conversation turn after a side call | 66 s (the 120k recomputed) | 0.6 to 1.1 s |
+| second side call | 14 s | 0.4 s |
+| RAM of the server, peak | 13.8 GB | 5.9 GB |
+| RAM of the server, loaded | 8.1 GB | 4.7 GB |
+
+The replies of every step are the ones 0.5.11 gives when its cache still holds
+the conversation, checked token for token.
+
+Two streams at once on the same model, `bench/bench_batch.py` (greedy, 600
+tokens): 189 tok/s together on 0.5.11, which queued the second request, and
+207 on 0.6.0. With `LLMASH_PARALLEL=4` (a cache per slot) four streams make 380
+tok/s against 364 on 0.5.11, and one stream is unchanged within run-to-run
+noise (about 4%) in both setups. RTX PRO 6000 Blackwell, Windows 11, runtime
+build 784 against 782, 2026-11-01.
+
 ### One stream at a time
 
 One RTX PRO 6000 Blackwell (96 GB), one request at a time.
@@ -364,7 +394,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 782 is commit `28c87c123`. Changes from upstream:
+`llmash`; runtime build 784 is commit `effb0b568`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -372,6 +402,14 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
   FP8 GEMMs for a verify over several sequences, attention per sequence over
   its own cells, an MTP drafter's cache kept a stream per sequence, and the FP8
   cache a checkpoint declares (`LLMASH_KV=auto`, the default).
+- Several slots in one cache: a request of one sequence reads only that
+  sequence's run of cells, the same view a cache of its own gives it. A
+  sequence's cells are kept in one run; when another is in the way the
+  smaller one is moved on the card, and an idle slot leaves the cache only
+  when its cells block a request's run.
+- Prompt states saved for later go to plain memory, returned to the system when
+  freed, instead of pinned buffers held from load (`LLAMA_STATE_PIN=1` brings
+  those back).
 - Recurrent state in BF16 for the delta-net and RWKV models, as vLLM keeps it.
 - Draft head: an MTP head drafts through the 131,072 most frequent rows of the
   LM head, requantized to Q4_K at load. Verification reads the full head. An MTP
@@ -418,8 +456,11 @@ of a capped reply. Build 780 runs on Turing cards (GTX 16, RTX 20), where one
 norm kernel needed more registers than its block could have. Build 782 sums a
 verify's quantized products in another order (a warp per row set) and fuses
 more norms; perplexity at verify width moves by 0.02 to 0.12%, and one stream
-drafts behind its verify on the device as several streams already did. Each
-release's notes list what it was checked with.
+drafts behind its verify on the device as several streams already did. Build
+784 keeps the text: two slots sharing a cache give the replies one slot gives
+for the same history on Qwen3.8 27B (3-bit), Gemma 4 E4B (8-bit, assistant
+drafter) and Qwen3.6 35B-A3B (NVFP4), and one slot the replies of build 782. Each release's notes
+list what it was checked with.
 
 ## Models and pulling
 
@@ -634,7 +675,8 @@ wins over the file.
 | `LLMASH_YARN_MAX` | how far past its trained context a model may run under YaRN (default 4) |
 | `LLMASH_GPU_BUDGET_GB` | what one process may hold on the card, instead of what commit charge allows |
 | `LLMASH_VRAM_HEADROOM` | what to leave free on the cards when fitting (default 8% of them, 1 to 6 GB) |
-| `LLMASH_PARALLEL` | server slots (default 1) |
+| `LLMASH_PARALLEL` | server slots (default 1); above 1, each slot gets a cache of its own |
+| `LLMASH_SIDE_SLOT` | `0` to drop the second slot that shares a single slot's cache (default on) |
 | `LLMASH_PIN` | comma-separated models never evicted |
 | `LLMASH_FP4` | `1` or `0`: whether every card runs FP4, instead of asking nvidia-smi |
 | `LLMASH_SPEC_FALLBACK` | drafter for models without one (default `ngram-mod`; `none` for no drafting) |
