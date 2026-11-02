@@ -179,10 +179,10 @@ its turns:
 
 | | 0.5.11 | 0.6.0 |
 |---|---:|---:|
-| conversation turn after a side call | 66 s (the 120k recomputed) | 0.6 to 1.1 s |
-| second side call | 14 s | 0.4 s |
-| RAM of the server, peak | 13.8 GB | 5.9 GB |
-| RAM of the server, loaded | 8.1 GB | 4.7 GB |
+| conversation turn after a side call | 66 s (the 120k recomputed) | 0.5 to 0.9 s |
+| second side call | 14 s | 0.3 s |
+| RAM of the server, peak | 13.8 GB | 6.2 GB |
+| RAM of the server, loaded | 8.1 GB | 4.8 GB |
 
 The replies of every step are the ones 0.5.11 gives when its cache still holds
 the conversation, checked token for token.
@@ -190,9 +190,10 @@ the conversation, checked token for token.
 Two streams at once on the same model, `bench/bench_batch.py` (greedy, 600
 tokens): 189 tok/s together on 0.5.11, which queued the second request, and
 207 on 0.6.0. With `LLMASH_PARALLEL=4` (a cache per slot) four streams make 380
-tok/s against 364 on 0.5.11, and one stream is unchanged within run-to-run
-noise (about 4%) in both setups. RTX PRO 6000 Blackwell, Windows 11, runtime
-build 784 against 782, 2026-11-01.
+tok/s against 364 on 0.5.11. One stream makes 213 tok/s with one slot, with
+two, and on 0.5.11 (three alternating runs each). RTX PRO 6000 Blackwell,
+Windows 11, runtime builds 784 (two and four streams) and 785 (one stream)
+against 782, 2026-11-01.
 
 ### One stream at a time
 
@@ -394,7 +395,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 784 is commit `effb0b568`. Changes from upstream:
+`llmash`; runtime build 785 is commit `8d7218dc9`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -407,9 +408,10 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
   sequence's cells are kept in one run; when another is in the way the
   smaller one is moved on the card, and an idle slot leaves the cache only
   when its cells block a request's run.
-- Prompt states saved for later go to plain memory, returned to the system when
-  freed, instead of pinned buffers held from load (`LLAMA_STATE_PIN=1` brings
-  those back).
+- Prompt states saved for later go to pinned memory that grows with them: one
+  1 GB slab at load, the next ones pinned while the server is idle, where the
+  cache's whole size (4 GB) was pinned at load (`LLAMA_STATE_PIN=0` keeps them
+  in plain memory).
 - Recurrent state in BF16 for the delta-net and RWKV models, as vLLM keeps it.
 - Draft head: an MTP head drafts through the 131,072 most frequent rows of the
   LM head, requantized to Q4_K at load. Verification reads the full head. An MTP
@@ -457,7 +459,7 @@ norm kernel needed more registers than its block could have. Build 782 sums a
 verify's quantized products in another order (a warp per row set) and fuses
 more norms; perplexity at verify width moves by 0.02 to 0.12%, and one stream
 drafts behind its verify on the device as several streams already did. Build
-784 keeps the text: two slots sharing a cache give the replies one slot gives
+785 keeps the text: two slots sharing a cache give the replies one slot gives
 for the same history on Qwen3.8 27B (3-bit), Gemma 4 E4B (8-bit, assistant
 drafter) and Qwen3.6 35B-A3B (NVFP4), and one slot the replies of build 782. Each release's notes
 list what it was checked with.
