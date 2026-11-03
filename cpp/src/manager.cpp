@@ -1555,6 +1555,9 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         err = name + " is a download that did not finish; pull it again, or rm it to free the space";
         return nullptr;
     }
+    // a pinned model (`llmash ctx --keep`, LLMASH_PIN) stays loaded: a request's keep_alive gave it a countdown the
+    // reaper never acted on, which the tray showed as "unloading" for good
+    const double keep = is_pinned(cfg_, m->name) ? std::numeric_limits<double>::infinity() : keep_alive;
     // A cache type recorded for the model by `ctx --kv` holds on every path
     // unless the request names its own. The OpenAI path did this already; the
     // Ollama path loaded at the default and quietly ignored the setting.
@@ -1605,7 +1608,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
             cur = nullptr;
         }
         if (cur != nullptr && cur->ready() && cur->ctx >= ctx && cur->kv_type == kv && cur->kv_on_gpu == p.kv_on_gpu) {
-            cur->set_keep_alive(keep_alive);
+            cur->set_keep_alive(keep);
             return cur;
         }
     }
@@ -1698,7 +1701,7 @@ Instance * Manager::get(const std::string & name, int ctx, double keep_alive, bo
         err = inst->err.empty() ? "model failed to load" : inst->err;
         return nullptr;
     }
-    inst->set_keep_alive(keep_alive);
+    inst->set_keep_alive(keep);
     return inst;
 }
 
@@ -1762,8 +1765,9 @@ void Manager::reap_idle() {
     std::vector<std::string> gone;
     {
         std::lock_guard<std::mutex> lock(mu_);
+        // a pinned model's window is endless (Manager::get); one the tray retimed by hand goes when that runs out
         for (auto & p : live_) {
-            if (is_pinned(cfg_, p->model.name) || !p->ready() || now <= p->expires_at || now - p->last_used < 5) {
+            if (!p->ready() || now <= p->expires_at || now - p->last_used < 5) {
                 continue;
             }
             gone.push_back(p->model.name);
