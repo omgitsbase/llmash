@@ -395,7 +395,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 785 is commit `8d7218dc9`. Changes from upstream:
+`llmash`; runtime build 788 is commit `e862f83e6`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -407,7 +407,8 @@ A llama.cpp fork, fetched beside the program by the installer and refreshed by
   sequence's run of cells, the same view a cache of its own gives it. A
   sequence's cells are kept in one run; when another is in the way the
   smaller one is moved on the card, and an idle slot leaves the cache only
-  when its cells block a request's run.
+  when its cells block a request's run. Qwen3.8 Flash Next, whose sparse
+  attention picks cells by their place in the whole cache, reads all of it.
 - Prompt states saved for later go to pinned memory that grows with them: one
   1 GB slab at load, the next ones pinned while the server is idle, where the
   cache's whole size (4 GB) was pinned at load (`LLAMA_STATE_PIN=0` keeps them
@@ -461,8 +462,11 @@ more norms; perplexity at verify width moves by 0.02 to 0.12%, and one stream
 drafts behind its verify on the device as several streams already did. Build
 785 keeps the text: two slots sharing a cache give the replies one slot gives
 for the same history on Qwen3.8 27B (3-bit), Gemma 4 E4B (8-bit, assistant
-drafter) and Qwen3.6 35B-A3B (NVFP4), and one slot the replies of build 782. Each release's notes
-list what it was checked with.
+drafter) and Qwen3.6 35B-A3B (NVFP4), and one slot the replies of build 782.
+Build 788 fixes Qwen3.8 Flash Next after a long prompt (its replies turned to
+"!!!!" past about 200,000 tokens) and keeps the text of the others (Gemma 4 E4B
+and Qwen3.6 35B-A3B as build 782 gave it).
+Each release's notes list what it was checked with.
 
 ## Models and pulling
 
