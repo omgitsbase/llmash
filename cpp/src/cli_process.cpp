@@ -82,23 +82,22 @@ int run_streaming(const std::vector<std::string> & argv, const std::function<voi
     }
     FILE * out = subprocess_stdout(proc.get());
     if (out != nullptr) {
+        // fgets hands each line over as it arrives; fread waited for a whole 4 KB, so progress came in bursts
         std::string line;
         char        buf[4096];
-        size_t      n;
-        while ((n = std::fread(buf, 1, sizeof(buf), out)) > 0) {
-            for (size_t i = 0; i < n; i++) {
-                if (buf[i] == '\n') {
-                    while (!line.empty() && line.back() == '\r') {
-                        line.pop_back();
-                    }
-                    if (on_line) {
-                        on_line(line);
-                    }
-                    line.clear();
-                } else {
-                    line.push_back(buf[i]);
-                }
+        while (std::fgets(buf, sizeof(buf), out) != nullptr) {
+            line += buf;
+            if (line.empty() || line.back() != '\n') {
+                continue;  // longer than the buffer: the rest comes with the next read
             }
+            line.pop_back();
+            while (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            if (on_line) {
+                on_line(line);
+            }
+            line.clear();
         }
         if (!line.empty() && on_line) {
             on_line(line);
