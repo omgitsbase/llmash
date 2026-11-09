@@ -395,7 +395,7 @@ qwen3.8-27b, which build?
 A llama.cpp fork, fetched beside the program by the installer and refreshed by
 `llmash update` when a release carries a newer one. Source:
 [omgitsbase/llama.cpp](https://github.com/omgitsbase/llama.cpp), branch
-`llmash`; runtime build 788 is commit `e862f83e6`. Changes from upstream:
+`llmash`; runtime build 789 is commit `e70817ac1`. Changes from upstream:
 
 - One CUDA graph per speculative round: the verify batch, the accept decision
   and every draft step, with the accept decided on the GPU.
@@ -463,9 +463,10 @@ drafts behind its verify on the device as several streams already did. Build
 785 keeps the text: two slots sharing a cache give the replies one slot gives
 for the same history on Qwen3.8 27B (3-bit), Gemma 4 E4B (8-bit, assistant
 drafter) and Qwen3.6 35B-A3B (NVFP4), and one slot the replies of build 782.
-Build 788 fixes Qwen3.8 Flash Next after a long prompt (its replies turned to
-"!!!!" past about 200,000 tokens) and keeps the text of the others (Gemma 4 E4B
-and Qwen3.6 35B-A3B as build 782 gave it).
+Build 789 fixes Qwen3.8 Flash Next after a long prompt (its replies turned to
+"!!!!" past about 200,000 tokens) and a crash when the first requests on a
+freshly loaded server with many slots came in together, and keeps the text of
+the others (Gemma 4 E4B and Qwen3.6 35B-A3B as build 782 gave it).
 Each release's notes list what it was checked with.
 
 ## Models and pulling
