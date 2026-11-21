@@ -205,6 +205,37 @@ void test_other_formats() {
     check_eq(quant_tag("IQ2_XS/Model-GSQ-RCO-IQ2_XS-00001-of-00002.gguf"), std::string("IQ2_XS"), "a build in a folder is tagged by its file");
 }
 
+void test_build_names() {
+    section("build_names");
+    const std::vector<HfFile> files = {
+        {"Inkling-2-Mini-AD-Q6_K.gguf", 22150},       {"Inkling-2-Mini-Q6_K.gguf", 21800},
+        {"Inkling-2-Mini-AD-IQ2_XXS.gguf", 9710},      {"Inkling-2-Mini-AD-IQ2_XXS-Q2.gguf", 7360},
+        {"Inkling-2-Mini-MXFP4.gguf", 13750},          {"Inkling-2-Mini-UD-MXFP4.gguf", 13750},
+        {"Inkling-2-Mini-Q8_0-00001-of-00002.gguf", 13000}, {"Inkling-2-Mini-Q8_0-00002-of-00002.gguf", 12830},
+        {"Qwen3-8B-Q4_K_M.gguf", 5000}};
+    const std::vector<std::string> names = build_names(files);
+    check_eq(names[0], std::string("AD-Q6_K"), "AD-Q6_K beside Q6_K keeps its prefix");
+    check_eq(names[1], std::string("Q6_K"), "the plain Q6_K keeps its tag");
+    check_eq(names[3], std::string("AD-IQ2_XXS-Q2"), "what follows the tag tells IQ2_XXS-Q2 apart");
+    check_eq(names[5], std::string("UD-MXFP4"), "UD-MXFP4 beside MXFP4");
+    check_eq(names[6], std::string("Q8_0"), "shards of one file share their tag");
+    check_eq(names[8], std::string("Q4_K_M"), "a tag no other build shares stays as it is, 8B or not");
+    const std::vector<QuantInfo> listed = quants_of(files);
+    const auto size_of = [&](const char * n) {
+        for (const QuantInfo & q : listed) {
+            if (q.name == n) return q.size;
+        }
+        return int64_t(-1);
+    };
+    check(size_of("MXFP4") == 13750 && size_of("UD-MXFP4") == 13750, "two MXFP4 files are two builds, not one of both sizes");
+    check(size_of("Q6_K") == 21800 && size_of("Q8_0") == 25830, "Q6_K alone; Q8_0's two shards add up");
+    check(pick_gguf(files, "UD-MXFP4").size() == 1 && pick_gguf(files, "UD-MXFP4")[0].name == "Inkling-2-Mini-UD-MXFP4.gguf",
+          "a pull of UD-MXFP4 takes that file");
+    check(pick_gguf(files, "MXFP4").size() == 1 && pick_gguf(files, "MXFP4")[0].name == "Inkling-2-Mini-MXFP4.gguf",
+          "a pull of MXFP4 takes the plain one");
+    check(pick_gguf(files, "Q8_0").size() == 2, "a sharded build comes down whole");
+}
+
 void test_quant_tag() {
     section("quant_tag");
     check_eq(quant_tag("Qwen3-8B-Q4_K_M-00001-of-00002.gguf"), std::string("Q4_K_M"), "a sharded Q4_K_M build");
@@ -1038,6 +1069,7 @@ int main() {
     std::cout << "scratch: " << scratch().string() << "\n";
 
     test_quant_tag();
+    test_build_names();
     test_fp4_borrow();
     test_all_blackwell();
     test_other_formats();

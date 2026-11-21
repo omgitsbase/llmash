@@ -1286,10 +1286,9 @@ Tiers tiers_of(const std::vector<QuantInfo> & quants, bool fp4) {
         }
         return -1;
     };
-    t.medium = fp4_build(fp4 ? "NVFP4" : "MXFP4");
-    if (t.medium < 0) {
-        t.medium = fp4_build(fp4 ? "MXFP4" : "NVFP4");
-    }
+    // MXFP4 is the medium build on every card; NVFP4 never stands in for it
+    (void) fp4;
+    t.medium = fp4_build("MXFP4");
     if (t.medium < 0) {
         t.medium = find({"Q4_K_M", "UD-Q4_K_XL", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q5_K_S"});
     }

@@ -1205,6 +1205,9 @@ std::string draft_path(const Model & m, const DraftKind & kind, const Config & c
 
 std::string installed_drafter(const Model & m, const Config & cfg) {
     std::error_code ec;
+    if (!find_dspark(m.path).empty() || !saved_drafter(m.path, ".dspark.gguf", cfg).empty()) {
+        return "a DSpark drafter";
+    }
     if (!m.mtp_path.empty() && fs::is_regular_file(m.mtp_path, ec)) {
         return "an MTP head";
     }

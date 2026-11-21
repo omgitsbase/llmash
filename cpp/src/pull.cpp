@@ -995,9 +995,10 @@ bool GGUFReader::read_int(uint32_t type, int64_t & out) {
 
 const std::vector<DraftKind> & draft_kinds() {
     static const std::vector<DraftKind> kinds = {
+        // a DSpark drafter is the default where one is published
         {"mtp", "draft-mtp", 50, {}},
         {"eagle3", "draft-eagle3", 40, {"eagle3", "eagle-3", "eagle_3"}},
-        {"dspark", "draft-dspark", 30, {"dspark", "d-spark"}},
+        {"dspark", "draft-dspark", 70, {"dspark", "d-spark"}},
         {"dflash", "draft-dflash", 20, {"dflash", "d-flash"}},
         {"draft", "draft-simple", 10, {"draft", "speculator", "speculative"}},
     };
@@ -1039,6 +1040,91 @@ std::string quant_tag(const std::string & name) {
         return "";
     }
     return upper(m[1].str());
+}
+
+// the tag with the part of the stem that tells two builds of it apart: an all-capitals word of up to three letters
+// before it (AD-, UD-) and whatever follows it (-Q2)
+static std::string distinguished(const std::string & stem, const std::string & tag) {
+    static const std::regex re(
+        R"((?:^|[-_.])((?:UD-)?(?:IQ|Q|TQ|PQ|PTQ)[1-8](?:_[0-9A-Z]+)*|BF16|F16|F32|MXFP4(?:_MOE)?|NVFP4)(?:[-_.]|$))",
+        std::regex::icase);
+    std::smatch m;
+    if (!std::regex_search(stem, m, re)) {
+        return tag;
+    }
+    const size_t pos = static_cast<size_t>(m.position(1));
+    const size_t end = pos + static_cast<size_t>(m.length(1));
+    std::string  prefix;
+    if (pos >= 2 && (stem[pos - 1] == '-' || stem[pos - 1] == '_' || stem[pos - 1] == '.')) {
+        size_t s = pos - 1;
+        while (s > 0 && stem[s - 1] != '-' && stem[s - 1] != '_' && stem[s - 1] != '.') {
+            s--;
+        }
+        const std::string word = stem.substr(s, pos - 1 - s);
+        const bool caps = !word.empty() && word.size() <= 3 &&
+                          std::all_of(word.begin(), word.end(), [](unsigned char c) { return c >= 'A' && c <= 'Z'; });
+        if (caps) {
+            prefix = word + "-";
+        }
+    }
+    return upper(prefix + tag + stem.substr(end));
+}
+
+std::vector<std::string> build_names(const std::vector<HfFile> & files) {
+    std::vector<std::string>                     tag(files.size()), stem(files.size()), out(files.size());
+    std::map<std::string, std::set<std::string>> stems_of;
+    for (size_t i = 0; i < files.size(); i++) {
+        tag[i]           = quant_tag(files[i].name);
+        std::string base = files[i].name.substr(files[i].name.find_last_of("/\\") + 1);
+        if (ends_with(lower(base), ".gguf")) {
+            base.resize(base.size() - 5);
+        }
+        stem[i] = strip_shard(base);
+        if (!tag[i].empty()) {
+            stems_of[tag[i]].insert(lower(stem[i]));
+        }
+    }
+    for (size_t i = 0; i < files.size(); i++) {
+        if (!tag[i].empty()) {
+            out[i] = stems_of[tag[i]].size() == 1 ? tag[i] : distinguished(stem[i], tag[i]);
+        }
+    }
+    // two different files still under one name: the stem past what the whole group shares
+    for (const auto & [t, stems] : stems_of) {
+        if (stems.size() < 2) {
+            continue;
+        }
+        std::map<std::string, std::set<std::string>> stems_by_name;
+        for (size_t i = 0; i < files.size(); i++) {
+            if (tag[i] == t) {
+                stems_by_name[out[i]].insert(lower(stem[i]));
+            }
+        }
+        const bool clash = std::any_of(stems_by_name.begin(), stems_by_name.end(), [](const auto & kv) { return kv.second.size() > 1; });
+        if (!clash) {
+            continue;
+        }
+        const std::string & first  = *stems.begin();
+        size_t              common = first.size();
+        for (const std::string & s : stems) {
+            size_t k = 0;
+            while (k < common && k < s.size() && s[k] == first[k]) {
+                k++;
+            }
+            common = k;
+        }
+        for (size_t i = 0; i < files.size(); i++) {
+            if (tag[i] != t) {
+                continue;
+            }
+            std::string n = stem[i].substr((std::min)(common, stem[i].size()));
+            while (!n.empty() && (n[0] == '-' || n[0] == '_' || n[0] == '.')) {
+                n.erase(0, 1);
+            }
+            out[i] = upper(n.empty() ? stem[i] : n);
+        }
+    }
+    return out;
 }
 
 std::string hf_download_url(const std::string & repo, const std::string & file) {
@@ -1688,7 +1774,7 @@ std::string other_formats_text(const std::set<std::string> & exts) {
 
 bool build_offered(const std::vector<HfFile> & files, const std::string & quant) {
     const std::vector<HfFile> want = pick_gguf(files, quant);
-    if (!want.empty() && equal_fold(quant_tag(want.front().name), quant)) {
+    if (!want.empty() && (equal_fold(quant_tag(want.front().name), quant) || equal_fold(build_names(want).front(), quant))) {
         return true;
     }
     const std::vector<QuantInfo> builds = quants_of(files);
@@ -1701,6 +1787,20 @@ std::vector<HfFile> pick_gguf(const std::vector<HfFile> & files, const std::stri
         const std::string low = lower(f.name);
         if (ends_with(low, ".gguf") && !contains(low, "mmproj") && kind_of(f.name) == nullptr && !is_imatrix_file(f)) {
             builds.push_back(f);
+        }
+    }
+    // the build listed under exactly this name: its file, or its shards in order
+    if (!quant.empty()) {
+        const std::vector<std::string> names = build_names(builds);
+        std::vector<HfFile>            exact;
+        for (size_t i = 0; i < builds.size(); i++) {
+            if (equal_fold(names[i], quant)) {
+                exact.push_back(builds[i]);
+            }
+        }
+        if (!exact.empty()) {
+            std::sort(exact.begin(), exact.end(), [](const HfFile & a, const HfFile & b) { return a.name < b.name; });
+            return exact;
         }
     }
     const std::string   q = lower(quant);
@@ -1801,12 +1901,18 @@ double bits_of_quant(const std::string & quant) {
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files) {
     std::vector<QuantInfo> out; // insertion order, then a stable sort by size
     std::vector<HfFile>    tagless;
+    std::vector<HfFile>    builds;
     for (const auto & f : files) {
         const std::string low = lower(f.name);
         if (!ends_with(low, ".gguf") || contains(low, "mmproj") || is_imatrix_file(f) || kind_of(f.name) != nullptr) {
             continue; // a projector, a draft head or an imatrix is not a build
         }
-        const std::string q = quant_tag(f.name);
+        builds.push_back(f);
+    }
+    const std::vector<std::string> names = build_names(builds);
+    for (size_t i = 0; i < builds.size(); i++) {
+        const HfFile &    f = builds[i];
+        const std::string q = names[i];
         if (q.empty()) {
             tagless.push_back(f);
             continue;
@@ -3335,7 +3441,7 @@ std::string hf_pull(const std::string & repo, const std::string & quant, const s
     // pick_gguf answers with the nearest build when the one asked for is not
     // there, which is silent unless it says so
     if (const std::string got = quant_tag(want.front().name);
-        !quant.empty() && !equal_fold(got, quant) && !got.empty()) {
+        !quant.empty() && !equal_fold(got, quant) && !got.empty() && !build_offered(files, quant)) {
         emit(json{{"status", "no " + quant + " in " + repo + ", taking " + got}});
     }
 
@@ -4283,15 +4389,13 @@ static int runtime_build(const Config & cfg) {
 void handle_quants(const httplib::Request & req, httplib::Response & res, Config & cfg, Registry & reg) {
     (void) reg;
     json out = api_quants(req.get_param_value("repo"));
-    // the picker offers an NVFP4 build as the medium one when every card here runs FP4 natively, on a runtime
-    // whose mixture-of-experts verify takes NVFP4 (build 143 on), and MXFP4 on any other machine; a repo holding
-    // none borrows one of the same model, and that format takes the other's place in the list, the other format
-    // standing in when no repository has the model in this one
+    // the picker offers an MXFP4 build as the medium one on every card; a repo holding none borrows one of the same
+    // model. NVFP4 is listed where a repo has it, never as the medium one
     if (!out.contains("error")) {
         const bool fp4 = gpus_all_blackwell() && runtime_build(cfg) >= 143;
         out["fp4"]     = fp4;
-        const std::string want  = fp4 ? "nvfp4" : "mxfp4";
-        const std::string other = fp4 ? "mxfp4" : "nvfp4";
+        const std::string want  = "mxfp4";
+        const std::string other = "nvfp4";
         const auto        has   = [&out](const std::string & f) {
             for (const auto & q : out["quants"]) {
                 if (contains(lower(q.value("name", "")), f)) {
@@ -4303,10 +4407,6 @@ void handle_quants(const httplib::Request & req, httplib::Response & res, Config
         if (!has(want)) {
             const std::string      model = out.value("from", "").empty() ? out.value("repo", "") : out.value("from", "");
             std::vector<QuantInfo> found = fp4_builds(model, upper(want));
-            // every card runs both formats, so a model with no build in this card's format offers the other one
-            if (found.empty() && !has(other)) {
-                found = fp4_builds(model, upper(other));
-            }
             for (const QuantInfo & q : found) {
                 out["quants"].push_back(
                     json{{"name", q.name}, {"size", q.size}, {"files", q.files}, {"fetch", q.fetch}, {"repo", q.repo}});

@@ -147,10 +147,10 @@ QuantInfo Q(const char * name, int64_t size) {
 
 void test_tiers_of() {
     {
-        // the medium build is FP4: NVFP4 on an all-Blackwell server, MXFP4 elsewhere, each falling back to the other
+        // the medium build is MXFP4 on every card; NVFP4 never stands in for it
         const std::vector<QuantInfo> qs{Q("IQ3_XXS", 3), Q("Q4_K_M", 5), Q("NVFP4", 6), Q("Q8_0", 9)};
-        eq_str(qs[tiers_of(qs, true).medium].name, "NVFP4", "tiers medium on Blackwell is NVFP4");
-        eq_str(qs[tiers_of(qs, false).medium].name, "NVFP4", "elsewhere NVFP4 stands in for a missing MXFP4");
+        eq_str(qs[tiers_of(qs, true).medium].name, "Q4_K_M", "on Blackwell an NVFP4 build is not the medium one");
+        eq_str(qs[tiers_of(qs, false).medium].name, "Q4_K_M", "nor anywhere else");
         const std::vector<QuantInfo> no_fp4{Q("Q4_K_M", 5), Q("Q8_0", 9)};
         eq_str(no_fp4[tiers_of(no_fp4, true).medium].name, "Q4_K_M", "tiers medium on Blackwell without FP4");
         eq_str(no_fp4[tiers_of(no_fp4, false).medium].name, "Q4_K_M", "tiers medium elsewhere without FP4");
@@ -159,7 +159,7 @@ void test_tiers_of() {
         eq_str(mx[tiers_of(mx, true).medium].name, "MXFP4_MOE", "tiers medium on Blackwell falls back to MXFP4");
         eq_str(mx[tiers_of(mx, false).medium].name, "MXFP4_MOE", "tiers medium elsewhere is MXFP4");
         const std::vector<QuantInfo> both{Q("Q4_K_M", 5), Q("MXFP4", 6), Q("NVFP4", 6), Q("Q8_0", 9)};
-        eq_str(both[tiers_of(both, true).medium].name, "NVFP4", "Blackwell prefers NVFP4 over MXFP4");
+        eq_str(both[tiers_of(both, true).medium].name, "MXFP4", "Blackwell takes MXFP4 over NVFP4 too");
         eq_str(both[tiers_of(both, false).medium].name, "MXFP4", "elsewhere MXFP4 over NVFP4");
         eq_str(gsq_desc("MiMo-V2.6-9B-gsq-rco-3p5-q4io"), "GSQ-RCO 3.5", "a GSQ-RCO file named by its width reads as one");
         eq_str(gsq_desc("IQ3_S"), "GSQ-RCO IQ3_S", "one named by its type keeps the type");

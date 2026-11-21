@@ -14,7 +14,7 @@ OUT = HERE / "dist" / "llmash"
 ZIP = HERE / "dist" / "llmash-win-x64.zip"
 TGZ = HERE / "dist" / "llmash-linux-x64.tar.gz"
 # the suites that build on both systems; --publish runs them on each before it uploads
-TESTS = ("test_main", "api_logic_test", "api_test", "chat_test", "gguf_io_test", "rco_test", "classify_test")
+TESTS = ("test_main", "api_logic_test", "api_test", "chat_test", "gguf_io_test", "rco_test", "classify_test", "pull_test")
 
 
 def version() -> str:

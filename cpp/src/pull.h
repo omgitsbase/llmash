@@ -118,6 +118,9 @@ struct QuantInfo {
     std::string repo;       // another repository's build of the model, when it is one
 };
 std::vector<QuantInfo> quants_of(const std::vector<HfFile> & files);
+// The name each file is listed and pulled under: its quant tag, unless two builds in the repo share it, when what tells
+// them apart joins it (AD-Q6_K beside Q6_K, UD-MXFP4 beside MXFP4). Shards of one file share a name; "" for no tag.
+std::vector<std::string> build_names(const std::vector<HfFile> & files);
 
 // Whether `quant` names a build of these files: its quant tag, or the name the list gives a build whose file carries
 // none (MiMo-V2.6-9B-gsq-rco-3p5-q4io), so a pull takes whatever the picker offered.

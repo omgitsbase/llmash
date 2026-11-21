@@ -1058,7 +1058,14 @@ std::vector<std::string> Instance::args() {
     const auto with_lookup = [&](const char * primary) {
         return stack ? fallback + "," + primary : std::string(primary);
     };
-    if (use_dflash) {
+    // a DSpark drafter is the default wherever there is one (LLMASH_PREFER_DSPARK=0 ranks it back below the others)
+    const bool use_dspark = !dspark.empty() && file_exists(dspark) && env_int("LLMASH_PREFER_DSPARK", 1) != 0;
+    if (use_dspark) {
+        a.insert(a.end(), {"--spec-type", with_lookup("draft-dspark"), "--model-draft", dspark, "-ngld", "999",
+                           "--spec-draft-n-max", std::to_string(dspark_max), "--spec-draft-n-min",
+                           std::to_string(dspark_min)});
+        spec_note = "dspark";
+    } else if (use_dflash) {
         a.insert(a.end(), {"--spec-type", with_lookup("draft-dflash"), "--model-draft", dflash, "-ngld", "999",
                            "--spec-draft-n-max", std::to_string(env_int("LLMASH_DFLASH_DRAFT", 7))});
         spec_note = "dflash";
